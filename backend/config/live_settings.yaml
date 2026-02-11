@@ -1,0 +1,6 @@
+trading_mode: LIVE
+risk:
+  max_position_size_percent: 5
+  max_daily_loss: 250
+  max_concurrent_positions: 3
+  risk_per_trade_percent: 1

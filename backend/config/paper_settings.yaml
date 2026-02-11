@@ -1,0 +1,6 @@
+trading_mode: PAPER
+risk:
+  max_position_size_percent: 10
+  max_daily_loss: 500
+  max_concurrent_positions: 5
+  risk_per_trade_percent: 2

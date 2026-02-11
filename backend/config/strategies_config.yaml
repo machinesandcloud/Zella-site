@@ -1,0 +1,319 @@
+vwap_bounce:
+  enabled: true
+  parameters:
+    vwap_period: 20
+    volume_threshold: 1.5
+    min_wick_percent: 2
+    entry_offset: 0.05
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 5.0
+
+ema_cross:
+  enabled: true
+  parameters:
+    fast_ema: 20
+    slow_ema: 50
+    confirmation_ema: 200
+    timeframe: "1H"
+  risk:
+    stop_loss_percent: 1.5
+    take_profit_percent: 3.0
+    max_position_size: 7.5
+
+rsi_exhaustion:
+  enabled: true
+  parameters:
+    rsi_period: 14
+    overbought: 70
+    oversold: 30
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 5.0
+
+orb_strategy:
+  enabled: false
+  parameters:
+    opening_range_minutes: 15
+    breakout_buffer: 0.05
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.5
+    max_position_size: 5.0
+
+trend_follow:
+  enabled: false
+  parameters:
+    fast_ema: 20
+    slow_ema: 50
+  risk:
+    stop_loss_percent: 1.5
+    take_profit_percent: 3.0
+    max_position_size: 7.5
+
+range_trading:
+  enabled: false
+  parameters:
+    rsi_period: 14
+    support_lookback: 20
+    resistance_lookback: 20
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 5.0
+
+momentum:
+  enabled: false
+  parameters:
+    momentum_lookback: 10
+    min_momentum: 1.5
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 5.0
+
+breakout:
+  enabled: false
+  parameters:
+    breakout_lookback: 20
+    volume_threshold: 1.5
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.5
+    max_position_size: 5.0
+
+pullback:
+  enabled: false
+  parameters:
+    pullback_percent: 0.5
+    trend_ema: 50
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 5.0
+
+scalping:
+  enabled: false
+  parameters:
+    target_ticks: 3
+    stop_ticks: 2
+  risk:
+    stop_loss_percent: 0.5
+    take_profit_percent: 1.0
+    max_position_size: 2.5
+
+htf_ema_momentum:
+  enabled: false
+  parameters:
+    htf_ema_period: 100
+    momentum_lookback: 5
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 5.0
+
+first_hour_trend:
+  enabled: false
+  parameters:
+    quantity: 1
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 5.0
+
+broken_parabolic_short:
+  enabled: false
+  parameters:
+    green_count: 5
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 4.0
+
+fake_halt_trap:
+  enabled: false
+  parameters:
+    spike_pct: 5.0
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 4.0
+
+rsi_extreme_reversal:
+  enabled: false
+  parameters:
+    rsi_period: 14
+    overbought: 90
+    oversold: 10
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 4.0
+
+stop_hunt_reversal:
+  enabled: false
+  parameters:
+    quantity: 1
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 4.0
+
+market_maker_refill:
+  enabled: false
+  parameters:
+    range_threshold: 0.2
+    volume_multiplier: 2.0
+    trend_ema: 50
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 4.0
+
+dark_pool_footprints:
+  enabled: false
+  parameters:
+    tolerance: 0.1
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 4.0
+
+rip_and_dip:
+  enabled: false
+  parameters:
+    quantity: 1
+  risk:
+    stop_loss_percent: 0.5
+    take_profit_percent: 1.0
+    max_position_size: 2.5
+
+big_bid_scalp:
+  enabled: false
+  parameters:
+    min_bid_size: 10000
+    price_tolerance: 0.05
+  risk:
+    stop_loss_percent: 0.5
+    take_profit_percent: 1.0
+    max_position_size: 2.5
+
+options_chain_spoof:
+  enabled: false
+  parameters:
+    quantity: 1
+  risk:
+    stop_loss_percent: 0.5
+    take_profit_percent: 1.0
+    max_position_size: 2.5
+
+fomc_fade:
+  enabled: false
+  parameters:
+    move_threshold: 1.0
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 3.0
+
+earnings_overreaction:
+  enabled: false
+  parameters:
+    move_threshold: 5.0
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 3.0
+
+merger_arb:
+  enabled: false
+  parameters:
+    buffer: 0.05
+  risk:
+    stop_loss_percent: 0.5
+    take_profit_percent: 1.0
+    max_position_size: 2.5
+
+bagholder_bounce:
+  enabled: false
+  parameters:
+    gap_down_pct: 20.0
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 4.0
+
+retail_fakeout:
+  enabled: false
+  parameters:
+    support_level: null
+    resistance_level: null
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.0
+    max_position_size: 4.0
+
+nine_forty_five_reversal:
+  enabled: false
+  parameters:
+    window_minutes: 5
+  risk:
+    stop_loss_percent: 0.8
+    take_profit_percent: 1.5
+    max_position_size: 3.0
+
+gamma_squeeze:
+  enabled: false
+  parameters:
+    min_otm_call_volume: 1000
+  risk:
+    stop_loss_percent: 1.0
+    take_profit_percent: 2.5
+    max_position_size: 3.0
+
+max_pain_fade:
+  enabled: false
+  parameters:
+    tolerance: 0.2
+  risk:
+    stop_loss_percent: 0.8
+    take_profit_percent: 1.5
+    max_position_size: 3.0
+
+open_interest_fakeout:
+  enabled: false
+  parameters:
+    quantity: 1
+  risk:
+    stop_loss_percent: 0.8
+    take_profit_percent: 1.5
+    max_position_size: 3.0
+
+premarket_vwap_reclaim:
+  enabled: false
+  parameters:
+    volume_multiplier: 1.5
+  risk:
+    stop_loss_percent: 0.8
+    take_profit_percent: 1.5
+    max_position_size: 3.0
+
+after_hours_liquidity_trap:
+  enabled: false
+  parameters:
+    spike_pct: 3.0
+  risk:
+    stop_loss_percent: 0.8
+    take_profit_percent: 1.5
+    max_position_size: 3.0
+
+closing_bell_liquidity_grab:
+  enabled: false
+  parameters:
+    minutes_to_close: 2
+  risk:
+    stop_loss_percent: 0.8
+    take_profit_percent: 1.5
+    max_position_size: 3.0
