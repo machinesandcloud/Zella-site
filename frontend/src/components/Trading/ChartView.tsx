@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Card, CardContent, Typography } from "@mui/material";
-import { createChart, ColorType } from "lightweight-charts";
+import { createChart, ColorType, UTCTimestamp } from "lightweight-charts";
 import { connectWebSocket } from "../../services/websocket";
 
 type MarketDataMessage = {
@@ -39,7 +39,7 @@ const ChartView = () => {
     const ws = connectWebSocket(`/ws/market-data?symbol=${symbol}`, (msg) => {
       const data = msg as MarketDataMessage;
       if (data.channel !== "market-data" || data.symbol !== symbol) return;
-      const time = Math.floor(new Date(data.timestamp).getTime() / 1000);
+      const time = Math.floor(new Date(data.timestamp).getTime() / 1000) as UTCTimestamp;
       line.update({ time, value: data.price });
       if (emaValue === null) {
         emaValue = data.price;
