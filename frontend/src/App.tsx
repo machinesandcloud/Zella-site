@@ -10,7 +10,7 @@ import ChartView from "./components/Trading/ChartView";
 import EquityCurve from "./components/Dashboard/EquityCurve";
 import OrderEntry from "./components/Trading/OrderEntry";
 import Watchlist from "./components/Trading/Watchlist";
-import ActiveStrategies from "./components/Trading/ActiveStrategies";
+import StrategyControlPanel from "./components/Trading/StrategyControlPanel";
 import AIMarketScanner from "./components/Trading/AIMarketScanner";
 import OrderBook from "./components/Trading/OrderBook";
 import TimeSales from "./components/Trading/TimeSales";
@@ -104,8 +104,8 @@ const App = () => {
             <Grid item xs={12}>
               <BacktestPanel />
             </Grid>
-            <Grid item xs={12} md={4}>
-              <ActiveStrategies />
+            <Grid item xs={12}>
+              <StrategyControlPanel />
             </Grid>
           </Grid>
         )}

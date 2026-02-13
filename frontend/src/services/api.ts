@@ -85,4 +85,29 @@ export const runBacktest = async (payload: Record<string, unknown>) => {
   return data;
 };
 
+export const fetchStrategies = async () => {
+  const { data } = await api.get("/api/strategies");
+  return data;
+};
+
+export const startStrategy = async (strategyId: string, payload: Record<string, unknown>) => {
+  const { data } = await api.post(`/api/strategies/${strategyId}/start`, payload);
+  return data;
+};
+
+export const stopStrategy = async (strategyId: string) => {
+  const { data } = await api.post(`/api/strategies/${strategyId}/stop`);
+  return data;
+};
+
+export const fetchStrategyPerformance = async (strategyId: string) => {
+  const { data } = await api.get(`/api/strategies/${strategyId}/performance`);
+  return data;
+};
+
+export const fetchStrategyLogs = async (strategyId: string) => {
+  const { data } = await api.get(`/api/strategies/${strategyId}/logs`);
+  return data;
+};
+
 export default api;

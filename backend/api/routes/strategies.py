@@ -90,3 +90,12 @@ def strategy_performance(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     return engine.get_strategy_performance(strategy_id)
+
+
+@router.get("/{strategy_id}/logs")
+def strategy_logs(
+    strategy_id: str,
+    engine: StrategyEngine = Depends(get_strategy_engine),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return {"strategy_id": strategy_id, "logs": engine.get_strategy_logs(strategy_id)}
