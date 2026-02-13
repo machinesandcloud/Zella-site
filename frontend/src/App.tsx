@@ -12,6 +12,7 @@ import TradeJournal from "./components/Dashboard/TradeJournal";
 import PerformanceAnalytics from "./components/Dashboard/PerformanceAnalytics";
 import PortfolioAnalysis from "./components/Dashboard/PortfolioAnalysis";
 import NewsFeed from "./components/Dashboard/NewsFeed";
+import SystemHealth from "./components/Dashboard/SystemHealth";
 import OrderEntry from "./components/Trading/OrderEntry";
 import Watchlist from "./components/Trading/Watchlist";
 import StrategyControlPanel from "./components/Trading/StrategyControlPanel";
@@ -65,6 +66,9 @@ const App = () => {
           <Grid container spacing={3}>
             <Grid item xs={12}>
               <Overview />
+            </Grid>
+            <Grid item xs={12}>
+              <SystemHealth />
             </Grid>
             <Grid item xs={12} md={7}>
               <ActivePositions />
