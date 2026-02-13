@@ -2,9 +2,7 @@ import os
 import sys
 
 os.environ["USE_MOCK_IBKR"] = "true"
-os.environ["DATABASE_URL"] = "sqlite:///./test.db"
-if os.path.exists("test.db"):
-    os.remove("test.db")
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 sys.path.insert(0, os.path.abspath("backend"))
 
 from fastapi.testclient import TestClient  # noqa: E402

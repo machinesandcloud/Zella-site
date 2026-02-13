@@ -4,6 +4,8 @@ from .strategy_engine import StrategyEngine
 from .position_manager import PositionManager
 from .signals import Signal
 from .celery_app import celery_app
+from .alert_manager import AlertManager
+from .risk_validator import PreTradeRiskValidator
 
 __all__ = [
     "IBKRClient",
@@ -13,4 +15,6 @@ __all__ = [
     "PositionManager",
     "Signal",
     "celery_app",
+    "AlertManager",
+    "PreTradeRiskValidator",
 ]

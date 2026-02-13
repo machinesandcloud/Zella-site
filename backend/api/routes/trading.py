@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from core.db import get_db
 from core.ibkr_client import IBKRClient
 from core.risk_manager import RiskManager
+from core.risk_validator import PreTradeRiskValidator
 from models import Order, User
 from api.routes.auth import get_current_user
 from utils.validators import validate_price, validate_quantity, validate_symbol
@@ -59,12 +60,25 @@ def get_risk_manager() -> RiskManager:
     return app.state.risk_manager
 
 
+def get_risk_validator() -> PreTradeRiskValidator:
+    from main import app
+
+    return app.state.risk_validator
+
+
+def get_alert_manager():
+    from main import app
+
+    return app.state.alert_manager
+
+
 @router.post("/order", response_model=OrderOut)
 def place_order(
     order_in: OrderRequest,
     db: Session = Depends(get_db),
     ibkr: IBKRClient = Depends(get_ibkr_client),
     risk_manager: RiskManager = Depends(get_risk_manager),
+    risk_validator: PreTradeRiskValidator = Depends(get_risk_validator),
     current_user: User = Depends(get_current_user),
 ) -> Order:
     symbol = validate_symbol(order_in.symbol.upper())
@@ -104,6 +118,30 @@ def place_order(
         raise HTTPException(status_code=403, detail="Position size limit exceeded")
     if price_for_risk and not risk_manager.check_buying_power(quantity * price_for_risk, buying_power):
         raise HTTPException(status_code=403, detail="Insufficient buying power")
+
+    risk_validation = risk_validator.validate(
+        symbol=symbol,
+        quantity=quantity,
+        price=price_for_risk or 0,
+        account_value=account_value,
+        daily_pnl=float(account_summary.get("RealizedPnL", 0) or 0),
+        open_positions=len(ibkr.get_positions()),
+        buying_power=buying_power,
+        spread_percent=None,
+    )
+    if not risk_validation.approved:
+        get_alert_manager().create(
+            "CRITICAL",
+            f"Order rejected: {risk_validation.reason}",
+            {"symbol": symbol, "user": current_user.username},
+        )
+        raise HTTPException(status_code=403, detail=risk_validation.reason or "Risk validation failed")
+    for warning in risk_validation.warnings:
+        get_alert_manager().create(
+            "WARNING",
+            warning,
+            {"symbol": symbol, "user": current_user.username},
+        )
 
     order_id = None
     if order_type == "MKT":

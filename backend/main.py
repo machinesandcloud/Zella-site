@@ -1,9 +1,17 @@
 from fastapi import FastAPI
 
-from api.routes import account, auth, dashboard, ibkr, settings, strategies, trading, ai_trading, qa
+from api.routes import account, auth, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk
 from api.websocket.market_data import router as ws_router
 from config import settings as app_settings
-from core import IBKRClient, PositionManager, RiskConfig, RiskManager, StrategyEngine
+from core import (
+    AlertManager,
+    IBKRClient,
+    PositionManager,
+    PreTradeRiskValidator,
+    RiskConfig,
+    RiskManager,
+    StrategyEngine,
+)
 from core.auto_trader import AutoTrader
 from core.mock_ibkr_client import MockIBKRClient
 from core.ibkr_client import ibkr_api_available
@@ -31,6 +39,12 @@ def on_startup() -> None:
             max_positions=app_settings.max_concurrent_positions,
             risk_per_trade_percent=app_settings.max_risk_per_trade,
         )
+    )
+    app.state.alert_manager = AlertManager()
+    app.state.risk_validator = PreTradeRiskValidator(
+        max_position_size_percent=app_settings.max_position_size_percent,
+        max_daily_loss=app_settings.max_daily_loss,
+        max_positions=app_settings.max_concurrent_positions,
     )
     app.state.position_manager = PositionManager()
     app.state.strategy_engine = StrategyEngine(
@@ -67,6 +81,8 @@ app.include_router(dashboard.router)
 app.include_router(settings.router)
 app.include_router(ai_trading.router)
 app.include_router(qa.router)
+app.include_router(alerts.router)
+app.include_router(risk.router)
 app.include_router(ws_router)
 
 

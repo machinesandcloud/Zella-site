@@ -35,4 +35,19 @@ export const fetchOrders = async () => {
   return data;
 };
 
+export const fetchRiskSummary = async () => {
+  const { data } = await api.get("/api/risk/summary");
+  return data;
+};
+
+export const fetchAlerts = async () => {
+  const { data } = await api.get("/api/alerts?limit=50");
+  return data;
+};
+
+export const acknowledgeAlert = async (alertId: string) => {
+  const { data } = await api.post("/api/alerts/ack", { alert_id: alertId });
+  return data;
+};
+
 export default api;

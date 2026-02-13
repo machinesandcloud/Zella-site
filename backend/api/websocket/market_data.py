@@ -50,3 +50,31 @@ async def orders_ws(websocket: WebSocket) -> None:
 @router.websocket("/ws/account-updates")
 async def account_updates_ws(websocket: WebSocket) -> None:
     await _stream(websocket, "account-updates")
+
+
+@router.websocket("/ws/order-book")
+async def order_book_ws(websocket: WebSocket) -> None:
+    symbol = (websocket.query_params.get("symbol") or "AAPL").upper()
+    await websocket.accept()
+    try:
+        while True:
+            payload = FAKE_STREAM.order_book(symbol)
+            message = {"channel": "order-book", **payload}
+            await websocket.send_json(message)
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        return
+
+
+@router.websocket("/ws/time-sales")
+async def time_sales_ws(websocket: WebSocket) -> None:
+    symbol = (websocket.query_params.get("symbol") or "AAPL").upper()
+    await websocket.accept()
+    try:
+        while True:
+            payload = FAKE_STREAM.time_sales(symbol)
+            message = {"channel": "time-sales", **payload}
+            await websocket.send_json(message)
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        return

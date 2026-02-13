@@ -4,11 +4,16 @@ import Overview from "./components/Dashboard/Overview";
 import ActivePositions from "./components/Dashboard/ActivePositions";
 import TradeHistory from "./components/Dashboard/TradeHistory";
 import PerformanceMetrics from "./components/Dashboard/PerformanceMetrics";
+import RiskDashboard from "./components/Dashboard/RiskDashboard";
+import NotificationCenter from "./components/Dashboard/NotificationCenter";
 import ChartView from "./components/Trading/ChartView";
 import OrderEntry from "./components/Trading/OrderEntry";
 import Watchlist from "./components/Trading/Watchlist";
 import ActiveStrategies from "./components/Trading/ActiveStrategies";
 import AIMarketScanner from "./components/Trading/AIMarketScanner";
+import OrderBook from "./components/Trading/OrderBook";
+import TimeSales from "./components/Trading/TimeSales";
+import OrderGrid from "./components/Trading/OrderGrid";
 import IBKRConnection from "./components/Settings/IBKRConnection";
 import RiskSettings from "./components/Settings/RiskSettings";
 import StrategyConfig from "./components/Settings/StrategyConfig";
@@ -57,6 +62,12 @@ const App = () => {
               <PerformanceMetrics />
             </Grid>
             <Grid item xs={12}>
+              <RiskDashboard />
+            </Grid>
+            <Grid item xs={12}>
+              <NotificationCenter />
+            </Grid>
+            <Grid item xs={12}>
               <TradeHistory />
             </Grid>
           </Grid>
@@ -71,10 +82,19 @@ const App = () => {
               <Watchlist />
             </Grid>
             <Grid item xs={12} md={4}>
+              <OrderBook />
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <TimeSales />
+            </Grid>
+            <Grid item xs={12} md={4}>
               <AIMarketScanner />
             </Grid>
             <Grid item xs={12} md={8}>
               <OrderEntry />
+            </Grid>
+            <Grid item xs={12}>
+              <OrderGrid />
             </Grid>
             <Grid item xs={12} md={4}>
               <ActiveStrategies />

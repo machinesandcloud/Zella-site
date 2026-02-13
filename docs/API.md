@@ -44,10 +44,19 @@ Note: When `USE_MOCK_IBKR=true`, these endpoints operate on the placeholder clie
 - `GET /api/dashboard/metrics`
 - `GET /api/dashboard/trades/recent`
 
+## Risk
+- `GET /api/risk/summary`
+
+## Alerts
+- `GET /api/alerts?limit=50`
+- `POST /api/alerts/ack`
+
 ## WebSocket
 - `WS /ws/market-data`
 - `WS /ws/orders`
 - `WS /ws/account-updates`
+- `WS /ws/order-book?symbol=AAPL`
+- `WS /ws/time-sales?symbol=AAPL`
 
 Market data supports an optional query param:
 - `/ws/market-data?symbol=AAPL` (or `symbols=AAPL,MSFT`)
@@ -59,6 +68,31 @@ Message shape:
   "symbol": "AAPL",
   "price": 123.45,
   "volume": 5000,
+  "timestamp": "2026-02-11T18:10:00Z"
+}
+```
+
+Order book message shape:
+```json
+{
+  "channel": "order-book",
+  "symbol": "AAPL",
+  "mid": 123.4,
+  "spread": 0.04,
+  "bids": [{ "price": 123.38, "size": 500 }],
+  "asks": [{ "price": 123.42, "size": 450 }],
+  "timestamp": "2026-02-11T18:10:00Z"
+}
+```
+
+Time & sales message shape:
+```json
+{
+  "channel": "time-sales",
+  "symbol": "AAPL",
+  "price": 123.45,
+  "size": 200,
+  "side": "BUY",
   "timestamp": "2026-02-11T18:10:00Z"
 }
 ```

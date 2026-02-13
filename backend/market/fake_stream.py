@@ -50,3 +50,43 @@ class FakeMarketDataStream:
 
     def ticks(self, symbols: Iterable[str]) -> List[Dict[str, object]]:
         return [self.tick(symbol) for symbol in symbols]
+
+    def order_book(self, symbol: str, depth: int = 10) -> Dict[str, object]:
+        state = self._ensure_symbol(symbol)
+        mid = state.price
+        spread = max(0.01, mid * self._rng.uniform(0.0005, 0.002))
+        bids = []
+        asks = []
+        for level in range(depth):
+            price_offset = spread * (level + 1)
+            bids.append(
+                {
+                    "price": round(mid - price_offset, 2),
+                    "size": int(abs(self._rng.gauss(500, 200)) + 1),
+                }
+            )
+            asks.append(
+                {
+                    "price": round(mid + price_offset, 2),
+                    "size": int(abs(self._rng.gauss(500, 200)) + 1),
+                }
+            )
+        return {
+            "symbol": symbol,
+            "mid": round(mid, 2),
+            "spread": round(spread, 4),
+            "bids": bids,
+            "asks": asks,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def time_sales(self, symbol: str) -> Dict[str, object]:
+        tick = self.tick(symbol)
+        side = self._rng.choice(["BUY", "SELL"])
+        return {
+            "symbol": symbol,
+            "price": tick["price"],
+            "size": int(abs(self._rng.gauss(300, 150)) + 1),
+            "side": side,
+            "timestamp": tick["timestamp"],
+        }
