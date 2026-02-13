@@ -1,4 +1,7 @@
-from fastapi import FastAPI
+import time
+
+from fastapi import FastAPI, Request, Response
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 from api.routes import account, auth, backtest, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk, trades, news
 from api.websocket.market_data import router as ws_router
@@ -21,6 +24,27 @@ from core.init_db import init_db
 from utils.logger import setup_logging
 
 app = FastAPI(title="Zella AI Trading API", version="0.1.0")
+
+REQUEST_COUNT = Counter(
+    "zella_http_requests_total",
+    "Total HTTP requests",
+    ["method", "path", "status"],
+)
+REQUEST_LATENCY = Histogram(
+    "zella_http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "path"],
+)
+
+
+@app.middleware("http")
+async def prometheus_middleware(request: Request, call_next):
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    elapsed = time.perf_counter() - start_time
+    REQUEST_COUNT.labels(request.method, request.url.path, response.status_code).inc()
+    REQUEST_LATENCY.labels(request.method, request.url.path).observe(elapsed)
+    return response
 
 
 @app.on_event("startup")
@@ -92,3 +116,8 @@ app.include_router(ws_router)
 @app.get("/")
 def root() -> dict:
     return {"name": "Zella AI Trading", "status": "ok"}
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

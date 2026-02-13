@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://user:password@localhost:5432/trading_bot"
     sqlite_url: str = "sqlite:///./trading_bot.db"
     redis_url: str = "redis://localhost:6379"
+    use_sqlite: bool = False
 
     # Security
     secret_key: str = "your-secret-key-here"
@@ -44,6 +45,8 @@ class Settings(BaseSettings):
 
     @property
     def database_url_effective(self) -> str:
+        if self.use_sqlite:
+            return self.sqlite_url
         return self.database_url or self.sqlite_url
 
 

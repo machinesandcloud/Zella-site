@@ -5,12 +5,14 @@
 ### Backend
 - `uvicorn main:app --reload` from `backend/`
   - Defaults to mock IBKR (`USE_MOCK_IBKR=true`) until you install the IBKR API.
+  - To use SQLite for persistent local testing: set `USE_SQLITE=true`.
 
 ### Frontend
 - `npm run dev` from `frontend/`
 
 ### Docker Compose
 - `docker-compose up --build`
+  - Includes Postgres for persistent storage and optional Prometheus + Grafana for monitoring.
 
 ## Netlify (Frontend)
 
@@ -42,3 +44,11 @@ Netlify is optimized for static frontends and serverless functions with executio
 ## Backend Hosting
 
 Deploy the backend using a container host (Dockerfile in repo root) or a PaaS that supports Python (Render, Fly.io, ECS, etc.). Ensure the backend is accessible over HTTPS and update `VITE_API_URL` and `VITE_WS_URL` accordingly.
+
+## Monitoring (Free Stack)
+
+The Docker compose file includes a free monitoring stack:
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3000` (user: `admin`, password: `admin`)
+
+Prometheus scrapes the API at `/metrics`.
