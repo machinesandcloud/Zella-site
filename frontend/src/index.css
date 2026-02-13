@@ -1,17 +1,17 @@
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
 
 :root {
-  --bg: #f6f4ef;
-  --bg-accent: #efe6d9;
-  --card: #ffffff;
-  --card-alt: #faf7f1;
-  --primary: #1f7a8c;
-  --primary-dark: #15616d;
-  --danger: #ef4444;
-  --success: #16a34a;
-  --text: #1f2937;
-  --muted: #64748b;
-  --border: #e2e8f0;
+  --bg: #0b0f17;
+  --bg-accent: #141a26;
+  --card: rgba(14, 18, 28, 0.72);
+  --card-alt: rgba(18, 24, 36, 0.8);
+  --primary: #3fd0c9;
+  --primary-dark: #2ba39d;
+  --danger: #ff5c5c;
+  --success: #33d17a;
+  --text: #e8edf6;
+  --muted: #9aa6bd;
+  --border: rgba(255, 255, 255, 0.08);
 }
 
 * {
@@ -20,8 +20,10 @@
 
 body {
   margin: 0;
-  font-family: "Space Grotesk", system-ui, sans-serif;
-  background: radial-gradient(circle at top left, #fff7ed, #f6f4ef 60%);
+  font-family: "Sora", system-ui, sans-serif;
+  background: radial-gradient(circle at top, rgba(63, 208, 201, 0.2), transparent 45%),
+    radial-gradient(circle at 20% 40%, rgba(244, 199, 111, 0.15), transparent 40%),
+    #0b0f17;
   color: var(--text);
 }
 
