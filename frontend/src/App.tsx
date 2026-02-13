@@ -28,6 +28,7 @@ import AutopilotControl from "./components/AI/AutopilotControl";
 import OptionsChain from "./components/Trading/OptionsChain";
 import VoiceAssistantSettings from "./components/Settings/VoiceAssistantSettings";
 import BacktestPanel from "./components/Trading/BacktestPanel";
+import StrategyBuilder from "./components/Trading/StrategyBuilder";
 
 const App = () => {
   const [tab, setTab] = useState(0);
@@ -126,6 +127,9 @@ const App = () => {
             </Grid>
             <Grid item xs={12}>
               <BacktestPanel />
+            </Grid>
+            <Grid item xs={12}>
+              <StrategyBuilder />
             </Grid>
             <Grid item xs={12}>
               <StrategyControlPanel />
