@@ -1,12 +1,12 @@
 @import url("https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
 
 :root {
-  --bg: #0b0f17;
-  --bg-accent: #141a26;
+  --bg: #0a0f16;
+  --bg-accent: #111827;
   --card: rgba(14, 18, 28, 0.72);
   --card-alt: rgba(18, 24, 36, 0.8);
-  --primary: #3fd0c9;
-  --primary-dark: #2ba39d;
+  --primary: #2fe3cf;
+  --primary-dark: #18b9a8;
   --danger: #ff5c5c;
   --success: #33d17a;
   --text: #e8edf6;
@@ -21,10 +21,29 @@
 body {
   margin: 0;
   font-family: "Sora", system-ui, sans-serif;
-  background: radial-gradient(circle at top, rgba(63, 208, 201, 0.2), transparent 45%),
-    radial-gradient(circle at 20% 40%, rgba(244, 199, 111, 0.15), transparent 40%),
-    #0b0f17;
+  background: radial-gradient(circle at top, rgba(47, 227, 207, 0.18), transparent 42%),
+    radial-gradient(circle at 20% 40%, rgba(246, 199, 119, 0.14), transparent 40%),
+    #0a0f16;
   color: var(--text);
+  min-height: 100vh;
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  inset: -25vh;
+  background: radial-gradient(circle at 20% 20%, rgba(47, 227, 207, 0.16), transparent 45%),
+    radial-gradient(circle at 80% 10%, rgba(246, 199, 119, 0.12), transparent 40%),
+    radial-gradient(circle at 70% 80%, rgba(92, 104, 245, 0.12), transparent 40%);
+  filter: blur(0px);
+  pointer-events: none;
+}
+
+body::after {
+  opacity: 0.65;
+  transform: translateY(15%);
 }
 
 @keyframes floatIn {
@@ -40,6 +59,25 @@ body {
 
 .card-fade {
   animation: floatIn 0.6s ease-out both;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(7, 10, 18, 0.7);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(125, 142, 180, 0.35);
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(125, 142, 180, 0.6);
 }
 
 code {

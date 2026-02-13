@@ -70,8 +70,9 @@ const App = () => {
           top: 0,
           zIndex: 10,
           backdropFilter: "blur(18px)",
-          background: "rgba(8, 12, 18, 0.85)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)"
+          background:
+            "linear-gradient(120deg, rgba(10, 15, 22, 0.92), rgba(16, 22, 34, 0.78))",
+          borderBottom: "1px solid rgba(255,255,255,0.08)"
         }}
       >
         <Container maxWidth="xl" sx={{ py: 2 }}>
@@ -86,7 +87,8 @@ const App = () => {
                   display: "grid",
                   placeItems: "center",
                   color: "#0b0f17",
-                  fontWeight: 700
+                  fontWeight: 700,
+                  boxShadow: "0 12px 28px rgba(20, 196, 184, 0.3)"
                 }}
               >
                 Z
@@ -99,10 +101,12 @@ const App = () => {
               </Box>
             </Stack>
             <Stack direction="row" spacing={1} alignItems="center">
-              <Chip label="Paper" color="secondary" size="small" />
+              <Chip label="Paper Mode" color="secondary" size="small" />
               <Chip label="IBKR Mock" size="small" />
-              <Button variant="contained">Deploy Report</Button>
-              <IconButton sx={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+              <Button variant="contained" color="primary">
+                Deploy Report
+              </Button>
+              <IconButton sx={{ border: "1px solid rgba(255,255,255,0.12)" }}>
                 ⚙️
               </IconButton>
             </Stack>
@@ -132,9 +136,10 @@ const App = () => {
               sx={{
                 p: 2,
                 borderRadius: 3,
-                border: "1px solid rgba(255,255,255,0.08)",
-                background: "rgba(14, 18, 28, 0.6)",
-                boxShadow: "0 18px 40px rgba(5, 10, 20, 0.35)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                background:
+                  "linear-gradient(160deg, rgba(18, 24, 36, 0.92), rgba(9, 12, 20, 0.72))",
+                boxShadow: "0 20px 50px rgba(4, 8, 18, 0.45)",
                 position: "sticky",
                 top: 96
               }}
@@ -146,10 +151,19 @@ const App = () => {
                 {NAV.map((item) => (
                   <Button
                     key={item.value}
-                    variant={tab === item.value ? "contained" : "text"}
-                    color={tab === item.value ? "primary" : "inherit"}
+                    variant="text"
+                    color="inherit"
                     onClick={() => setTab(item.value)}
-                    sx={{ justifyContent: "flex-start" }}
+                    sx={{
+                      justifyContent: "flex-start",
+                      borderRadius: 2,
+                      px: 2,
+                      py: 1.2,
+                      backgroundColor: tab === item.value ? "rgba(47, 227, 207, 0.15)" : "transparent",
+                      border: tab === item.value ? "1px solid rgba(47, 227, 207, 0.35)" : "1px solid transparent",
+                      color: tab === item.value ? "#e8edf6" : "text.secondary",
+                      boxShadow: tab === item.value ? "0 12px 24px rgba(15, 135, 126, 0.2)" : "none"
+                    }}
                   >
                     {item.label}
                   </Button>
