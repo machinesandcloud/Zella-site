@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from datetime import datetime
 from sqlalchemy.orm import Session
 
 from core.db import get_db
@@ -42,6 +43,11 @@ class OrderOut(BaseModel):
     order_type: str
     action: str
     quantity: int
+    filled_quantity: Optional[int] = None
+    avg_fill_price: Optional[float] = None
+    limit_price: Optional[float] = None
+    stop_price: Optional[float] = None
+    placed_at: Optional[datetime] = None
     status: Optional[str] = None
 
     class Config:

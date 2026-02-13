@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   CardContent,
+  FormControl,
   FormControlLabel,
   MenuItem,
   Select,
@@ -10,7 +11,7 @@ import {
   Switch,
   Typography
 } from "@mui/material";
-import { createChart, ColorType, UTCTimestamp } from "lightweight-charts";
+import { ColorType, UTCTimestamp, createChart } from "lightweight-charts";
 import { connectWebSocket } from "../../services/websocket";
 
 type MarketDataMessage = {
@@ -21,13 +22,40 @@ type MarketDataMessage = {
   timestamp: string;
 };
 
+type CandlePoint = {
+  time: UTCTimestamp;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
 const ChartView = () => {
   const chartRef = useRef<HTMLDivElement | null>(null);
+  const chartApiRef = useRef<ReturnType<typeof createChart> | null>(null);
+  const candleSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addCandlestickSeries"]> | null>(null);
+  const volumeSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addHistogramSeries"]> | null>(null);
+  const emaSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
+  const smaSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
+  const vwapSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
+  const bbUpperSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
+  const bbLowerSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
+
+  const dataPointsRef = useRef<CandlePoint[]>([]);
+  const currentBucketRef = useRef<number | null>(null);
+  const emaValueRef = useRef<number | null>(null);
+
+  const [symbol, setSymbol] = useState("AAPL");
   const [timeframe, setTimeframe] = useState("1m");
   const [showEMA, setShowEMA] = useState(true);
   const [showSMA, setShowSMA] = useState(false);
   const [showVWAP, setShowVWAP] = useState(false);
   const [showBB, setShowBB] = useState(false);
+  const showEMARef = useRef(showEMA);
+  const showSMARef = useRef(showSMA);
+  const showVWAPRef = useRef(showVWAP);
+  const showBBRef = useRef(showBB);
 
   const tfSeconds = useMemo(() => {
     const map: Record<string, number> = {
@@ -44,9 +72,14 @@ const ChartView = () => {
   useEffect(() => {
     if (!chartRef.current) return;
 
+    if (chartApiRef.current) {
+      chartApiRef.current.remove();
+      chartApiRef.current = null;
+    }
+
     const chart = createChart(chartRef.current, {
       width: chartRef.current.clientWidth,
-      height: 280,
+      height: 340,
       layout: {
         background: { type: ColorType.Solid, color: "#ffffff" },
         textColor: "#1f2937"
@@ -57,79 +90,127 @@ const ChartView = () => {
       }
     });
 
-    const priceSeries = chart.addLineSeries({ color: "#1f7a8c" });
-    const emaSeries = chart.addLineSeries({ color: "#f97316", lineWidth: 2 });
-    const smaSeries = chart.addLineSeries({ color: "#22c55e", lineWidth: 2 });
-    const vwapSeries = chart.addLineSeries({ color: "#6366f1", lineWidth: 2 });
-    const bbUpperSeries = chart.addLineSeries({ color: "#ef4444", lineWidth: 1 });
-    const bbLowerSeries = chart.addLineSeries({ color: "#ef4444", lineWidth: 1 });
+    chartApiRef.current = chart;
+    candleSeriesRef.current = chart.addCandlestickSeries({
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      wickUpColor: "#22c55e",
+      wickDownColor: "#ef4444",
+      borderVisible: false
+    });
 
-    const dataPoints: { time: UTCTimestamp; value: number; volume: number }[] = [];
+    volumeSeriesRef.current = chart.addHistogramSeries({
+      priceScaleId: "",
+      priceFormat: { type: "volume" },
+      color: "#94a3b8"
+    });
+
+    chart.priceScale("").applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 }
+    });
+
+    emaSeriesRef.current = chart.addLineSeries({ color: "#f97316", lineWidth: 2 });
+    smaSeriesRef.current = chart.addLineSeries({ color: "#22c55e", lineWidth: 2 });
+    vwapSeriesRef.current = chart.addLineSeries({ color: "#6366f1", lineWidth: 2 });
+    bbUpperSeriesRef.current = chart.addLineSeries({ color: "#ef4444", lineWidth: 1 });
+    bbLowerSeriesRef.current = chart.addLineSeries({ color: "#ef4444", lineWidth: 1 });
+
+    dataPointsRef.current = [];
+    currentBucketRef.current = null;
+    emaValueRef.current = null;
+
     const emaPeriod = 20;
     const smaPeriod = 20;
     const bbPeriod = 20;
     const bbStd = 2;
-    let emaValue: number | null = null;
-    let currentBucket: number | null = null;
-    let lastTime: UTCTimestamp | null = null;
 
-    const symbol = "AAPL";
     const ws = connectWebSocket(`/ws/market-data?symbol=${symbol}`, (msg) => {
       const data = msg as MarketDataMessage;
       if (data.channel !== "market-data" || data.symbol !== symbol) return;
+
       const ts = Math.floor(new Date(data.timestamp).getTime() / 1000);
       const bucket = Math.floor(ts / tfSeconds) * tfSeconds;
       const time = bucket as UTCTimestamp;
 
-      if (currentBucket === null || bucket !== currentBucket) {
-        currentBucket = bucket;
-        dataPoints.push({ time, value: data.price, volume: data.volume });
-        if (dataPoints.length > 200) dataPoints.shift();
-        lastTime = time;
-      } else if (lastTime !== null) {
-        const last = dataPoints[dataPoints.length - 1];
-        last.value = data.price;
-        last.volume += data.volume;
+      let candle = dataPointsRef.current[dataPointsRef.current.length - 1];
+      if (currentBucketRef.current === null || bucket !== currentBucketRef.current) {
+        currentBucketRef.current = bucket;
+        candle = {
+          time,
+          open: data.price,
+          high: data.price,
+          low: data.price,
+          close: data.price,
+          volume: data.volume
+        };
+        dataPointsRef.current.push(candle);
+        if (dataPointsRef.current.length > 200) dataPointsRef.current.shift();
+      } else if (candle) {
+        candle.close = data.price;
+        candle.high = Math.max(candle.high, data.price);
+        candle.low = Math.min(candle.low, data.price);
+        candle.volume += data.volume;
       }
 
-      const points = dataPoints.map((p) => ({ time: p.time, value: p.value }));
-      priceSeries.setData(points);
+      const candleData = dataPointsRef.current.map((p) => ({
+        time: p.time,
+        open: p.open,
+        high: p.high,
+        low: p.low,
+        close: p.close
+      }));
 
-      if (showEMA) {
-        if (emaValue === null) {
-          emaValue = data.price;
+      candleSeriesRef.current?.setData(candleData);
+
+      const volumeData = dataPointsRef.current.map((p) => ({
+        time: p.time,
+        value: p.volume,
+        color: p.close >= p.open ? "#22c55e" : "#ef4444"
+      }));
+      volumeSeriesRef.current?.setData(volumeData);
+
+      if (showEMARef.current) {
+        if (emaValueRef.current === null) {
+          emaValueRef.current = data.price;
         } else {
           const emaMultiplier = 2 / (emaPeriod + 1);
-          emaValue = data.price * emaMultiplier + emaValue * (1 - emaMultiplier);
+          emaValueRef.current =
+            data.price * emaMultiplier + emaValueRef.current * (1 - emaMultiplier);
         }
-        emaSeries.update({ time, value: Number(emaValue.toFixed(2)) });
+        emaSeriesRef.current?.update({
+          time,
+          value: Number(emaValueRef.current.toFixed(2))
+        });
       }
 
-      if (showSMA && dataPoints.length >= smaPeriod) {
-        const slice = dataPoints.slice(-smaPeriod);
-        const sma = slice.reduce((acc, p) => acc + p.value, 0) / smaPeriod;
-        smaSeries.update({ time, value: Number(sma.toFixed(2)) });
+      if (showSMARef.current && dataPointsRef.current.length >= smaPeriod) {
+        const slice = dataPointsRef.current.slice(-smaPeriod);
+        const sma = slice.reduce((acc, p) => acc + p.close, 0) / smaPeriod;
+        smaSeriesRef.current?.update({ time, value: Number(sma.toFixed(2)) });
       }
 
-      if (showVWAP) {
-        const total = dataPoints.reduce((acc, p) => acc + p.value * p.volume, 0);
-        const vol = dataPoints.reduce((acc, p) => acc + p.volume, 0);
+      if (showVWAPRef.current) {
+        const total = dataPointsRef.current.reduce(
+          (acc, p) => acc + p.close * p.volume,
+          0
+        );
+        const vol = dataPointsRef.current.reduce((acc, p) => acc + p.volume, 0);
         if (vol > 0) {
           const vwap = total / vol;
-          vwapSeries.update({ time, value: Number(vwap.toFixed(2)) });
+          vwapSeriesRef.current?.update({ time, value: Number(vwap.toFixed(2)) });
         }
       }
 
-      if (showBB && dataPoints.length >= bbPeriod) {
-        const slice = dataPoints.slice(-bbPeriod);
-        const mean = slice.reduce((acc, p) => acc + p.value, 0) / bbPeriod;
+      if (showBBRef.current && dataPointsRef.current.length >= bbPeriod) {
+        const slice = dataPointsRef.current.slice(-bbPeriod);
+        const mean = slice.reduce((acc, p) => acc + p.close, 0) / bbPeriod;
         const variance =
-          slice.reduce((acc, p) => acc + (p.value - mean) ** 2, 0) / bbPeriod;
+          slice.reduce((acc, p) => acc + (p.close - mean) ** 2, 0) / bbPeriod;
         const std = Math.sqrt(variance);
         const upper = mean + bbStd * std;
         const lower = mean - bbStd * std;
-        bbUpperSeries.update({ time, value: Number(upper.toFixed(2)) });
-        bbLowerSeries.update({ time, value: Number(lower.toFixed(2)) });
+        bbUpperSeriesRef.current?.update({ time, value: Number(upper.toFixed(2)) });
+        bbLowerSeriesRef.current?.update({ time, value: Number(lower.toFixed(2)) });
       }
     });
 
@@ -142,8 +223,21 @@ const ChartView = () => {
       window.removeEventListener("resize", handleResize);
       ws.close();
       chart.remove();
+      chartApiRef.current = null;
     };
-  }, [tfSeconds, showEMA, showSMA, showVWAP, showBB]);
+  }, [symbol, tfSeconds]);
+
+  useEffect(() => {
+    emaSeriesRef.current?.applyOptions({ visible: showEMA });
+    smaSeriesRef.current?.applyOptions({ visible: showSMA });
+    vwapSeriesRef.current?.applyOptions({ visible: showVWAP });
+    bbUpperSeriesRef.current?.applyOptions({ visible: showBB });
+    bbLowerSeriesRef.current?.applyOptions({ visible: showBB });
+    showEMARef.current = showEMA;
+    showSMARef.current = showSMA;
+    showVWAPRef.current = showVWAP;
+    showBBRef.current = showBB;
+  }, [showEMA, showSMA, showVWAP, showBB]);
 
   const handleTimeframe = (event: SelectChangeEvent) => {
     setTimeframe(event.target.value);
@@ -154,6 +248,16 @@ const ChartView = () => {
       <CardContent>
         <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2, flexWrap: "wrap" }}>
           <Typography variant="h6">Price Chart</Typography>
+          <FormControl size="small" sx={{ minWidth: 120 }}>
+            <Select value={symbol} onChange={(event) => setSymbol(event.target.value)}>
+              <MenuItem value="AAPL">AAPL</MenuItem>
+              <MenuItem value="MSFT">MSFT</MenuItem>
+              <MenuItem value="TSLA">TSLA</MenuItem>
+              <MenuItem value="NVDA">NVDA</MenuItem>
+              <MenuItem value="AMD">AMD</MenuItem>
+              <MenuItem value="AMZN">AMZN</MenuItem>
+            </Select>
+          </FormControl>
           <Select size="small" value={timeframe} onChange={handleTimeframe}>
             <MenuItem value="1m">1m</MenuItem>
             <MenuItem value="5m">5m</MenuItem>

@@ -35,6 +35,16 @@ export const fetchOrders = async () => {
   return data;
 };
 
+export const cancelOrder = async (orderId: number) => {
+  const { data } = await api.delete(`/api/trading/order/${orderId}`);
+  return data;
+};
+
+export const modifyOrder = async (orderId: number, payload: Record<string, unknown>) => {
+  const { data } = await api.put(`/api/trading/order/${orderId}`, payload);
+  return data;
+};
+
 export const fetchRiskSummary = async () => {
   const { data } = await api.get("/api/risk/summary");
   return data;
@@ -47,6 +57,11 @@ export const fetchAlerts = async () => {
 
 export const acknowledgeAlert = async (alertId: string) => {
   const { data } = await api.post("/api/alerts/ack", { alert_id: alertId });
+  return data;
+};
+
+export const triggerKillSwitch = async () => {
+  const { data } = await api.post("/api/trading/kill-switch");
   return data;
 };
 
