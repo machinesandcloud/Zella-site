@@ -28,6 +28,12 @@ def get_risk_manager() -> RiskManager:
     return app.state.risk_manager
 
 
+def get_activity_log():
+    from main import app
+
+    return app.state.ai_activity
+
+
 @router.get("/scan")
 def scan_market(
     auto_trader: AutoTrader = Depends(get_auto_trader),
@@ -53,12 +59,15 @@ def auto_trade(
     auto_trader: AutoTrader = Depends(get_auto_trader),
     ibkr: IBKRClient = Depends(get_ibkr_client),
     risk_manager: RiskManager = Depends(get_risk_manager),
+    activity_log=Depends(get_activity_log),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     picks = auto_trader.select_top(limit)
     executed = []
 
     if execute:
+        activity_log.update_status(state="RUNNING", last_scan="auto_trade")
+        activity_log.add("SCAN", "Auto-trade scan started", "INFO", {"limit": str(limit)})
         if not confirm_execute:
             raise HTTPException(status_code=400, detail="confirm_execute=true required")
         if ibkr.get_trading_mode() != "PAPER":
@@ -92,5 +101,29 @@ def auto_trade(
             order_id = ibkr.place_market_order(symbol, quantity, "BUY")
             executed.append({"symbol": symbol, "quantity": quantity, "order_id": order_id})
             risk_manager.trades_today += 1
+            activity_log.add(
+                "ORDER",
+                f"Auto-trade order submitted for {symbol}",
+                "INFO",
+                {"order_id": str(order_id), "quantity": str(quantity)},
+            )
+
+        activity_log.update_status(last_order=str(executed[-1]["order_id"]) if executed else None)
 
     return {"ranked": picks, "executed": executed}
+
+
+@router.get("/activity")
+def activity_feed(
+    activity_log=Depends(get_activity_log),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return activity_log.snapshot()
+
+
+@router.get("/status")
+def ai_status(
+    activity_log=Depends(get_activity_log),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return {"status": activity_log.status}

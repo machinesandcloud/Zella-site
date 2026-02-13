@@ -154,6 +154,16 @@ export const fetchStrategies = async () => {
   return data;
 };
 
+export const fetchAiActivity = async () => {
+  const { data } = await api.get("/api/ai/activity");
+  return data;
+};
+
+export const fetchAiStatus = async () => {
+  const { data } = await api.get("/api/ai/status");
+  return data;
+};
+
 export const startStrategy = async (strategyId: string, payload: Record<string, unknown>) => {
   const { data } = await api.post(`/api/strategies/${strategyId}/start`, payload);
   return data;

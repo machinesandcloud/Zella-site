@@ -37,6 +37,7 @@ import StrategyConfig from "./components/Settings/StrategyConfig";
 import Login from "./components/Auth/Login";
 import Register from "./components/Auth/Register";
 import AutopilotControl from "./components/AI/AutopilotControl";
+import AutonomyTimeline from "./components/AI/AutonomyTimeline";
 import OptionsChain from "./components/Trading/OptionsChain";
 import VoiceAssistantSettings from "./components/Settings/VoiceAssistantSettings";
 import BacktestPanel from "./components/Trading/BacktestPanel";
@@ -314,6 +315,9 @@ const App = () => {
               <Grid container spacing={3}>
                 <Grid item xs={12}>
                   <AutopilotControl />
+                </Grid>
+                <Grid item xs={12}>
+                  <AutonomyTimeline />
                 </Grid>
               </Grid>
             )}

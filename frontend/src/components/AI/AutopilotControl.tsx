@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Button,
   Card,
@@ -11,7 +11,7 @@ import {
   ToggleButtonGroup,
   Typography
 } from "@mui/material";
-import { triggerKillSwitch } from "../../services/api";
+import { fetchAiStatus, triggerKillSwitch } from "../../services/api";
 
 type Mode = "ASSISTED" | "SEMI_AUTO" | "FULL_AUTO" | "GOD_MODE";
 
@@ -31,6 +31,7 @@ const AutopilotControl = () => {
     "BALANCED"
   );
   const [metrics] = useState({ symbols: 1247, strategies: 3, trades: 12, pnl: 842 });
+  const [aiStatus, setAiStatus] = useState<{ state?: string; mode?: string }>({ state: "IDLE", mode: "PAPER" });
 
   const decisions = useMemo<Decision[]>(
     () => [
@@ -73,6 +74,12 @@ const AutopilotControl = () => {
     );
   };
 
+  useEffect(() => {
+    fetchAiStatus()
+      .then((data) => setAiStatus(data?.status || {}))
+      .catch(() => setAiStatus({ state: "UNKNOWN", mode: "PAPER" }));
+  }, []);
+
   const notify = (message: string, severity: "success" | "info" | "warning" | "error" = "info") => {
     window.dispatchEvent(new CustomEvent("app:toast", { detail: { message, severity } }));
   };
@@ -89,6 +96,10 @@ const AutopilotControl = () => {
             <Typography variant="caption" color="text.secondary">
               Autopilot executes in PAPER mode only. Review results before enabling any live trading.
             </Typography>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Chip label={`State: ${aiStatus.state || "UNKNOWN"}`} size="small" />
+              <Chip label={`Mode: ${aiStatus.mode || "PAPER"}`} size="small" />
+            </Stack>
           </Stack>
           <Chip label={status} color={status === "ACTIVE" ? "success" : "default"} />
         </Stack>

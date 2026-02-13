@@ -15,6 +15,7 @@ from core import (
     RiskManager,
     StrategyEngine,
 )
+from core.ai_activity import ActivityLog
 from core.auto_trader import AutoTrader
 from core.mock_ibkr_client import MockIBKRClient
 from core.ibkr_client import ibkr_api_available
@@ -76,6 +77,7 @@ def on_startup() -> None:
     app.state.strategy_engine = StrategyEngine(
         app.state.ibkr_client, app.state.risk_manager, app.state.position_manager
     )
+    app.state.ai_activity = ActivityLog()
     app.state.strategy_configs = {}
     app.state.market_data_provider = IBKRMarketDataProvider(
         app.state.ibkr_client, universe=get_default_universe()
