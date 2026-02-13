@@ -9,6 +9,7 @@ import NotificationCenter from "./components/Dashboard/NotificationCenter";
 import ChartView from "./components/Trading/ChartView";
 import EquityCurve from "./components/Dashboard/EquityCurve";
 import TradeJournal from "./components/Dashboard/TradeJournal";
+import PerformanceAnalytics from "./components/Dashboard/PerformanceAnalytics";
 import OrderEntry from "./components/Trading/OrderEntry";
 import Watchlist from "./components/Trading/Watchlist";
 import StrategyControlPanel from "./components/Trading/StrategyControlPanel";
@@ -68,6 +69,9 @@ const App = () => {
             </Grid>
             <Grid item xs={12}>
               <EquityCurve />
+            </Grid>
+            <Grid item xs={12}>
+              <PerformanceAnalytics />
             </Grid>
             <Grid item xs={12}>
               <RiskDashboard />
