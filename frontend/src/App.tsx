@@ -25,6 +25,7 @@ import RiskSettings from "./components/Settings/RiskSettings";
 import StrategyConfig from "./components/Settings/StrategyConfig";
 import Login from "./components/Auth/Login";
 import Register from "./components/Auth/Register";
+import Onboarding from "./components/Auth/Onboarding";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import OptionsChain from "./components/Trading/OptionsChain";
 import VoiceAssistantSettings from "./components/Settings/VoiceAssistantSettings";
@@ -173,6 +174,9 @@ const App = () => {
             </Grid>
             <Grid item xs={12} md={6}>
               <Register />
+            </Grid>
+            <Grid item xs={12}>
+              <Onboarding />
             </Grid>
           </Grid>
         )}
