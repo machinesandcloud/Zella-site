@@ -11,6 +11,7 @@ import EquityCurve from "./components/Dashboard/EquityCurve";
 import TradeJournal from "./components/Dashboard/TradeJournal";
 import PerformanceAnalytics from "./components/Dashboard/PerformanceAnalytics";
 import PortfolioAnalysis from "./components/Dashboard/PortfolioAnalysis";
+import NewsFeed from "./components/Dashboard/NewsFeed";
 import OrderEntry from "./components/Trading/OrderEntry";
 import Watchlist from "./components/Trading/Watchlist";
 import StrategyControlPanel from "./components/Trading/StrategyControlPanel";
@@ -24,6 +25,7 @@ import StrategyConfig from "./components/Settings/StrategyConfig";
 import Login from "./components/Auth/Login";
 import Register from "./components/Auth/Register";
 import AutopilotControl from "./components/AI/AutopilotControl";
+import OptionsChain from "./components/Trading/OptionsChain";
 import BacktestPanel from "./components/Trading/BacktestPanel";
 
 const App = () => {
@@ -81,6 +83,9 @@ const App = () => {
               <PortfolioAnalysis />
             </Grid>
             <Grid item xs={12}>
+              <NewsFeed />
+            </Grid>
+            <Grid item xs={12}>
               <NotificationCenter />
             </Grid>
             <Grid item xs={12}>
@@ -105,6 +110,9 @@ const App = () => {
             </Grid>
             <Grid item xs={12} md={4}>
               <TimeSales />
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <OptionsChain />
             </Grid>
             <Grid item xs={12} md={4}>
               <AIMarketScanner />

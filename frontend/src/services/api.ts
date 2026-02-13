@@ -45,6 +45,11 @@ export const updateTradeNotes = async (tradeId: number, notes: string) => {
   return data;
 };
 
+export const fetchNews = async () => {
+  const { data } = await api.get("/api/news");
+  return data;
+};
+
 export const fetchAccountSummary = async () => {
   const { data } = await api.get("/api/account/summary");
   return data;
