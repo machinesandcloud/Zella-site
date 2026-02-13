@@ -69,9 +69,9 @@ const NotificationCenter = () => {
       return;
     }
     if (alerts.length > prevAlertCount.current) {
-      const AudioContext = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (AudioContext) {
-        const context = new AudioContext();
+      const audioContextClass = window.AudioContext;
+      if (audioContextClass) {
+        const context = new audioContextClass();
         const oscillator = context.createOscillator();
         const gain = context.createGain();
         oscillator.type = "sine";
