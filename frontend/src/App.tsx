@@ -13,6 +13,7 @@ import PerformanceAnalytics from "./components/Dashboard/PerformanceAnalytics";
 import PortfolioAnalysis from "./components/Dashboard/PortfolioAnalysis";
 import NewsFeed from "./components/Dashboard/NewsFeed";
 import SystemHealth from "./components/Dashboard/SystemHealth";
+import CalendarHeatmap from "./components/Dashboard/CalendarHeatmap";
 import OrderEntry from "./components/Trading/OrderEntry";
 import Watchlist from "./components/Trading/Watchlist";
 import StrategyControlPanel from "./components/Trading/StrategyControlPanel";
@@ -83,6 +84,9 @@ const App = () => {
             </Grid>
             <Grid item xs={12}>
               <PerformanceAnalytics />
+            </Grid>
+            <Grid item xs={12}>
+              <CalendarHeatmap />
             </Grid>
             <Grid item xs={12}>
               <RiskDashboard />
