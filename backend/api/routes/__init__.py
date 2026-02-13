@@ -1,4 +1,4 @@
-from . import account, auth, backtest, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk
+from . import account, auth, backtest, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk, trades
 
 __all__ = [
     "account",
@@ -13,4 +13,5 @@ __all__ = [
     "qa",
     "alerts",
     "risk",
+    "trades",
 ]

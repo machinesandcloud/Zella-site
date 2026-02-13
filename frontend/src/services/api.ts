@@ -35,6 +35,16 @@ export const fetchAccountSnapshots = async () => {
   return data;
 };
 
+export const fetchTrades = async () => {
+  const { data } = await api.get("/api/trades");
+  return data;
+};
+
+export const updateTradeNotes = async (tradeId: number, notes: string) => {
+  const { data } = await api.put(`/api/trades/${tradeId}/notes`, { notes });
+  return data;
+};
+
 export const fetchAccountSummary = async () => {
   const { data } = await api.get("/api/account/summary");
   return data;
