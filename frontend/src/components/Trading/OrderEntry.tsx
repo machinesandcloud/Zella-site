@@ -17,6 +17,8 @@ import {
 import api, { fetchAccountSummary } from "../../services/api";
 
 type SizingMode = "FIXED" | "RISK_BASED";
+type RiskMode = "PERCENT" | "FIXED";
+type StopMethod = "MANUAL" | "ATR" | "STDDEV" | "SUPPORT";
 
 type OrderForm = {
   symbol: string;
@@ -30,6 +32,16 @@ type OrderForm = {
   tif: string;
   sizing_mode: SizingMode;
   risk_percent: string;
+  risk_mode: RiskMode;
+  risk_fixed: string;
+  stop_method: StopMethod;
+  atr_value: string;
+  atr_multiple: string;
+  stddev_value: string;
+  stddev_multiple: string;
+  support_level: string;
+  resistance_level: string;
+  expected_entry: string;
 };
 
 const ORDER_TYPES = [
@@ -61,7 +73,17 @@ const OrderEntry = () => {
     stop_loss: "",
     tif: "DAY",
     sizing_mode: "FIXED",
-    risk_percent: "1"
+    risk_percent: "1",
+    risk_mode: "PERCENT",
+    risk_fixed: "250",
+    stop_method: "MANUAL",
+    atr_value: "",
+    atr_multiple: "2.5",
+    stddev_value: "",
+    stddev_multiple: "2",
+    support_level: "",
+    resistance_level: "",
+    expected_entry: ""
   });
   const [accountValue, setAccountValue] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -80,10 +102,11 @@ const OrderEntry = () => {
   const symbols = ["AAPL", "MSFT", "TSLA", "NVDA", "AMD", "AMZN"];
 
   const entryPrice = useMemo(() => {
+    const expected = Number(form.expected_entry || 0);
     const limit = Number(form.limit_price || 0);
     const stop = Number(form.stop_price || 0);
-    return limit || stop || 0;
-  }, [form.limit_price, form.stop_price]);
+    return expected || limit || stop || 0;
+  }, [form.expected_entry, form.limit_price, form.stop_price]);
 
   const stopPrice = useMemo(() => Number(form.stop_loss || form.stop_price || 0), [form]);
 
@@ -94,11 +117,21 @@ const OrderEntry = () => {
 
   const calculatedShares = useMemo(() => {
     if (form.sizing_mode !== "RISK_BASED") return form.quantity;
-    if (!riskPerShare || !accountValue) return 0;
-    const riskPct = Number(form.risk_percent || 0) / 100;
-    const dollarsAtRisk = accountValue * riskPct;
+    if (!riskPerShare) return 0;
+    const dollarsAtRisk =
+      form.risk_mode === "FIXED"
+        ? Number(form.risk_fixed || 0)
+        : accountValue * (Number(form.risk_percent || 0) / 100);
     return Math.max(0, Math.floor(dollarsAtRisk / riskPerShare));
-  }, [form.sizing_mode, form.quantity, form.risk_percent, riskPerShare, accountValue]);
+  }, [
+    form.sizing_mode,
+    form.quantity,
+    form.risk_percent,
+    form.risk_mode,
+    form.risk_fixed,
+    riskPerShare,
+    accountValue
+  ]);
 
   const riskAtStop = useMemo(() => {
     if (!riskPerShare) return "--";
@@ -107,6 +140,44 @@ const OrderEntry = () => {
   }, [riskPerShare, calculatedShares, form.sizing_mode, form.quantity]);
 
   const unsupported = !SUPPORTED_ORDER_TYPES.includes(form.order_type);
+
+  useEffect(() => {
+    if (!entryPrice || form.stop_method === "MANUAL") return;
+    if (form.stop_method === "ATR") {
+      const atr = Number(form.atr_value || 0);
+      const mult = Number(form.atr_multiple || 0);
+      if (!atr || !mult) return;
+      const stop =
+        form.action === "BUY" ? entryPrice - atr * mult : entryPrice + atr * mult;
+      update("stop_loss", stop.toFixed(2));
+    }
+    if (form.stop_method === "STDDEV") {
+      const stddev = Number(form.stddev_value || 0);
+      const mult = Number(form.stddev_multiple || 0);
+      if (!stddev || !mult) return;
+      const stop =
+        form.action === "BUY" ? entryPrice - stddev * mult : entryPrice + stddev * mult;
+      update("stop_loss", stop.toFixed(2));
+    }
+    if (form.stop_method === "SUPPORT") {
+      const level =
+        form.action === "BUY"
+          ? Number(form.support_level || 0)
+          : Number(form.resistance_level || 0);
+      if (!level) return;
+      update("stop_loss", level.toFixed(2));
+    }
+  }, [
+    entryPrice,
+    form.action,
+    form.stop_method,
+    form.atr_value,
+    form.atr_multiple,
+    form.stddev_value,
+    form.stddev_multiple,
+    form.support_level,
+    form.resistance_level
+  ]);
 
   const applyRMultiple = (multiple: number) => {
     if (!entryPrice || !riskPerShare) return;
@@ -152,6 +223,11 @@ const OrderEntry = () => {
     });
 
     setWarning("Order submitted.");
+    window.dispatchEvent(
+      new CustomEvent("app:toast", {
+        detail: { message: `Order submitted for ${form.symbol}.`, severity: "success" }
+      })
+    );
   };
 
   return (
@@ -163,6 +239,9 @@ const OrderEntry = () => {
             Account: ${accountValue.toLocaleString() || "0"}
           </Typography>
         </Stack>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Premarket reminder: limit orders only, lower liquidity, wider spreads.
+        </Typography>
 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
@@ -234,7 +313,30 @@ const OrderEntry = () => {
               label="Risk %"
               value={form.risk_percent}
               onChange={(e) => update("risk_percent", e.target.value)}
-              disabled={form.sizing_mode !== "RISK_BASED"}
+              disabled={form.sizing_mode !== "RISK_BASED" || form.risk_mode !== "PERCENT"}
+            />
+          </Grid>
+          <Grid item xs={6} md={3}>
+            <FormControl fullWidth>
+              <InputLabel>Risk Mode</InputLabel>
+              <Select
+                value={form.risk_mode}
+                label="Risk Mode"
+                onChange={(e) => update("risk_mode", e.target.value)}
+                disabled={form.sizing_mode !== "RISK_BASED"}
+              >
+                <MenuItem value="PERCENT">Percent</MenuItem>
+                <MenuItem value="FIXED">Fixed $</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={6} md={3}>
+            <TextField
+              fullWidth
+              label="Fixed Risk ($)"
+              value={form.risk_fixed}
+              onChange={(e) => update("risk_fixed", e.target.value)}
+              disabled={form.sizing_mode !== "RISK_BASED" || form.risk_mode !== "FIXED"}
             />
           </Grid>
           <Grid item xs={6} md={3}>
@@ -255,6 +357,16 @@ const OrderEntry = () => {
                 <MenuItem value="GTC">GTC</MenuItem>
               </Select>
             </FormControl>
+          </Grid>
+
+          <Grid item xs={6} md={3}>
+            <TextField
+              fullWidth
+              label="Expected Entry"
+              value={form.expected_entry}
+              onChange={(e) => update("expected_entry", e.target.value)}
+              helperText="Used for risk sizing on market orders"
+            />
           </Grid>
 
           <Grid item xs={6} md={3}>
@@ -287,6 +399,76 @@ const OrderEntry = () => {
               label="Stop Loss"
               value={form.stop_loss}
               onChange={(e) => update("stop_loss", e.target.value)}
+            />
+          </Grid>
+
+          <Grid item xs={12} md={4}>
+            <FormControl fullWidth>
+              <InputLabel>Stop Method</InputLabel>
+              <Select
+                value={form.stop_method}
+                label="Stop Method"
+                onChange={(e) => update("stop_method", e.target.value)}
+              >
+                <MenuItem value="MANUAL">Manual</MenuItem>
+                <MenuItem value="ATR">ATR Multiple</MenuItem>
+                <MenuItem value="STDDEV">Std Dev (Bollinger)</MenuItem>
+                <MenuItem value="SUPPORT">Support/Resistance</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={6} md={2}>
+            <TextField
+              fullWidth
+              label="ATR"
+              value={form.atr_value}
+              onChange={(e) => update("atr_value", e.target.value)}
+              disabled={form.stop_method !== "ATR"}
+            />
+          </Grid>
+          <Grid item xs={6} md={2}>
+            <TextField
+              fullWidth
+              label="ATR Mult"
+              value={form.atr_multiple}
+              onChange={(e) => update("atr_multiple", e.target.value)}
+              disabled={form.stop_method !== "ATR"}
+            />
+          </Grid>
+          <Grid item xs={6} md={2}>
+            <TextField
+              fullWidth
+              label="Std Dev"
+              value={form.stddev_value}
+              onChange={(e) => update("stddev_value", e.target.value)}
+              disabled={form.stop_method !== "STDDEV"}
+            />
+          </Grid>
+          <Grid item xs={6} md={2}>
+            <TextField
+              fullWidth
+              label="Std Mult"
+              value={form.stddev_multiple}
+              onChange={(e) => update("stddev_multiple", e.target.value)}
+              disabled={form.stop_method !== "STDDEV"}
+            />
+          </Grid>
+          <Grid item xs={6} md={2}>
+            <TextField
+              fullWidth
+              label="Support"
+              value={form.support_level}
+              onChange={(e) => update("support_level", e.target.value)}
+              disabled={form.stop_method !== "SUPPORT" || form.action !== "BUY"}
+            />
+          </Grid>
+          <Grid item xs={6} md={2}>
+            <TextField
+              fullWidth
+              label="Resistance"
+              value={form.resistance_level}
+              onChange={(e) => update("resistance_level", e.target.value)}
+              disabled={form.stop_method !== "SUPPORT" || form.action !== "SELL"}
             />
           </Grid>
 

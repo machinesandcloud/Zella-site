@@ -3,6 +3,7 @@ import {
   Button,
   Card,
   CardContent,
+  Chip,
   Grid,
   Stack,
   TextField,
@@ -134,6 +135,19 @@ const Watchlist = () => {
         <Typography variant="h6" sx={{ mb: 2 }}>
           Watchlist
         </Typography>
+        <Stack spacing={1} sx={{ mb: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            Playbook steps: define your setup, screen for criteria, review charts on multiple
+            time frames, and track catalysts before the open.
+          </Typography>
+          <Stack direction="row" spacing={1} flexWrap="wrap">
+            <Chip size="small" label="Float < 100M" />
+            <Chip size="small" label="Relative Vol >= 2x" />
+            <Chip size="small" label="Catalyst/News" />
+            <Chip size="small" label="Premarket Gap" />
+            <Chip size="small" label="Trend + Pullback" />
+          </Stack>
+        </Stack>
         <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
           <TextField
             size="small"

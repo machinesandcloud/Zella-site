@@ -28,6 +28,10 @@ const RiskSettings = () => {
         <Typography variant="h6" sx={{ mb: 2 }}>
           Risk Management
         </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Keep risk per trade consistent. Many traders reduce percentage risk as account size
+          grows. Define stops before entry to quantify risk.
+        </Typography>
         <Grid container spacing={2}>
           <Grid item xs={12} md={6}>
             <TextField
