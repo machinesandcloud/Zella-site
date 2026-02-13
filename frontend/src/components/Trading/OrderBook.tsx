@@ -11,6 +11,8 @@ type OrderBookMessage = {
   bids: BookLevel[];
   asks: BookLevel[];
   timestamp: string;
+  status?: string;
+  reason?: string;
 };
 
 const OrderBook = () => {
@@ -33,7 +35,11 @@ const OrderBook = () => {
           Order Book (Level 2)
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          {book ? `Mid: ${book.mid} | Spread: ${book.spread}` : "Loading..."}
+          {book?.status === "UNAVAILABLE"
+            ? book.reason
+            : book
+            ? `Mid: ${book.mid} | Spread: ${book.spread}`
+            : "Loading..."}
         </Typography>
         <Grid container spacing={2}>
           <Grid item xs={6}>

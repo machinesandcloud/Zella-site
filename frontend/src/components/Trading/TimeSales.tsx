@@ -9,6 +9,8 @@ type TimeSalesMessage = {
   size: number;
   side: "BUY" | "SELL";
   timestamp: string;
+  status?: string;
+  reason?: string;
 };
 
 const TimeSales = () => {
@@ -18,6 +20,10 @@ const TimeSales = () => {
     const ws = connectWebSocket("/ws/time-sales?symbol=AAPL", (msg) => {
       const data = msg as TimeSalesMessage;
       if (data.channel !== "time-sales") return;
+      if (data.status === "UNAVAILABLE") {
+        setTrades([data]);
+        return;
+      }
       setTrades((prev) => [data, ...prev].slice(0, 12));
     });
     return () => ws.close();
@@ -29,7 +35,17 @@ const TimeSales = () => {
         <Typography variant="h6" sx={{ mb: 1 }}>
           Time & Sales
         </Typography>
-        {trades.map((trade, idx) => (
+        {trades.length === 0 && (
+          <Typography variant="body2" color="text.secondary">
+            Waiting for tape updates...
+          </Typography>
+        )}
+        {trades[0]?.status === "UNAVAILABLE" && (
+          <Typography variant="body2" color="text.secondary">
+            {trades[0].reason}
+          </Typography>
+        )}
+        {trades.filter((trade) => !trade.status).map((trade, idx) => (
           <Typography
             key={`${trade.timestamp}-${idx}`}
             variant="body2"

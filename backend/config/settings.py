@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     # QA / Dev
     use_mock_ibkr: bool = True
+    use_free_data: bool = True
 
     # Screener defaults
     screener_min_avg_volume: float = 500000

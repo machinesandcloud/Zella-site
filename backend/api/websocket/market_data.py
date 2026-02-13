@@ -9,6 +9,13 @@ router = APIRouter()
 
 FAKE_STREAM = FakeMarketDataStream(DEFAULT_SYMBOLS)
 
+
+def _get_market_provider():
+    from main import app
+
+    return app.state.market_data_provider
+
+
 async def _stream(websocket: WebSocket, channel: str) -> None:
     await websocket.accept()
     try:
@@ -33,10 +40,23 @@ async def market_data_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     try:
         while True:
-            ticks = FAKE_STREAM.ticks(symbols)
-            for tick in ticks:
-                message = {"channel": "market-data", **tick}
-                await websocket.send_json(message)
+            provider = _get_market_provider()
+            for symbol in symbols:
+                snapshot = provider.get_market_snapshot(symbol) or {}
+                if snapshot:
+                    message = {
+                        "channel": "market-data",
+                        "symbol": symbol,
+                        "price": snapshot.get("price", 0),
+                        "volume": snapshot.get("volume", 0),
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }
+                    await websocket.send_json(message)
+                else:
+                    ticks = FAKE_STREAM.ticks([symbol])
+                    for tick in ticks:
+                        message = {"channel": "market-data", **tick}
+                        await websocket.send_json(message)
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         return
@@ -58,10 +78,19 @@ async def order_book_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     try:
         while True:
-            payload = FAKE_STREAM.order_book(symbol)
-            message = {"channel": "order-book", **payload}
+            message = {
+                "channel": "order-book",
+                "symbol": symbol,
+                "status": "UNAVAILABLE",
+                "reason": "Free data source does not provide Level 2 order book",
+                "timestamp": datetime.utcnow().isoformat(),
+                "bids": [],
+                "asks": [],
+                "mid": None,
+                "spread": None,
+            }
             await websocket.send_json(message)
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
     except WebSocketDisconnect:
         return
 
@@ -72,9 +101,17 @@ async def time_sales_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     try:
         while True:
-            payload = FAKE_STREAM.time_sales(symbol)
-            message = {"channel": "time-sales", **payload}
+            message = {
+                "channel": "time-sales",
+                "symbol": symbol,
+                "status": "UNAVAILABLE",
+                "reason": "Free data source does not provide time & sales tape",
+                "timestamp": datetime.utcnow().isoformat(),
+                "price": None,
+                "size": None,
+                "side": None,
+            }
             await websocket.send_json(message)
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
     except WebSocketDisconnect:
         return

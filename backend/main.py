@@ -20,6 +20,7 @@ from core.auto_trader import AutoTrader
 from core.mock_ibkr_client import MockIBKRClient
 from core.ibkr_client import ibkr_api_available
 from market.ibkr_provider import IBKRMarketDataProvider
+from market.free_provider import FreeMarketDataProvider
 from market.universe import get_default_universe
 from core.init_db import init_db
 from utils.logger import setup_logging
@@ -79,9 +80,12 @@ def on_startup() -> None:
     )
     app.state.ai_activity = ActivityLog()
     app.state.strategy_configs = {}
-    app.state.market_data_provider = IBKRMarketDataProvider(
-        app.state.ibkr_client, universe=get_default_universe()
-    )
+    if app_settings.use_free_data or app_settings.use_mock_ibkr:
+        app.state.market_data_provider = FreeMarketDataProvider(get_default_universe())
+    else:
+        app.state.market_data_provider = IBKRMarketDataProvider(
+            app.state.ibkr_client, universe=get_default_universe()
+        )
     app.state.auto_trader = AutoTrader(
         app.state.market_data_provider,
         app.state.strategy_engine,
