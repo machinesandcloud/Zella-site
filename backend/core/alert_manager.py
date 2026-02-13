@@ -15,10 +15,20 @@ class Alert:
     context: Optional[dict] = field(default=None)
 
 
+@dataclass
+class AlertSettings:
+    in_app: bool = True
+    email: bool = False
+    sms: bool = False
+    webhook: bool = False
+    sound_enabled: bool = True
+
+
 class AlertManager:
     def __init__(self, max_alerts: int = 500) -> None:
         self._alerts: List[Alert] = []
         self._max_alerts = max_alerts
+        self._settings = AlertSettings()
 
     def create(self, severity: str, message: str, context: Optional[dict] = None) -> Alert:
         alert = Alert(
@@ -42,3 +52,12 @@ class AlertManager:
                 alert.acknowledged = True
                 return alert
         return None
+
+    def get_settings(self) -> AlertSettings:
+        return self._settings
+
+    def update_settings(self, **kwargs: bool) -> AlertSettings:
+        for key, value in kwargs.items():
+            if hasattr(self._settings, key):
+                setattr(self._settings, key, bool(value))
+        return self._settings

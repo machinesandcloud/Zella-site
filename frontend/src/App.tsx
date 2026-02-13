@@ -20,6 +20,7 @@ import RiskSettings from "./components/Settings/RiskSettings";
 import StrategyConfig from "./components/Settings/StrategyConfig";
 import Login from "./components/Auth/Login";
 import Register from "./components/Auth/Register";
+import AutopilotControl from "./components/AI/AutopilotControl";
 import BacktestPanel from "./components/Trading/BacktestPanel";
 
 const App = () => {
@@ -48,6 +49,7 @@ const App = () => {
         <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 3 }}>
           <Tab label="Dashboard" />
           <Tab label="Trading" />
+          <Tab label="AI Autopilot" />
           <Tab label="Settings" />
           <Tab label="Auth" />
         </Tabs>
@@ -112,6 +114,14 @@ const App = () => {
 
         {tab === 2 && (
           <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <AutopilotControl />
+            </Grid>
+          </Grid>
+        )}
+
+        {tab === 3 && (
+          <Grid container spacing={3}>
             <Grid item xs={12} md={6}>
               <IBKRConnection />
             </Grid>
@@ -124,7 +134,7 @@ const App = () => {
           </Grid>
         )}
 
-        {tab === 3 && (
+        {tab === 4 && (
           <Grid container spacing={3}>
             <Grid item xs={12} md={6}>
               <Login />

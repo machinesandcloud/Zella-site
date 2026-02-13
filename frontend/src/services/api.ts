@@ -75,6 +75,16 @@ export const acknowledgeAlert = async (alertId: string) => {
   return data;
 };
 
+export const fetchAlertSettings = async () => {
+  const { data } = await api.get("/api/alerts/settings");
+  return data;
+};
+
+export const updateAlertSettings = async (payload: Record<string, unknown>) => {
+  const { data } = await api.put("/api/alerts/settings", payload);
+  return data;
+};
+
 export const triggerKillSwitch = async () => {
   const { data } = await api.post("/api/trading/kill-switch");
   return data;
