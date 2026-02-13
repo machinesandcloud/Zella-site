@@ -3,7 +3,13 @@ import { Card, CardContent, Grid, Typography } from "@mui/material";
 import { fetchRiskSummary } from "../../services/api";
 
 type RiskSummary = {
-  accountMetrics: Record<string, number | string | object>;
+  accountMetrics: {
+    dailyPnL?: number;
+    dailyLossLimit?: number;
+    currentPositions?: number;
+    maxPositions?: number;
+    grossExposure?: number;
+  };
   killSwitch: Record<string, number | string | boolean | null>;
 };
 
