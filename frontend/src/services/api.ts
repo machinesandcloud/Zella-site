@@ -80,4 +80,9 @@ export const triggerKillSwitch = async () => {
   return data;
 };
 
+export const runBacktest = async (payload: Record<string, unknown>) => {
+  const { data } = await api.post("/api/backtest/run", payload);
+  return data;
+};
+
 export default api;

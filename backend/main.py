@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from api.routes import account, auth, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk
+from api.routes import account, auth, backtest, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk
 from api.websocket.market_data import router as ws_router
 from config import settings as app_settings
 from core import (
@@ -83,6 +83,7 @@ app.include_router(ai_trading.router)
 app.include_router(qa.router)
 app.include_router(alerts.router)
 app.include_router(risk.router)
+app.include_router(backtest.router)
 app.include_router(ws_router)
 
 

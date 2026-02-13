@@ -20,6 +20,7 @@ import RiskSettings from "./components/Settings/RiskSettings";
 import StrategyConfig from "./components/Settings/StrategyConfig";
 import Login from "./components/Auth/Login";
 import Register from "./components/Auth/Register";
+import BacktestPanel from "./components/Trading/BacktestPanel";
 
 const App = () => {
   const [tab, setTab] = useState(0);
@@ -99,6 +100,9 @@ const App = () => {
             </Grid>
             <Grid item xs={12}>
               <OrderGrid />
+            </Grid>
+            <Grid item xs={12}>
+              <BacktestPanel />
             </Grid>
             <Grid item xs={12} md={4}>
               <ActiveStrategies />
