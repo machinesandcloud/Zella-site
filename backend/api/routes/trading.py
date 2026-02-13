@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from core.db import get_db
 from core.ibkr_client import IBKRClient
+from core.ibkr_webapi import IBKRWebAPIClient
+from config import settings as app_settings
 from core.risk_manager import RiskManager
 from core.risk_validator import PreTradeRiskValidator
 from models import Order, User
@@ -64,6 +66,12 @@ def get_ibkr_client() -> IBKRClient:
     return app.state.ibkr_client
 
 
+def get_webapi_client() -> IBKRWebAPIClient | None:
+    from main import app
+
+    return getattr(app.state, "ibkr_webapi_client", None)
+
+
 def get_risk_manager() -> RiskManager:
     from main import app
 
@@ -87,6 +95,7 @@ def place_order(
     order_in: OrderRequest,
     db: Session = Depends(get_db),
     ibkr: IBKRClient = Depends(get_ibkr_client),
+    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
     risk_manager: RiskManager = Depends(get_risk_manager),
     risk_validator: PreTradeRiskValidator = Depends(get_risk_validator),
     current_user: User = Depends(get_current_user),
@@ -110,10 +119,13 @@ def place_order(
     if order_type == "STP" and order_in.stop_price is not None:
         validate_price(order_in.stop_price)
 
-    if not ibkr.is_connected():
+    if app_settings.use_ibkr_webapi and webapi:
+        if not webapi.is_connected():
+            raise HTTPException(status_code=503, detail="IBKR Web API not authenticated")
+    elif not ibkr.is_connected():
         raise HTTPException(status_code=503, detail="IBKR not connected")
 
-    account_summary = ibkr.get_account_summary()
+    account_summary = webapi.get_account_summary() if app_settings.use_ibkr_webapi and webapi else ibkr.get_account_summary()
     account_value = float(account_summary.get("NetLiquidation", 0) or 0)
     buying_power = float(account_summary.get("BuyingPower", 0) or 0)
     price_for_risk = order_in.limit_price or order_in.stop_price or 0
@@ -129,13 +141,14 @@ def place_order(
     if price_for_risk and not risk_manager.check_buying_power(quantity * price_for_risk, buying_power):
         raise HTTPException(status_code=403, detail="Insufficient buying power")
 
+    open_positions = len(webapi.get_positions()) if app_settings.use_ibkr_webapi and webapi else len(ibkr.get_positions())
     risk_validation = risk_validator.validate(
         symbol=symbol,
         quantity=quantity,
         price=price_for_risk or 0,
         account_value=account_value,
         daily_pnl=float(account_summary.get("RealizedPnL", 0) or 0),
-        open_positions=len(ibkr.get_positions()),
+        open_positions=open_positions,
         buying_power=buying_power,
         spread_percent=None,
     )
@@ -154,23 +167,33 @@ def place_order(
         )
 
     order_id = None
-    if order_type == "MKT":
-        order_id = ibkr.place_market_order(symbol, quantity, action, contract_params)
-    elif order_type == "LMT" and order_in.limit_price is not None:
-        order_id = ibkr.place_limit_order(symbol, quantity, action, order_in.limit_price, contract_params)
-    elif order_type == "STP" and order_in.stop_price is not None:
-        order_id = ibkr.place_stop_order(symbol, quantity, action, order_in.stop_price, contract_params)
-    elif order_type == "BRACKET" and order_in.take_profit and order_in.stop_loss:
-        ibkr.place_bracket_order(
-            symbol,
-            quantity,
-            action,
-            order_in.take_profit,
-            order_in.stop_loss,
-            contract_params,
-        )
+    if app_settings.use_ibkr_webapi and webapi:
+        if order_type == "MKT":
+            response = webapi.place_order(symbol, quantity, action, "MKT")
+            order_id = response[0].get("order_id") if isinstance(response, list) else response.get("order_id")
+        elif order_type == "LMT" and order_in.limit_price is not None:
+            response = webapi.place_order(symbol, quantity, action, "LMT", price=order_in.limit_price)
+            order_id = response[0].get("order_id") if isinstance(response, list) else response.get("order_id")
+        else:
+            raise HTTPException(status_code=400, detail="Order type not supported via Web API")
     else:
-        raise HTTPException(status_code=400, detail="Invalid order parameters")
+        if order_type == "MKT":
+            order_id = ibkr.place_market_order(symbol, quantity, action, contract_params)
+        elif order_type == "LMT" and order_in.limit_price is not None:
+            order_id = ibkr.place_limit_order(symbol, quantity, action, order_in.limit_price, contract_params)
+        elif order_type == "STP" and order_in.stop_price is not None:
+            order_id = ibkr.place_stop_order(symbol, quantity, action, order_in.stop_price, contract_params)
+        elif order_type == "BRACKET" and order_in.take_profit and order_in.stop_loss:
+            ibkr.place_bracket_order(
+                symbol,
+                quantity,
+                action,
+                order_in.take_profit,
+                order_in.stop_loss,
+                contract_params,
+            )
+        else:
+            raise HTTPException(status_code=400, detail="Invalid order parameters")
 
     logger.info(
         "order_submitted symbol=%s action=%s qty=%s type=%s order_id=%s user=%s",
@@ -211,8 +234,11 @@ def cancel_order(
     order_id: int,
     db: Session = Depends(get_db),
     ibkr: IBKRClient = Depends(get_ibkr_client),
+    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    if app_settings.use_ibkr_webapi and webapi:
+        raise HTTPException(status_code=400, detail="Cancel not yet supported via Web API")
     if not ibkr.is_connected():
         raise HTTPException(status_code=503, detail="IBKR not connected")
     ibkr.cancel_order(order_id)
@@ -233,8 +259,11 @@ def modify_order(
     new_params: OrderRequest,
     db: Session = Depends(get_db),
     ibkr: IBKRClient = Depends(get_ibkr_client),
+    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    if app_settings.use_ibkr_webapi and webapi:
+        raise HTTPException(status_code=400, detail="Modify not yet supported via Web API")
     if not ibkr.is_connected():
         raise HTTPException(status_code=503, detail="IBKR not connected")
     ibkr.modify_order(order_id, new_params.model_dump())

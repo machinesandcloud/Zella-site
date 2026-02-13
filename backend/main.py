@@ -15,12 +15,14 @@ from core import (
     RiskManager,
     StrategyEngine,
 )
+from core.ibkr_webapi import IBKRWebAPIClient
 from core.ai_activity import ActivityLog
 from core.auto_trader import AutoTrader
 from core.mock_ibkr_client import MockIBKRClient
 from core.ibkr_client import ibkr_api_available
 from market.ibkr_provider import IBKRMarketDataProvider
 from market.free_provider import FreeMarketDataProvider
+from market.webapi_provider import IBKRWebAPIProvider
 from market.universe import get_default_universe
 from core.init_db import init_db
 from utils.logger import setup_logging
@@ -80,7 +82,15 @@ def on_startup() -> None:
     )
     app.state.ai_activity = ActivityLog()
     app.state.strategy_configs = {}
-    if app_settings.use_free_data or app_settings.use_mock_ibkr:
+    if app_settings.use_ibkr_webapi:
+        web_client = IBKRWebAPIClient(
+            base_url=app_settings.ibkr_webapi_base_url,
+            account_id=app_settings.ibkr_webapi_account_id or None,
+            verify_ssl=app_settings.ibkr_webapi_verify_ssl,
+        )
+        app.state.ibkr_webapi_client = web_client
+        app.state.market_data_provider = IBKRWebAPIProvider(web_client)
+    elif app_settings.use_free_data or app_settings.use_mock_ibkr:
         app.state.market_data_provider = FreeMarketDataProvider(get_default_universe())
     else:
         app.state.market_data_provider = IBKRMarketDataProvider(

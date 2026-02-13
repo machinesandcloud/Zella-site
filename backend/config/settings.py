@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # QA / Dev
     use_mock_ibkr: bool = True
     use_free_data: bool = True
+    use_ibkr_webapi: bool = False
+    ibkr_webapi_base_url: str = "https://localhost:5000/v1/api"
+    ibkr_webapi_account_id: str = ""
+    ibkr_webapi_verify_ssl: bool = False
 
     # Screener defaults
     screener_min_avg_volume: float = 500000

@@ -8,6 +8,7 @@ from api.routes.auth import get_current_user
 from config import settings
 from models import User
 from core.ibkr_client import IBKRClient
+from core.ibkr_webapi import IBKRWebAPIClient
 
 router = APIRouter(prefix="/api/ibkr", tags=["ibkr"])
 logger = logging.getLogger("ibkr")
@@ -17,6 +18,12 @@ def get_ibkr_client() -> IBKRClient:
     from main import app
 
     return app.state.ibkr_client
+
+
+def get_webapi_client() -> IBKRWebAPIClient | None:
+    from main import app
+
+    return getattr(app.state, "ibkr_webapi_client", None)
 
 
 class IBKRConnectRequest(BaseModel):
@@ -30,8 +37,14 @@ class IBKRConnectRequest(BaseModel):
 def connect_ibkr(
     body: IBKRConnectRequest,
     ibkr: IBKRClient = Depends(get_ibkr_client),
+    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    if settings.use_ibkr_webapi and webapi:
+        return {
+            "status": "webapi",
+            "message": "IBKR Web API is enabled. Authenticate via Client Portal Gateway.",
+        }
     host = body.host or settings.ibkr_host
     port = body.port or (settings.ibkr_paper_port if body.is_paper_trading else settings.ibkr_live_port)
     client_id = body.client_id or settings.ibkr_client_id
@@ -47,8 +60,11 @@ def connect_ibkr(
 @router.post("/disconnect")
 def disconnect_ibkr(
     ibkr: IBKRClient = Depends(get_ibkr_client),
+    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    if settings.use_ibkr_webapi and webapi:
+        return {"status": "webapi", "message": "Disconnect via Client Portal Gateway UI."}
     ibkr.disconnect()
     logger.info("ibkr_disconnected user=%s", current_user.username)
     return {"status": "disconnected"}
@@ -57,9 +73,22 @@ def disconnect_ibkr(
 @router.get("/status")
 def status(
     ibkr: IBKRClient = Depends(get_ibkr_client),
+    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    if settings.use_ibkr_webapi and webapi:
+        return {"connected": webapi.is_connected(), "mode": "WEBAPI"}
     return {"connected": ibkr.is_connected(), "mode": ibkr.get_trading_mode()}
+
+
+@router.get("/webapi/status")
+def webapi_status(
+    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    if not webapi:
+        return {"enabled": False}
+    return {"enabled": True, "connected": webapi.is_connected(), "base_url": webapi.base_url}
 
 
 @router.put("/toggle-mode")
