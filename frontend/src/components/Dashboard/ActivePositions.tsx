@@ -10,7 +10,7 @@ import {
   TableRow,
   Typography
 } from "@mui/material";
-import { fetchPositions } from "../../services/api";
+import { closePosition, fetchPositions } from "../../services/api";
 
 const ActivePositions = () => {
   const [positions, setPositions] = useState<any[]>([]);
@@ -20,6 +20,21 @@ const ActivePositions = () => {
       .then((data) => setPositions(data || []))
       .catch(() => setPositions([]));
   }, []);
+
+  const notify = (message: string, severity: "success" | "info" | "warning" | "error" = "info") => {
+    window.dispatchEvent(new CustomEvent("app:toast", { detail: { message, severity } }));
+  };
+
+  const handleClose = async (symbol: string) => {
+    try {
+      await closePosition(symbol);
+      notify(`Close order sent for ${symbol}.`, "success");
+      const data = await fetchPositions();
+      setPositions(data || []);
+    } catch (error) {
+      notify(`Failed to close ${symbol}.`, "error");
+    }
+  };
 
   return (
     <Card elevation={0} sx={{ border: "1px solid var(--border)" }}>
@@ -56,10 +71,22 @@ const ActivePositions = () => {
                 <TableCell>{pos.stop_loss || "--"}</TableCell>
                 <TableCell>{pos.take_profit || "--"}</TableCell>
                 <TableCell>
-                  <Button size="small" variant="outlined" sx={{ mr: 1 }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    sx={{ mr: 1 }}
+                    onClick={() => handleClose(pos.symbol)}
+                  >
                     Close
                   </Button>
-                  <Button size="small">Modify</Button>
+                  <Button
+                    size="small"
+                    onClick={() =>
+                      notify(`Modify ticket opened for ${pos.symbol}.`, "info")
+                    }
+                  >
+                    Modify
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}

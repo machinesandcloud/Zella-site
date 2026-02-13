@@ -347,6 +347,18 @@ class IBKRClient(EWrapper, EClient):
         self.reqOpenOrders()
         return self._open_orders
 
+    def close_position(self, symbol: str) -> None:
+        positions = self.get_positions()
+        for pos in positions:
+            if pos.get("symbol") != symbol:
+                continue
+            qty = pos.get("position", 0)
+            if qty == 0:
+                return
+            action = "SELL" if qty > 0 else "BUY"
+            self.place_market_order(symbol, abs(int(qty)), action)
+            return
+
     def get_order_status(self, order_id: int) -> Dict[str, Any]:
         return self._order_status.get(order_id, {})
 

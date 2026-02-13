@@ -7,6 +7,10 @@ class MockIBKRClient:
         self._connected = False
         self._order_id = 1
         self._paper_trading_mode = True
+        self._positions = [
+            {"symbol": "AAPL", "position": 10, "avg_cost": 150.0},
+            {"symbol": "TSLA", "position": -5, "avg_cost": 240.0},
+        ]
 
     def connect_to_ibkr(self, host: str, port: int, client_id: int, is_paper_trading: bool) -> bool:
         self._connected = True
@@ -32,10 +36,10 @@ class MockIBKRClient:
         }
 
     def get_positions(self) -> List[Dict[str, Any]]:
-        return [
-            {"symbol": "AAPL", "position": 10, "avg_cost": 150.0},
-            {"symbol": "TSLA", "position": -5, "avg_cost": 240.0},
-        ]
+        return list(self._positions)
+
+    def close_position(self, symbol: str) -> None:
+        self._positions = [pos for pos in self._positions if pos.get("symbol") != symbol]
 
     def get_cash_balance(self) -> float:
         return 50000.0

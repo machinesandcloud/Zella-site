@@ -76,6 +76,11 @@ export const fetchPositions = async () => {
   return data;
 };
 
+export const closePosition = async (symbol: string) => {
+  const { data } = await api.post("/api/trading/positions/close", { symbol });
+  return data;
+};
+
 export const fetchOrders = async () => {
   const { data } = await api.get("/api/trading/orders");
   return data;

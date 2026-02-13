@@ -61,6 +61,25 @@ body::after {
   animation: floatIn 0.6s ease-out both;
 }
 
+button,
+.MuiButtonBase-root {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+}
+
+button:hover,
+.MuiButtonBase-root:hover {
+  transform: translateY(-1px);
+}
+
+.MuiCard-root {
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+}
+
+.MuiCard-root:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 28px 70px rgba(5, 10, 22, 0.55);
+}
+
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;

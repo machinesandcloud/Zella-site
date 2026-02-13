@@ -20,6 +20,26 @@ const StrategyBuilder = () => {
     setNewRule("");
   };
 
+  const notify = (message: string, severity: "success" | "info" | "warning" | "error" = "info") => {
+    window.dispatchEvent(new CustomEvent("app:toast", { detail: { message, severity } }));
+  };
+
+  const saveStrategy = () => {
+    if (!name.trim()) {
+      notify("Add a strategy name before saving.", "warning");
+      return;
+    }
+    const stored = JSON.parse(localStorage.getItem("zella_custom_strategies") || "[]");
+    stored.push({
+      id: `custom-${Date.now()}`,
+      name: name.trim(),
+      rules,
+      createdAt: new Date().toISOString()
+    });
+    localStorage.setItem("zella_custom_strategies", JSON.stringify(stored));
+    notify("Strategy saved to local workspace.", "success");
+  };
+
   return (
     <Card elevation={0} sx={{ border: "1px solid var(--border)" }}>
       <CardContent>
@@ -48,7 +68,7 @@ const StrategyBuilder = () => {
               <Button size="small" variant="outlined" onClick={addRule}>
                 Add Rule
               </Button>
-              <Button size="small" variant="contained">
+              <Button size="small" variant="contained" onClick={saveStrategy}>
                 Save Strategy
               </Button>
             </Stack>

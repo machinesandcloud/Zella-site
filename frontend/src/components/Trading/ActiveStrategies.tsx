@@ -1,10 +1,26 @@
+import { useState } from "react";
 import { Card, CardContent, Stack, Typography, Button } from "@mui/material";
 
 const ActiveStrategies = () => {
-  const strategies = [
+  const [strategies, setStrategies] = useState([
     { name: "ema_cross", status: "running", performance: "+2.1%" },
     { name: "vwap_bounce", status: "stopped", performance: "-0.4%" }
-  ];
+  ]);
+
+  const notify = (message: string, severity: "success" | "info" | "warning" | "error" = "info") => {
+    window.dispatchEvent(new CustomEvent("app:toast", { detail: { message, severity } }));
+  };
+
+  const toggleStrategy = (name: string) => {
+    setStrategies((prev) =>
+      prev.map((strategy) => {
+        if (strategy.name !== name) return strategy;
+        const nextStatus = strategy.status === "running" ? "stopped" : "running";
+        notify(`Strategy ${name} ${nextStatus}.`, "success");
+        return { ...strategy, status: nextStatus };
+      })
+    );
+  };
 
   return (
     <Card elevation={0} sx={{ border: "1px solid var(--border)" }}>
@@ -17,10 +33,18 @@ const ActiveStrategies = () => {
             <Stack key={strategy.name} direction="row" spacing={2} alignItems="center">
               <Typography sx={{ minWidth: 120 }}>{strategy.name}</Typography>
               <Typography color="text.secondary">{strategy.performance}</Typography>
-              <Button size="small" variant="outlined">
+              <Button size="small" variant="outlined" onClick={() => toggleStrategy(strategy.name)}>
                 {strategy.status === "running" ? "Stop" : "Start"}
               </Button>
-              <Button size="small">Configure</Button>
+              <Button
+                size="small"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("app:navigate", { detail: { tab: 3 } }));
+                  notify("Open Strategy Config in Settings.", "info");
+                }}
+              >
+                Configure
+              </Button>
             </Stack>
           ))}
         </Stack>

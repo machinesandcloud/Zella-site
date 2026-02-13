@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Box,
   Chip,
   Container,
   Grid,
   IconButton,
+  Snackbar,
   Stack,
   Typography,
   Button
@@ -55,11 +57,39 @@ const NAV = [
 const App = () => {
   const [tab, setTab] = useState(0);
   const [authRequired, setAuthRequired] = useState(false);
+  const [toast, setToast] = useState<{ open: boolean; message: string; severity: "success" | "info" | "warning" | "error" }>({
+    open: false,
+    message: "",
+    severity: "info"
+  });
 
   useEffect(() => {
     const handler = () => setAuthRequired(true);
     window.addEventListener("auth:logout", handler);
     return () => window.removeEventListener("auth:logout", handler);
+  }, []);
+
+  useEffect(() => {
+    const toastHandler = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      setToast({
+        open: true,
+        message: detail.message || "Action queued.",
+        severity: detail.severity || "info"
+      });
+    };
+    const navHandler = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (typeof detail.tab === "number") {
+        setTab(detail.tab);
+      }
+    };
+    window.addEventListener("app:toast", toastHandler as EventListener);
+    window.addEventListener("app:navigate", navHandler as EventListener);
+    return () => {
+      window.removeEventListener("app:toast", toastHandler as EventListener);
+      window.removeEventListener("app:navigate", navHandler as EventListener);
+    };
   }, []);
 
   return (
@@ -103,10 +133,28 @@ const App = () => {
             <Stack direction="row" spacing={1} alignItems="center">
               <Chip label="Paper Mode" color="secondary" size="small" />
               <Chip label="IBKR Mock" size="small" />
-              <Button variant="contained" color="primary">
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={() =>
+                  window.dispatchEvent(
+                    new CustomEvent("app:toast", {
+                      detail: {
+                        message: "Deployment report generated for this session.",
+                        severity: "success"
+                      }
+                    })
+                  )
+                }
+              >
                 Deploy Report
               </Button>
-              <IconButton sx={{ border: "1px solid rgba(255,255,255,0.12)" }}>
+              <IconButton
+                sx={{ border: "1px solid rgba(255,255,255,0.12)" }}
+                onClick={() =>
+                  window.dispatchEvent(new CustomEvent("app:navigate", { detail: { tab: 3 } }))
+                }
+              >
                 ⚙️
               </IconButton>
             </Stack>
@@ -302,6 +350,21 @@ const App = () => {
           </Grid>
         </Grid>
       </Container>
+      <Snackbar
+        open={toast.open}
+        autoHideDuration={3500}
+        onClose={() => setToast((prev) => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+      >
+        <Alert
+          severity={toast.severity}
+          variant="filled"
+          onClose={() => setToast((prev) => ({ ...prev, open: false }))}
+          sx={{ borderRadius: 2, alignItems: "center" }}
+        >
+          {toast.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

@@ -66,6 +66,15 @@ const AutopilotControl = () => {
     const confirmed = window.confirm("This will stop all trading immediately. Continue?");
     if (!confirmed) return;
     await triggerKillSwitch();
+    window.dispatchEvent(
+      new CustomEvent("app:toast", {
+        detail: { message: "Kill switch triggered. Trading halted.", severity: "error" }
+      })
+    );
+  };
+
+  const notify = (message: string, severity: "success" | "info" | "warning" | "error" = "info") => {
+    window.dispatchEvent(new CustomEvent("app:toast", { detail: { message, severity } }));
   };
 
   return (
@@ -130,11 +139,23 @@ const AutopilotControl = () => {
         <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 3 }}>
           <Button
             variant="contained"
-            onClick={() => setStatus(status === "ACTIVE" ? "PAUSED" : "ACTIVE")}
+            onClick={() => {
+              const next = status === "ACTIVE" ? "PAUSED" : "ACTIVE";
+              setStatus(next);
+              notify(next === "ACTIVE" ? "Autopilot resumed." : "Autopilot paused.", "success");
+            }}
           >
             {status === "ACTIVE" ? "Pause AI" : "Resume AI"}
           </Button>
-          <Button variant="outlined">Configure</Button>
+          <Button
+            variant="outlined"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent("app:navigate", { detail: { tab: 3 } }));
+              notify("Opening AI configuration in Settings.", "info");
+            }}
+          >
+            Configure
+          </Button>
           <Button variant="contained" color="error" onClick={handleKill}>
             Emergency Stop
           </Button>

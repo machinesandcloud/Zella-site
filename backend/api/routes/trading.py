@@ -54,6 +54,10 @@ class OrderOut(BaseModel):
         from_attributes = True
 
 
+class ClosePositionRequest(BaseModel):
+    symbol: str
+
+
 def get_ibkr_client() -> IBKRClient:
     from main import app
 
@@ -267,6 +271,20 @@ def open_orders(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     return ibkr.get_open_orders()
+
+
+@router.post("/positions/close")
+def close_position(
+    body: ClosePositionRequest,
+    ibkr: IBKRClient = Depends(get_ibkr_client),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    symbol = validate_symbol(body.symbol.upper())
+    if not ibkr.is_connected():
+        raise HTTPException(status_code=503, detail="IBKR not connected")
+    ibkr.close_position(symbol)
+    logger.info("position_close_requested symbol=%s user=%s", symbol, current_user.username)
+    return {"status": "closing", "symbol": symbol}
 
 
 @router.post("/kill-switch")
