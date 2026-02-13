@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, Grid, Stack, Typography } from "@mui/material";
 import { ColorType, UTCTimestamp, createChart } from "lightweight-charts";
-import { fetchAccountSnapshots, fetchTrades } from "../../services/api";
+import { fetchAccountSnapshots, fetchSetupStats, fetchTrades } from "../../services/api";
 
 type Snapshot = {
   account_value: number;
@@ -12,11 +12,22 @@ type Trade = {
   pnl?: number | null;
 };
 
+type SetupStat = {
+  setup: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  avg_pnl: number;
+  total_pnl: number;
+};
+
 const PerformanceAnalytics = () => {
   const equityRef = useRef<HTMLDivElement | null>(null);
   const drawdownRef = useRef<HTMLDivElement | null>(null);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [setupStats, setSetupStats] = useState<SetupStat[]>([]);
 
   useEffect(() => {
     fetchAccountSnapshots()
@@ -25,6 +36,9 @@ const PerformanceAnalytics = () => {
     fetchTrades()
       .then((data) => setTrades(data || []))
       .catch(() => setTrades([]));
+    fetchSetupStats()
+      .then((data) => setSetupStats(data?.setups || []))
+      .catch(() => setSetupStats([]));
   }, []);
 
   const equityData = useMemo(() => {
@@ -141,6 +155,39 @@ const PerformanceAnalytics = () => {
                     }}
                   />
                   <Typography variant="caption">{bucket.label}</Typography>
+                </Stack>
+              ))}
+            </Stack>
+          </Grid>
+          <Grid item xs={12}>
+            <Typography variant="overline">Setup Performance (Playbook)</Typography>
+            <Stack spacing={1} sx={{ mt: 1 }}>
+              {setupStats.length === 0 && (
+                <Typography variant="body2" color="text.secondary">
+                  No setup stats yet. Tag trades in the journal to see results.
+                </Typography>
+              )}
+              {setupStats.map((setup) => (
+                <Stack
+                  key={setup.setup}
+                  direction="row"
+                  spacing={2}
+                  alignItems="center"
+                  justifyContent="space-between"
+                  sx={{
+                    p: 1.5,
+                    borderRadius: 2,
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    background: "rgba(10, 14, 22, 0.6)"
+                  }}
+                >
+                  <Typography variant="subtitle2">{setup.setup}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Trades: {setup.trades} · Win rate: {setup.win_rate}% · Avg PnL: {setup.avg_pnl}
+                  </Typography>
+                  <Typography variant="subtitle2">
+                    Total PnL: {setup.total_pnl}
+                  </Typography>
                 </Stack>
               ))}
             </Stack>

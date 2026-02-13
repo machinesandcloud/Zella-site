@@ -4,6 +4,7 @@ from core.auto_trader import AutoTrader
 from api.routes.auth import get_current_user
 from core.risk_manager import RiskManager
 from core.ibkr_client import IBKRClient
+from utils.market_hours import market_session
 from models import User
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
@@ -66,6 +67,8 @@ def auto_trade(
             raise HTTPException(status_code=503, detail="IBKR not connected")
         if not risk_manager.can_trade():
             raise HTTPException(status_code=403, detail="Trading halted by risk controls")
+        if not market_session().get("regular"):
+            raise HTTPException(status_code=403, detail="Auto-trade only during regular market hours")
 
         account_summary = ibkr.get_account_summary()
         account_value = float(account_summary.get("NetLiquidation", 0) or 0)

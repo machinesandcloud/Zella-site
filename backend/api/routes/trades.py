@@ -55,6 +55,55 @@ def list_trades(
     )
 
 
+@router.get("/setup-stats")
+def setup_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    trades = (
+        db.query(Trade)
+        .filter(Trade.user_id == current_user.id)
+        .all()
+    )
+    stats = {}
+    for trade in trades:
+        key = trade.setup_tag or "Unlabeled"
+        entry = stats.setdefault(
+            key,
+            {
+                "setup": key,
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "total_pnl": 0.0,
+            },
+        )
+        entry["trades"] += 1
+        pnl = float(trade.pnl or 0)
+        entry["total_pnl"] += pnl
+        if pnl > 0:
+            entry["wins"] += 1
+        elif pnl < 0:
+            entry["losses"] += 1
+    output = []
+    for item in stats.values():
+        trades_count = item["trades"]
+        win_rate = (item["wins"] / trades_count * 100) if trades_count else 0
+        avg_pnl = item["total_pnl"] / trades_count if trades_count else 0
+        output.append(
+            {
+                "setup": item["setup"],
+                "trades": trades_count,
+                "wins": item["wins"],
+                "losses": item["losses"],
+                "win_rate": round(win_rate, 2),
+                "avg_pnl": round(avg_pnl, 2),
+                "total_pnl": round(item["total_pnl"], 2),
+            }
+        )
+    return {"setups": sorted(output, key=lambda x: x["total_pnl"], reverse=True)}
+
+
 @router.put("/{trade_id}/notes", response_model=TradeOut)
 def update_notes(
     trade_id: int,

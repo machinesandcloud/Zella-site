@@ -51,6 +51,11 @@ export const fetchTrades = async () => {
   return data;
 };
 
+export const fetchSetupStats = async () => {
+  const { data } = await api.get("/api/trades/setup-stats");
+  return data;
+};
+
 export const updateTradeNotes = async (
   tradeId: number,
   payload: { notes?: string; setup_tag?: string; catalyst?: string; stop_method?: string; risk_mode?: string }
@@ -61,6 +66,16 @@ export const updateTradeNotes = async (
 
 export const fetchNews = async () => {
   const { data } = await api.get("/api/news");
+  return data;
+};
+
+export const fetchCatalysts = async (symbols: string[]) => {
+  const { data } = await api.get(`/api/news/catalysts?symbols=${symbols.join(",")}`);
+  return data;
+};
+
+export const fetchMarketSession = async () => {
+  const { data } = await api.get("/api/market/session");
   return data;
 };
 

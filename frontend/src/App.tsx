@@ -30,6 +30,7 @@ import AIMarketScanner from "./components/Trading/AIMarketScanner";
 import OrderBook from "./components/Trading/OrderBook";
 import TimeSales from "./components/Trading/TimeSales";
 import OrderGrid from "./components/Trading/OrderGrid";
+import PremarketChecklist from "./components/Trading/PremarketChecklist";
 import IBKRConnection from "./components/Settings/IBKRConnection";
 import RiskSettings from "./components/Settings/RiskSettings";
 import StrategyConfig from "./components/Settings/StrategyConfig";
@@ -275,6 +276,9 @@ const App = () => {
                 </Grid>
                 <Grid item xs={12} md={4}>
                   <Watchlist />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <PremarketChecklist />
                 </Grid>
                 <Grid item xs={12} md={4}>
                   <OrderBook />

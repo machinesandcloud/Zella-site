@@ -3,7 +3,7 @@ import time
 from fastapi import FastAPI, Request, Response
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
-from api.routes import account, auth, backtest, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk, trades, news
+from api.routes import account, auth, backtest, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk, trades, news, market
 from api.websocket.market_data import router as ws_router
 from config import settings as app_settings
 from core import (
@@ -111,6 +111,7 @@ app.include_router(risk.router)
 app.include_router(backtest.router)
 app.include_router(trades.router)
 app.include_router(news.router)
+app.include_router(market.router)
 app.include_router(ws_router)
 
 
