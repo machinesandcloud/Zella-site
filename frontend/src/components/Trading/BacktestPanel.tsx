@@ -88,9 +88,32 @@ const BacktestPanel = () => {
       <CardContent>
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
           <Typography variant="h6">Strategy Backtester</Typography>
-          <Button variant="contained" onClick={handleRun}>
-            Run Backtest
-          </Button>
+          <Stack direction="row" spacing={1}>
+            <Button variant="contained" onClick={handleRun}>
+              Run Backtest
+            </Button>
+            <Button
+              variant="outlined"
+              onClick={() => {
+                if (!result) return;
+                const header = "symbol,entryDate,exitDate,pnl,side";
+                const rows = result.trades.map(
+                  (trade) => `${trade.symbol},${trade.entryDate},${trade.exitDate},${trade.pnl},${trade.side}`
+                );
+                const csv = [header, ...rows].join("\\n");
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "backtest_trades.csv";
+                link.click();
+                URL.revokeObjectURL(url);
+              }}
+              disabled={!result}
+            >
+              Export CSV
+            </Button>
+          </Stack>
         </Stack>
         <Grid container spacing={2}>
           <Grid item xs={12} md={3}>
