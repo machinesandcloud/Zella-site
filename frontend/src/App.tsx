@@ -31,6 +31,7 @@ import OptionsChain from "./components/Trading/OptionsChain";
 import VoiceAssistantSettings from "./components/Settings/VoiceAssistantSettings";
 import BacktestPanel from "./components/Trading/BacktestPanel";
 import StrategyBuilder from "./components/Trading/StrategyBuilder";
+import HelpCenter from "./components/Settings/HelpCenter";
 
 const App = () => {
   const [tab, setTab] = useState(0);
@@ -160,6 +161,9 @@ const App = () => {
             </Grid>
             <Grid item xs={12} md={6}>
               <VoiceAssistantSettings />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <HelpCenter />
             </Grid>
             <Grid item xs={12}>
               <StrategyConfig />
