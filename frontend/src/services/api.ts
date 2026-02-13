@@ -15,6 +15,17 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      localStorage.removeItem("zella_token");
+      window.dispatchEvent(new Event("auth:logout"));
+    }
+    return Promise.reject(error);
+  }
+);
+
 export const fetchDashboardOverview = async () => {
   const { data } = await api.get("/api/dashboard/overview");
   return data;
@@ -127,6 +138,16 @@ export const startStrategy = async (strategyId: string, payload: Record<string, 
 
 export const stopStrategy = async (strategyId: string) => {
   const { data } = await api.post(`/api/strategies/${strategyId}/stop`);
+  return data;
+};
+
+export const fetchStrategyConfig = async (strategyId: string) => {
+  const { data } = await api.get(`/api/strategies/${strategyId}`);
+  return data;
+};
+
+export const updateStrategyConfig = async (strategyId: string, payload: Record<string, unknown>) => {
+  const { data } = await api.put(`/api/strategies/${strategyId}/config`, payload);
   return data;
 };
 

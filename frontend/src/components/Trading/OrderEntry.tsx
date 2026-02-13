@@ -207,7 +207,7 @@ const OrderEntry = () => {
                 onChange={(e) => update("order_type", e.target.value)}
               >
                 {ORDER_TYPES.map((type) => (
-                  <MenuItem key={type} value={type}>
+                  <MenuItem key={type} value={type} disabled={!SUPPORTED_ORDER_TYPES.includes(type)}>
                     {type}
                   </MenuItem>
                 ))}

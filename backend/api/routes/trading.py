@@ -205,12 +205,21 @@ def place_order(
 @router.delete("/order/{order_id}")
 def cancel_order(
     order_id: int,
+    db: Session = Depends(get_db),
     ibkr: IBKRClient = Depends(get_ibkr_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     if not ibkr.is_connected():
         raise HTTPException(status_code=503, detail="IBKR not connected")
     ibkr.cancel_order(order_id)
+    order = (
+        db.query(Order)
+        .filter(Order.user_id == current_user.id, Order.id == order_id)
+        .first()
+    )
+    if order:
+        order.status = "CANCELLED"
+        db.commit()
     return {"status": "cancelled", "order_id": order_id}
 
 
@@ -218,12 +227,24 @@ def cancel_order(
 def modify_order(
     order_id: int,
     new_params: OrderRequest,
+    db: Session = Depends(get_db),
     ibkr: IBKRClient = Depends(get_ibkr_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     if not ibkr.is_connected():
         raise HTTPException(status_code=503, detail="IBKR not connected")
     ibkr.modify_order(order_id, new_params.model_dump())
+    order = (
+        db.query(Order)
+        .filter(Order.user_id == current_user.id, Order.id == order_id)
+        .first()
+    )
+    if order:
+        order.quantity = new_params.quantity
+        order.limit_price = new_params.limit_price
+        order.stop_price = new_params.stop_price
+        order.status = order.status or "SUBMITTED"
+        db.commit()
     return {"status": "modified", "order_id": order_id}
 
 

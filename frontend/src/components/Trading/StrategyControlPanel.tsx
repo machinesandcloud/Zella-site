@@ -15,10 +15,12 @@ import {
 } from "@mui/material";
 import {
   fetchStrategies,
+  fetchStrategyConfig,
   fetchStrategyLogs,
   fetchStrategyPerformance,
   startStrategy,
-  stopStrategy
+  stopStrategy,
+  updateStrategyConfig
 } from "../../services/api";
 
 type StrategyMeta = {
@@ -32,6 +34,7 @@ type StrategyMeta = {
 const StrategyControlPanel = () => {
   const [strategies, setStrategies] = useState<StrategyMeta[]>([]);
   const [selected, setSelected] = useState<StrategyMeta | null>(null);
+  const [configStrategy, setConfigStrategy] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [configOpen, setConfigOpen] = useState(false);
   const [configJson, setConfigJson] = useState("{\n  \"parameters\": {},\n  \"risk\": {}\n}");
@@ -83,6 +86,25 @@ const StrategyControlPanel = () => {
     setLogs(data?.logs || []);
   };
 
+  const openConfig = async (strategyId: string) => {
+    const data = await fetchStrategyConfig(strategyId).catch(() => ({ parameters: {}, risk: {} }));
+    setConfigJson(JSON.stringify(data || { parameters: {}, risk: {} }, null, 2));
+    setConfigStrategy(strategyId);
+    setConfigOpen(true);
+  };
+
+  const saveConfig = async () => {
+    if (!configStrategy) return;
+    let payload = { parameters: {}, risk: {} } as Record<string, unknown>;
+    try {
+      payload = JSON.parse(configJson);
+    } catch {
+      payload = { parameters: {}, risk: {} };
+    }
+    await updateStrategyConfig(configStrategy, payload);
+    setConfigOpen(false);
+  };
+
   return (
     <Card elevation={0} sx={{ border: "1px solid var(--border)" }}>
       <CardContent>
@@ -128,7 +150,7 @@ const StrategyControlPanel = () => {
                   >
                     Stop
                   </Button>
-                  <Button size="small" onClick={() => setConfigOpen(true)}>
+                  <Button size="small" onClick={() => openConfig(strategy.id)}>
                     Configure
                   </Button>
                   <Button size="small" onClick={() => openLogs(strategy)}>
@@ -155,6 +177,9 @@ const StrategyControlPanel = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfigOpen(false)}>Close</Button>
+          <Button variant="contained" onClick={saveConfig}>
+            Save
+          </Button>
         </DialogActions>
       </Dialog>
 

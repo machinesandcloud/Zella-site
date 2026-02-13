@@ -35,6 +35,7 @@ const AIMarketScanner = () => {
     if (!list.includes(symbol)) {
       const next = [...list, symbol];
       localStorage.setItem("zella_watchlist", JSON.stringify(next));
+      window.dispatchEvent(new Event("watchlist:update"));
     }
   };
 

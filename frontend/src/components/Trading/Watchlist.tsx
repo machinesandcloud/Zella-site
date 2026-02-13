@@ -72,6 +72,27 @@ const Watchlist = () => {
     localStorage.setItem("zella_watchlist", JSON.stringify(symbols));
   }, [symbols]);
 
+  useEffect(() => {
+    const handler = () => {
+      const stored = localStorage.getItem("zella_watchlist");
+      if (!stored) return;
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length) {
+          setSymbols(parsed);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener("watchlist:update", handler);
+    window.addEventListener("storage", handler);
+    return () => {
+      window.removeEventListener("watchlist:update", handler);
+      window.removeEventListener("storage", handler);
+    };
+  }, []);
+
   const addSymbol = () => {
     const next = input.trim().toUpperCase();
     if (!next || symbols.includes(next)) return;

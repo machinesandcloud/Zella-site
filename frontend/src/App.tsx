@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Box,
   Chip,
@@ -54,6 +54,13 @@ const NAV = [
 
 const App = () => {
   const [tab, setTab] = useState(0);
+  const [authRequired, setAuthRequired] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setAuthRequired(true);
+    window.addEventListener("auth:logout", handler);
+    return () => window.removeEventListener("auth:logout", handler);
+  }, []);
 
   return (
     <Box sx={{ minHeight: "100vh", pb: 6 }}>
@@ -104,6 +111,21 @@ const App = () => {
       </Box>
 
       <Container maxWidth="xl" sx={{ mt: 4 }}>
+        {authRequired && (
+          <Box
+            sx={{
+              mb: 2,
+              p: 2,
+              borderRadius: 3,
+              border: "1px solid rgba(255,255,255,0.08)",
+              background: "rgba(255, 92, 92, 0.1)"
+            }}
+          >
+            <Typography variant="body2">
+              Session expired. Please log in again in the Access tab.
+            </Typography>
+          </Box>
+        )}
         <Grid container spacing={3}>
           <Grid item xs={12} md={2.5}>
             <Box
