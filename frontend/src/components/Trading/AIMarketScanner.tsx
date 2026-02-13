@@ -154,7 +154,7 @@ const AIMarketScanner = () => {
         </List>
         {picks.length > 0 && (
           <Typography variant="caption" color="text.secondary">
-            Relative volume filter active (>=2x average). Results include RVOL where data is available.
+            Relative volume filter active (&gt;= 2x average). Results include RVOL where data is available.
           </Typography>
         )}
       </CardContent>
