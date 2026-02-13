@@ -40,6 +40,7 @@ import BacktestPanel from "./components/Trading/BacktestPanel";
 import StrategyBuilder from "./components/Trading/StrategyBuilder";
 import SystemHealth from "./components/Dashboard/SystemHealth";
 import CalendarHeatmap from "./components/Dashboard/CalendarHeatmap";
+import DailyBriefing from "./components/Dashboard/DailyBriefing";
 import Onboarding from "./components/Auth/Onboarding";
 import HelpCenter from "./components/Settings/HelpCenter";
 
@@ -141,9 +142,12 @@ const App = () => {
                 <Grid item xs={12}>
                   <Overview />
                 </Grid>
-                <Grid item xs={12}>
-                  <SystemHealth />
-                </Grid>
+            <Grid item xs={12}>
+              <SystemHealth />
+            </Grid>
+            <Grid item xs={12}>
+              <DailyBriefing />
+            </Grid>
                 <Grid item xs={12} md={7}>
                   <ActivePositions />
                 </Grid>
