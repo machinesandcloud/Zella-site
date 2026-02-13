@@ -20,6 +20,21 @@ export const fetchDashboardOverview = async () => {
   return data;
 };
 
+export const fetchDashboardMetrics = async () => {
+  const { data } = await api.get("/api/dashboard/metrics");
+  return data;
+};
+
+export const fetchRecentTrades = async () => {
+  const { data } = await api.get("/api/dashboard/trades/recent");
+  return data;
+};
+
+export const fetchAccountSnapshots = async () => {
+  const { data } = await api.get("/api/dashboard/account/snapshots");
+  return data;
+};
+
 export const fetchAccountSummary = async () => {
   const { data } = await api.get("/api/account/summary");
   return data;

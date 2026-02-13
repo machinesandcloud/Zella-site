@@ -7,6 +7,7 @@ import PerformanceMetrics from "./components/Dashboard/PerformanceMetrics";
 import RiskDashboard from "./components/Dashboard/RiskDashboard";
 import NotificationCenter from "./components/Dashboard/NotificationCenter";
 import ChartView from "./components/Trading/ChartView";
+import EquityCurve from "./components/Dashboard/EquityCurve";
 import OrderEntry from "./components/Trading/OrderEntry";
 import Watchlist from "./components/Trading/Watchlist";
 import ActiveStrategies from "./components/Trading/ActiveStrategies";
@@ -60,6 +61,9 @@ const App = () => {
             </Grid>
             <Grid item xs={12} md={5}>
               <PerformanceMetrics />
+            </Grid>
+            <Grid item xs={12}>
+              <EquityCurve />
             </Grid>
             <Grid item xs={12}>
               <RiskDashboard />
