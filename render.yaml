@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: zella-ai-backend
+    env: python
+    plan: free
+    region: oregon
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: USE_MOCK_IBKR
+        value: "true"
+      - key: USE_SQLITE
+        value: "false"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRATION_HOURS
+        value: "24"
+      - key: DEFAULT_TRADING_MODE
+        value: PAPER
+      - key: MAX_POSITION_SIZE_PERCENT
+        value: "10"
+      - key: MAX_DAILY_LOSS
+        value: "500"
+      - key: MAX_RISK_PER_TRADE
+        value: "2"
+      - key: MAX_CONCURRENT_POSITIONS
+        value: "5"
+      - key: SCREENER_MIN_AVG_VOLUME
+        value: "500000"
+      - key: SCREENER_MIN_PRICE
+        value: "5"
+      - key: SCREENER_MAX_PRICE
+        value: "1000"
+      - key: SCREENER_MIN_VOLATILITY
+        value: "0.005"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: zella-ai-db
+          property: connectionString
+
+databases:
+  - name: zella-ai-db
+    plan: free
+    region: oregon

@@ -45,6 +45,18 @@ Netlify is optimized for static frontends and serverless functions with executio
 
 Deploy the backend using a container host (Dockerfile in repo root) or a PaaS that supports Python (Render, Fly.io, ECS, etc.). Ensure the backend is accessible over HTTPS and update `VITE_API_URL` and `VITE_WS_URL` accordingly.
 
+## Render (Backend - Free)
+
+This repo includes a `render.yaml` with a free web service + free Postgres. Deploy by connecting the repo in Render (or via Render CLI) and selecting the `render.yaml` blueprint. The service runs:
+
+- `rootDir: backend`
+- `buildCommand: pip install -r requirements.txt`
+- `startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT`
+
+After the backend is live, set frontend env vars:
+- `VITE_API_URL=https://<render-backend-url>`
+- `VITE_WS_URL=wss://<render-backend-url>`
+
 ## Monitoring (Free Stack)
 
 The Docker compose file includes a free monitoring stack:
