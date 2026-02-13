@@ -62,6 +62,8 @@ def on_startup() -> None:
             max_daily_loss=app_settings.max_daily_loss,
             max_positions=app_settings.max_concurrent_positions,
             risk_per_trade_percent=app_settings.max_risk_per_trade,
+            max_trades_per_day=app_settings.max_trades_per_day,
+            max_consecutive_losses=app_settings.max_consecutive_losses,
         )
     )
     app.state.alert_manager = AlertManager()

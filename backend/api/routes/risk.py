@@ -65,6 +65,10 @@ def risk_summary(
             ),
             "currentPositions": len(positions),
             "maxPositions": risk_manager.config.max_positions,
+            "tradesToday": risk_manager.trades_today,
+            "maxTradesPerDay": risk_manager.config.max_trades_per_day,
+            "consecutiveLosses": risk_manager.consecutive_losses,
+            "maxConsecutiveLosses": risk_manager.config.max_consecutive_losses,
             "totalExposure": gross_exposure,
             "netExposure": net_exposure,
             "grossExposure": gross_exposure,
@@ -82,7 +86,11 @@ def risk_summary(
             "cooldownMinutes": 0,
         },
         "circuitBreakers": {
-            "consecutiveLosses": {"count": 0, "limit": 3, "action": "HALT"},
+            "consecutiveLosses": {
+                "count": risk_manager.consecutive_losses,
+                "limit": risk_manager.config.max_consecutive_losses,
+                "action": "HALT",
+            },
             "rapidDrawdown": {"lossPercent": 0, "timeMinutes": 0, "threshold": 5, "action": "HALT"},
         },
     }

@@ -10,6 +10,8 @@ type Snapshot = {
 
 type Trade = {
   pnl?: number | null;
+  entry_time?: string | null;
+  setup_tag?: string | null;
 };
 
 type SetupStat = {
@@ -40,6 +42,42 @@ const PerformanceAnalytics = () => {
       .then((data) => setSetupStats(data?.setups || []))
       .catch(() => setSetupStats([]));
   }, []);
+
+  const dayOfWeekStats = useMemo(() => {
+    const map = new Map<string, { count: number; pnl: number }>();
+    trades.forEach((trade) => {
+      if (!trade.entry_time) return;
+      const date = new Date(trade.entry_time);
+      const label = date.toLocaleDateString(undefined, { weekday: "short" });
+      const entry = map.get(label) || { count: 0, pnl: 0 };
+      entry.count += 1;
+      entry.pnl += Number(trade.pnl || 0);
+      map.set(label, entry);
+    });
+    return Array.from(map.entries()).map(([label, value]) => ({
+      label,
+      avg: value.count ? value.pnl / value.count : 0
+    }));
+  }, [trades]);
+
+  const hourStats = useMemo(() => {
+    const map = new Map<number, { count: number; pnl: number }>();
+    trades.forEach((trade) => {
+      if (!trade.entry_time) return;
+      const date = new Date(trade.entry_time);
+      const hour = date.getHours();
+      const entry = map.get(hour) || { count: 0, pnl: 0 };
+      entry.count += 1;
+      entry.pnl += Number(trade.pnl || 0);
+      map.set(hour, entry);
+    });
+    return Array.from(map.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([hour, value]) => ({
+        label: `${hour}:00`,
+        avg: value.count ? value.pnl / value.count : 0
+      }));
+  }, [trades]);
 
   const equityData = useMemo(() => {
     return snapshots
@@ -151,6 +189,42 @@ const PerformanceAnalytics = () => {
                       width: 24,
                       height: bucket.count * 10 + 10,
                       background: "#94a3b8",
+                      borderRadius: 4
+                    }}
+                  />
+                  <Typography variant="caption">{bucket.label}</Typography>
+                </Stack>
+              ))}
+            </Stack>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <Typography variant="overline">Avg PnL by Day</Typography>
+            <Stack direction="row" spacing={1} alignItems="flex-end" sx={{ mt: 1 }}>
+              {dayOfWeekStats.map((bucket) => (
+                <Stack key={bucket.label} alignItems="center" spacing={1}>
+                  <div
+                    style={{
+                      width: 26,
+                      height: Math.max(10, Math.min(120, Math.abs(bucket.avg) * 2 + 10)),
+                      background: bucket.avg >= 0 ? "#22c55e" : "#ef4444",
+                      borderRadius: 4
+                    }}
+                  />
+                  <Typography variant="caption">{bucket.label}</Typography>
+                </Stack>
+              ))}
+            </Stack>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <Typography variant="overline">Avg PnL by Hour</Typography>
+            <Stack direction="row" spacing={1} alignItems="flex-end" sx={{ mt: 1 }}>
+              {hourStats.map((bucket) => (
+                <Stack key={bucket.label} alignItems="center" spacing={1}>
+                  <div
+                    style={{
+                      width: 18,
+                      height: Math.max(10, Math.min(120, Math.abs(bucket.avg) * 2 + 10)),
+                      background: bucket.avg >= 0 ? "#22c55e" : "#ef4444",
                       borderRadius: 4
                     }}
                   />

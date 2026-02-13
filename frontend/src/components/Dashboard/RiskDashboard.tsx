@@ -26,6 +26,10 @@ type RiskSummary = {
     limitPercent?: number;
     currentPositions?: number;
     maxPositions?: number;
+    tradesToday?: number;
+    maxTradesPerDay?: number;
+    consecutiveLosses?: number;
+    maxConsecutiveLosses?: number;
     grossExposure?: number;
     netExposure?: number;
     largestPosition?: { symbol?: string | null; percentOfAccount?: number };
@@ -119,6 +123,17 @@ const RiskDashboard = () => {
             />
             <Typography variant="caption" color="text.secondary">
               Gross exposure: {metrics.grossExposure ?? 0}
+            </Typography>
+          </Grid>
+
+          <Grid item xs={12} md={6}>
+            <Typography variant="overline">Guardrails</Typography>
+            <Typography variant="h6">
+              Trades {metrics.tradesToday ?? 0}/{metrics.maxTradesPerDay ?? 0} · Losses {metrics.consecutiveLosses ?? 0}/
+              {metrics.maxConsecutiveLosses ?? 0}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Auto-trade halts if limits are exceeded.
             </Typography>
           </Grid>
 

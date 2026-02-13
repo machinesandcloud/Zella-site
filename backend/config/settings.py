@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     max_daily_loss: float = 500.0
     max_risk_per_trade: float = 2.0
     max_concurrent_positions: int = 5
+    max_trades_per_day: int = 12
+    max_consecutive_losses: int = 3
 
     # Logging
     log_level: str = "INFO"

@@ -9,6 +9,8 @@ class RiskConfig:
     max_daily_loss: float
     max_positions: int
     risk_per_trade_percent: float
+    max_trades_per_day: int = 12
+    max_consecutive_losses: int = 3
 
 
 class RiskManager:
@@ -18,6 +20,8 @@ class RiskManager:
         self.daily_loss = 0.0
         self.open_positions: List[Dict] = []
         self.emergency_stop_triggered = False
+        self.trades_today = 0
+        self.consecutive_losses = 0
 
     # Pre-Trade Validation
     def check_position_size_limit(self, symbol: str, quantity: int, price: float, account_value: float) -> bool:
@@ -74,6 +78,17 @@ class RiskManager:
         self.emergency_stop_triggered = True
         self.logger.critical("Emergency stop triggered")
 
+    def record_trade_result(self, pnl: float) -> None:
+        self.trades_today += 1
+        if pnl < 0:
+            self.consecutive_losses += 1
+        elif pnl > 0:
+            self.consecutive_losses = 0
+
+    def reset_daily_counters(self) -> None:
+        self.trades_today = 0
+        self.consecutive_losses = 0
+
     def can_trade(self) -> bool:
         if self.emergency_stop_triggered:
             self.logger.warning("Trading halted by emergency stop")
@@ -81,6 +96,12 @@ class RiskManager:
         if not self.check_daily_loss_limit():
             return False
         if not self.check_max_positions():
+            return False
+        if hasattr(self.config, "max_trades_per_day") and self.trades_today >= self.config.max_trades_per_day:
+            self.logger.warning("Max trades per day reached")
+            return False
+        if hasattr(self.config, "max_consecutive_losses") and self.consecutive_losses >= self.config.max_consecutive_losses:
+            self.logger.warning("Max consecutive losses reached")
             return False
         return True
 

@@ -79,6 +79,8 @@ def auto_trade(
             last_price = float(pick.get("last_price", 0))
             if not symbol or last_price <= 0:
                 continue
+            if risk_manager.trades_today >= risk_manager.config.max_trades_per_day:
+                break
             stop_distance = last_price * 0.01
             quantity = risk_manager.calculate_position_size(
                 symbol, risk_manager.config.risk_per_trade_percent, stop_distance, account_value
@@ -89,5 +91,6 @@ def auto_trade(
                 continue
             order_id = ibkr.place_market_order(symbol, quantity, "BUY")
             executed.append({"symbol": symbol, "quantity": quantity, "order_id": order_id})
+            risk_manager.trades_today += 1
 
     return {"ranked": picks, "executed": executed}
