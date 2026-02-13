@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
-import { Button, Card, CardContent, List, ListItem, ListItemText, Stack, Typography } from "@mui/material";
+import {
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  List,
+  ListItem,
+  ListItemText,
+  Stack,
+  Typography
+} from "@mui/material";
 import api from "../../services/api";
 
 const AIMarketScanner = () => {
@@ -7,7 +17,7 @@ const AIMarketScanner = () => {
 
   const load = () => {
     api
-      .get("/api/ai/top?limit=5")
+      .get("/api/ai/top?limit=6")
       .then((res) => setPicks(res.data.ranked || []))
       .catch(() => setPicks([]));
   };
@@ -17,6 +27,15 @@ const AIMarketScanner = () => {
     if (!confirmed) return;
     await api.post("/api/ai/auto-trade?limit=5&execute=true&confirm_execute=true");
     load();
+  };
+
+  const addToWatchlist = (symbol: string) => {
+    const stored = localStorage.getItem("zella_watchlist");
+    const list = stored ? JSON.parse(stored) : [];
+    if (!list.includes(symbol)) {
+      const next = [...list, symbol];
+      localStorage.setItem("zella_watchlist", JSON.stringify(next));
+    }
   };
 
   useEffect(() => {
@@ -40,10 +59,22 @@ const AIMarketScanner = () => {
         <List dense>
           {picks.length === 0 && <ListItem>No picks available</ListItem>}
           {picks.map((pick) => (
-            <ListItem key={pick.symbol}>
+            <ListItem
+              key={pick.symbol}
+              secondaryAction={
+                <Button size="small" onClick={() => addToWatchlist(pick.symbol)}>
+                  Watch
+                </Button>
+              }
+            >
               <ListItemText
-                primary={pick.symbol}
-                secondary={`Score: ${Number(pick.combined_score).toFixed(3)}`}
+                primary={
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Typography>{pick.symbol}</Typography>
+                    <Chip label={`Score ${Number(pick.combined_score).toFixed(2)}`} size="small" />
+                  </Stack>
+                }
+                secondary={`Confidence: ${(Number(pick.confidence) * 100).toFixed(0)}%`}
               />
             </ListItem>
           ))}

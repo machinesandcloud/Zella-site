@@ -27,7 +27,20 @@ type MarketDataMessage = {
 const DEFAULT_SYMBOLS = ["AAPL", "MSFT", "TSLA", "NVDA"];
 
 const Watchlist = () => {
-  const [symbols, setSymbols] = useState<string[]>(DEFAULT_SYMBOLS);
+  const [symbols, setSymbols] = useState<string[]>(() => {
+    const stored = localStorage.getItem("zella_watchlist");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length) {
+          return parsed;
+        }
+      } catch {
+        return DEFAULT_SYMBOLS;
+      }
+    }
+    return DEFAULT_SYMBOLS;
+  });
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [input, setInput] = useState("");
 
@@ -53,6 +66,10 @@ const Watchlist = () => {
     return () => {
       sockets.forEach((socket) => socket.close());
     };
+  }, [symbols]);
+
+  useEffect(() => {
+    localStorage.setItem("zella_watchlist", JSON.stringify(symbols));
   }, [symbols]);
 
   const addSymbol = () => {
