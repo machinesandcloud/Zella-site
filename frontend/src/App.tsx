@@ -49,9 +49,9 @@ import Onboarding from "./components/Auth/Onboarding";
 import HelpCenter from "./components/Settings/HelpCenter";
 
 const NAV = [
-  { label: "Command", value: 0 },
+  { label: "Command Center", value: 0 },
   { label: "Trading", value: 1 },
-  { label: "AI Autopilot", value: 2 },
+  { label: "Analytics", value: 2 },
   { label: "Settings", value: 3 },
   { label: "Access", value: 4 }
 ];
@@ -228,44 +228,29 @@ const App = () => {
                 <Grid item xs={12}>
                   <Overview />
                 </Grid>
-            <Grid item xs={12}>
-              <SystemHealth />
-            </Grid>
-            <Grid item xs={12}>
-              <DailyBriefing />
-            </Grid>
+                <Grid item xs={12} md={7}>
+                  <AutopilotControl />
+                </Grid>
+                <Grid item xs={12} md={5}>
+                  <SystemHealth />
+                </Grid>
+                <Grid item xs={12}>
+                  <AutonomyTimeline />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <RiskDashboard />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <PerformanceMetrics />
+                </Grid>
+                <Grid item xs={12}>
+                  <DailyBriefing />
+                </Grid>
                 <Grid item xs={12} md={7}>
                   <ActivePositions />
                 </Grid>
                 <Grid item xs={12} md={5}>
-                  <PerformanceMetrics />
-                </Grid>
-                <Grid item xs={12}>
                   <EquityCurve />
-                </Grid>
-                <Grid item xs={12}>
-                  <PerformanceAnalytics />
-                </Grid>
-                <Grid item xs={12}>
-                  <CalendarHeatmap />
-                </Grid>
-                <Grid item xs={12}>
-                  <RiskDashboard />
-                </Grid>
-                <Grid item xs={12}>
-                  <PortfolioAnalysis />
-                </Grid>
-                <Grid item xs={12}>
-                  <NewsFeed />
-                </Grid>
-                <Grid item xs={12}>
-                  <NotificationCenter />
-                </Grid>
-                <Grid item xs={12}>
-                  <TradeHistory />
-                </Grid>
-                <Grid item xs={12}>
-                  <TradeJournal />
                 </Grid>
               </Grid>
             )}
@@ -314,10 +299,25 @@ const App = () => {
             {tab === 2 && (
               <Grid container spacing={3}>
                 <Grid item xs={12}>
-                  <AutopilotControl />
+                  <PerformanceAnalytics />
                 </Grid>
                 <Grid item xs={12}>
-                  <AutonomyTimeline />
+                  <CalendarHeatmap />
+                </Grid>
+                <Grid item xs={12}>
+                  <PortfolioAnalysis />
+                </Grid>
+                <Grid item xs={12}>
+                  <NewsFeed />
+                </Grid>
+                <Grid item xs={12}>
+                  <NotificationCenter />
+                </Grid>
+                <Grid item xs={12}>
+                  <TradeHistory />
+                </Grid>
+                <Grid item xs={12}>
+                  <TradeJournal />
                 </Grid>
               </Grid>
             )}
