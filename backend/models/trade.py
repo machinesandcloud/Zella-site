@@ -28,6 +28,10 @@ class Trade(Base):
     exit_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
     status: Mapped[Optional[str]] = mapped_column(String(20))
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    setup_tag: Mapped[Optional[str]] = mapped_column(String(50))
+    catalyst: Mapped[Optional[str]] = mapped_column(String(120))
+    stop_method: Mapped[Optional[str]] = mapped_column(String(30))
+    risk_mode: Mapped[Optional[str]] = mapped_column(String(20))
     is_paper_trade: Mapped[bool] = mapped_column(Boolean, default=True)
 
     user = relationship("User", back_populates="trades")

@@ -74,6 +74,16 @@ class RiskManager:
         self.emergency_stop_triggered = True
         self.logger.critical("Emergency stop triggered")
 
+    def can_trade(self) -> bool:
+        if self.emergency_stop_triggered:
+            self.logger.warning("Trading halted by emergency stop")
+            return False
+        if not self.check_daily_loss_limit():
+            return False
+        if not self.check_max_positions():
+            return False
+        return True
+
     # Configuration setters
     def set_max_position_size(self, percent_of_account: float) -> None:
         self.config.max_position_size_percent = percent_of_account

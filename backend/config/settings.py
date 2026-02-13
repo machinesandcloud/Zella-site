@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     screener_min_price: float = 5.0
     screener_max_price: float = 1000.0
     screener_min_volatility: float = 0.005
+    screener_min_relative_volume: float = 2.0
 
     class Config:
         env_file = ".env"

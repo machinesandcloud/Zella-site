@@ -24,13 +24,21 @@ class TradeOut(BaseModel):
     exit_time: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
+    setup_tag: Optional[str] = None
+    catalyst: Optional[str] = None
+    stop_method: Optional[str] = None
+    risk_mode: Optional[str] = None
 
     class Config:
         from_attributes = True
 
 
 class TradeNoteUpdate(BaseModel):
-    notes: str
+    notes: Optional[str] = None
+    setup_tag: Optional[str] = None
+    catalyst: Optional[str] = None
+    stop_method: Optional[str] = None
+    risk_mode: Optional[str] = None
 
 
 @router.get("", response_model=List[TradeOut])
@@ -61,7 +69,16 @@ def update_notes(
     )
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
-    trade.notes = payload.notes
+    if payload.notes is not None:
+        trade.notes = payload.notes
+    if payload.setup_tag is not None:
+        trade.setup_tag = payload.setup_tag
+    if payload.catalyst is not None:
+        trade.catalyst = payload.catalyst
+    if payload.stop_method is not None:
+        trade.stop_method = payload.stop_method
+    if payload.risk_mode is not None:
+        trade.risk_mode = payload.risk_mode
     db.commit()
     db.refresh(trade)
     return trade

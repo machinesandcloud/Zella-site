@@ -86,6 +86,7 @@ def on_startup() -> None:
             "min_price": app_settings.screener_min_price,
             "max_price": app_settings.screener_max_price,
             "min_volatility": app_settings.screener_min_volatility,
+            "min_relative_volume": app_settings.screener_min_relative_volume,
         },
     )
 

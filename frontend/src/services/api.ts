@@ -51,8 +51,11 @@ export const fetchTrades = async () => {
   return data;
 };
 
-export const updateTradeNotes = async (tradeId: number, notes: string) => {
-  const { data } = await api.put(`/api/trades/${tradeId}/notes`, { notes });
+export const updateTradeNotes = async (
+  tradeId: number,
+  payload: { notes?: string; setup_tag?: string; catalyst?: string; stop_method?: string; risk_mode?: string }
+) => {
+  const { data } = await api.put(`/api/trades/${tradeId}/notes`, payload);
   return data;
 };
 

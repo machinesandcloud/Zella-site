@@ -141,11 +141,22 @@ const AIMarketScanner = () => {
                     <Chip label={`Score ${Number(pick.combined_score).toFixed(2)}`} size="small" />
                   </Stack>
                 }
-                secondary={`Confidence: ${(Number(pick.confidence) * 100).toFixed(0)}%`}
+                secondary={
+                  pick.relative_volume
+                    ? `Confidence: ${(Number(pick.confidence) * 100).toFixed(0)}% · RVOL ${Number(
+                        pick.relative_volume
+                      ).toFixed(2)}x`
+                    : `Confidence: ${(Number(pick.confidence) * 100).toFixed(0)}%`
+                }
               />
             </ListItem>
           ))}
         </List>
+        {picks.length > 0 && (
+          <Typography variant="caption" color="text.secondary">
+            Relative volume filter active (>=2x average). Results include RVOL where data is available.
+          </Typography>
+        )}
       </CardContent>
     </Card>
   );

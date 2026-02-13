@@ -86,6 +86,9 @@ const AutopilotControl = () => {
             <Typography variant="body2" color="text.secondary">
               AI status, risk posture, and decision transparency
             </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Autopilot executes in PAPER mode only. Review results before enabling any live trading.
+            </Typography>
           </Stack>
           <Chip label={status} color={status === "ACTIVE" ? "success" : "default"} />
         </Stack>

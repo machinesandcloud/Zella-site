@@ -64,6 +64,8 @@ def auto_trade(
             raise HTTPException(status_code=403, detail="Auto-trade only allowed in PAPER mode")
         if not ibkr.is_connected():
             raise HTTPException(status_code=503, detail="IBKR not connected")
+        if not risk_manager.can_trade():
+            raise HTTPException(status_code=403, detail="Trading halted by risk controls")
 
         account_summary = ibkr.get_account_summary()
         account_value = float(account_summary.get("NetLiquidation", 0) or 0)

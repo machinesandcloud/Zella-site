@@ -33,8 +33,12 @@ type CandlePoint = {
 
 const ChartView = () => {
   const chartRef = useRef<HTMLDivElement | null>(null);
+  const chartRefSecondary = useRef<HTMLDivElement | null>(null);
   const chartApiRef = useRef<ReturnType<typeof createChart> | null>(null);
+  const chartApiSecondaryRef = useRef<ReturnType<typeof createChart> | null>(null);
   const candleSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addCandlestickSeries"]> | null>(null);
+  const candleSeriesSecondaryRef =
+    useRef<ReturnType<ReturnType<typeof createChart>["addCandlestickSeries"]> | null>(null);
   const volumeSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addHistogramSeries"]> | null>(null);
   const emaSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
   const smaSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
@@ -45,6 +49,8 @@ const ChartView = () => {
   const dataPointsRef = useRef<CandlePoint[]>([]);
   const currentBucketRef = useRef<number | null>(null);
   const emaValueRef = useRef<number | null>(null);
+  const secondaryPointsRef = useRef<CandlePoint[]>([]);
+  const secondaryBucketRef = useRef<number | null>(null);
 
   const [symbol, setSymbol] = useState("AAPL");
   const [timeframe, setTimeframe] = useState("1m");
@@ -52,6 +58,8 @@ const ChartView = () => {
   const [showSMA, setShowSMA] = useState(false);
   const [showVWAP, setShowVWAP] = useState(false);
   const [showBB, setShowBB] = useState(false);
+  const [multiView, setMultiView] = useState(true);
+  const [higherTimeframe, setHigherTimeframe] = useState("15m");
   const showEMARef = useRef(showEMA);
   const showSMARef = useRef(showSMA);
   const showVWAPRef = useRef(showVWAP);
@@ -69,6 +77,18 @@ const ChartView = () => {
     return map[timeframe] || 60;
   }, [timeframe]);
 
+  const higherTfSeconds = useMemo(() => {
+    const map: Record<string, number> = {
+      "1m": 60,
+      "5m": 300,
+      "15m": 900,
+      "1h": 3600,
+      "4h": 14400,
+      "1d": 86400
+    };
+    return map[higherTimeframe] || 900;
+  }, [higherTimeframe]);
+
   useEffect(() => {
     if (!chartRef.current) return;
 
@@ -76,17 +96,21 @@ const ChartView = () => {
       chartApiRef.current.remove();
       chartApiRef.current = null;
     }
+    if (chartApiSecondaryRef.current) {
+      chartApiSecondaryRef.current.remove();
+      chartApiSecondaryRef.current = null;
+    }
 
     const chart = createChart(chartRef.current, {
       width: chartRef.current.clientWidth,
       height: 340,
       layout: {
-        background: { type: ColorType.Solid, color: "#ffffff" },
-        textColor: "#1f2937"
+        background: { type: ColorType.Solid, color: "#0b1220" },
+        textColor: "#d9e2f2"
       },
       grid: {
-        vertLines: { color: "#e2e8f0" },
-        horzLines: { color: "#e2e8f0" }
+        vertLines: { color: "rgba(255,255,255,0.08)" },
+        horzLines: { color: "rgba(255,255,255,0.08)" }
       }
     });
 
@@ -118,6 +142,31 @@ const ChartView = () => {
     dataPointsRef.current = [];
     currentBucketRef.current = null;
     emaValueRef.current = null;
+    secondaryPointsRef.current = [];
+    secondaryBucketRef.current = null;
+
+    if (multiView && chartRefSecondary.current) {
+      const secondaryChart = createChart(chartRefSecondary.current, {
+        width: chartRefSecondary.current.clientWidth,
+        height: 200,
+        layout: {
+          background: { type: ColorType.Solid, color: "#0b1220" },
+          textColor: "#d9e2f2"
+        },
+        grid: {
+          vertLines: { color: "rgba(255,255,255,0.08)" },
+          horzLines: { color: "rgba(255,255,255,0.08)" }
+        }
+      });
+      chartApiSecondaryRef.current = secondaryChart;
+      candleSeriesSecondaryRef.current = secondaryChart.addCandlestickSeries({
+        upColor: "#22c55e",
+        downColor: "#ef4444",
+        wickUpColor: "#22c55e",
+        wickDownColor: "#ef4444",
+        borderVisible: false
+      });
+    }
 
     const emaPeriod = 20;
     const smaPeriod = 20;
@@ -212,10 +261,52 @@ const ChartView = () => {
         bbUpperSeriesRef.current?.update({ time, value: Number(upper.toFixed(2)) });
         bbLowerSeriesRef.current?.update({ time, value: Number(lower.toFixed(2)) });
       }
+
+      if (chartApiSecondaryRef.current && candleSeriesSecondaryRef.current) {
+        const secondaryBucket = Math.floor(ts / higherTfSeconds) * higherTfSeconds;
+        const secondaryTime = secondaryBucket as UTCTimestamp;
+        let secondaryCandle =
+          secondaryPointsRef.current[secondaryPointsRef.current.length - 1];
+        if (
+          secondaryBucketRef.current === null ||
+          secondaryBucket !== secondaryBucketRef.current
+        ) {
+          secondaryBucketRef.current = secondaryBucket;
+          secondaryCandle = {
+            time: secondaryTime,
+            open: data.price,
+            high: data.price,
+            low: data.price,
+            close: data.price,
+            volume: data.volume
+          };
+          secondaryPointsRef.current.push(secondaryCandle);
+          if (secondaryPointsRef.current.length > 120) secondaryPointsRef.current.shift();
+        } else if (secondaryCandle) {
+          secondaryCandle.close = data.price;
+          secondaryCandle.high = Math.max(secondaryCandle.high, data.price);
+          secondaryCandle.low = Math.min(secondaryCandle.low, data.price);
+          secondaryCandle.volume += data.volume;
+        }
+        candleSeriesSecondaryRef.current.setData(
+          secondaryPointsRef.current.map((p) => ({
+            time: p.time,
+            open: p.open,
+            high: p.high,
+            low: p.low,
+            close: p.close
+          }))
+        );
+      }
     });
 
     const handleResize = () => {
       chart.applyOptions({ width: chartRef.current?.clientWidth || 0 });
+      if (chartApiSecondaryRef.current && chartRefSecondary.current) {
+        chartApiSecondaryRef.current.applyOptions({
+          width: chartRefSecondary.current.clientWidth || 0
+        });
+      }
     };
     window.addEventListener("resize", handleResize);
 
@@ -224,8 +315,12 @@ const ChartView = () => {
       ws.close();
       chart.remove();
       chartApiRef.current = null;
+      if (chartApiSecondaryRef.current) {
+        chartApiSecondaryRef.current.remove();
+        chartApiSecondaryRef.current = null;
+      }
     };
-  }, [symbol, tfSeconds]);
+  }, [symbol, tfSeconds, multiView, higherTfSeconds]);
 
   useEffect(() => {
     emaSeriesRef.current?.applyOptions({ visible: showEMA });
@@ -282,8 +377,33 @@ const ChartView = () => {
             control={<Switch checked={showBB} onChange={() => setShowBB(!showBB)} />}
             label="BB"
           />
+          <FormControlLabel
+            control={<Switch checked={multiView} onChange={() => setMultiView(!multiView)} />}
+            label="Multi-Timeframe"
+          />
+          {multiView && (
+            <Select
+              size="small"
+              value={higherTimeframe}
+              onChange={(event) => setHigherTimeframe(event.target.value)}
+            >
+              <MenuItem value="5m">5m</MenuItem>
+              <MenuItem value="15m">15m</MenuItem>
+              <MenuItem value="1h">1H</MenuItem>
+              <MenuItem value="4h">4H</MenuItem>
+              <MenuItem value="1d">1D</MenuItem>
+            </Select>
+          )}
         </Stack>
         <div ref={chartRef} />
+        {multiView && (
+          <Stack spacing={1} sx={{ mt: 2 }}>
+            <Typography variant="caption" color="text.secondary">
+              Higher timeframe context ({higherTimeframe})
+            </Typography>
+            <div ref={chartRefSecondary} />
+          </Stack>
+        )}
       </CardContent>
     </Card>
   );
