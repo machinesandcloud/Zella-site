@@ -99,6 +99,11 @@ export const fetchIbkrDefaults = async () => {
   return data;
 };
 
+export const autoLogin = async () => {
+  const { data } = await api.post("/api/auth/auto-login");
+  return data;
+};
+
 export const fetchPositions = async () => {
   const { data } = await api.get("/api/account/positions");
   return data;

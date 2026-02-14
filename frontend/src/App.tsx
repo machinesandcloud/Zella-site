@@ -46,6 +46,7 @@ import CalendarHeatmap from "./components/Dashboard/CalendarHeatmap";
 import DailyBriefing from "./components/Dashboard/DailyBriefing";
 import Onboarding from "./components/Auth/Onboarding";
 import HelpCenter from "./components/Settings/HelpCenter";
+import { autoLogin } from "./services/api";
 
 const NAV = [
   { label: "Command Center", value: 0 },
@@ -68,6 +69,19 @@ const App = () => {
     const handler = () => setAuthRequired(true);
     window.addEventListener("auth:logout", handler);
     return () => window.removeEventListener("auth:logout", handler);
+  }, []);
+
+  useEffect(() => {
+    const token = localStorage.getItem("zella_token");
+    if (token) return;
+    autoLogin()
+      .then((data) => {
+        if (data?.access_token) {
+          localStorage.setItem("zella_token", data.access_token);
+          window.dispatchEvent(new CustomEvent("auth:login"));
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {

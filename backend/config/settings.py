@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_email: str = "admin@zella.local"
     admin_password: str = ""
+    auto_login_enabled: bool = False
 
     # Trading Defaults
     default_trading_mode: str = "PAPER"

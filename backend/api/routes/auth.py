@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -96,11 +96,41 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)) -> User:
     return user
 
 
+@router.options("/register")
+def register_options() -> Response:
+    return Response(status_code=200)
+
+
 @router.post("/login", response_model=Token)
 def login(user_in: UserLogin, db: Session = Depends(get_db)) -> Token:
     user = db.query(User).filter(User.username == user_in.username).first()
     if not user or not verify_password(user_in.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    access_token = create_access_token(subject=user.username)
+    return Token(access_token=access_token)
+
+
+@router.options("/login")
+def login_options() -> Response:
+    return Response(status_code=200)
+
+
+@router.post("/auto-login", response_model=Token)
+def auto_login(db: Session = Depends(get_db)) -> Token:
+    if not settings.auto_login_enabled:
+        raise HTTPException(status_code=403, detail="Auto-login disabled")
+    if not settings.admin_password:
+        raise HTTPException(status_code=400, detail="Admin password not configured")
+    user = db.query(User).filter(User.username == settings.admin_username).first()
+    if not user:
+        user = User(
+            username=settings.admin_username,
+            email=settings.admin_email,
+            password_hash=hash_password(settings.admin_password),
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
     access_token = create_access_token(subject=user.username)
     return Token(access_token=access_token)
 
