@@ -371,10 +371,6 @@ class IBKRClient(EWrapper, EClient):
     def api_available(self) -> bool:
         return self._api_available
 
-
-def ibkr_api_available() -> bool:
-    return IBAPI_AVAILABLE
-
     def kill_switch(self) -> None:
         self.logger.critical("Kill switch activated. Cancelling orders and closing positions.")
         try:
@@ -530,3 +526,7 @@ def ibkr_api_available() -> bool:
         event = self._scanner_events.get(reqId)
         if event:
             event.set()
+
+
+def ibkr_api_available() -> bool:
+    return IBAPI_AVAILABLE
