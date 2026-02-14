@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
 
+    # Auth
+    allow_signup: bool = False
+    admin_username: str = "admin"
+    admin_email: str = "admin@zella.local"
+    admin_password: str = ""
+
     # Trading Defaults
     default_trading_mode: str = "PAPER"
     max_position_size_percent: float = 10.0

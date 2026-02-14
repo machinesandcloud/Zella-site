@@ -28,6 +28,9 @@ const Login = () => {
         <Typography variant="h6" sx={{ mb: 2 }}>
           Login
         </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Sign-in is restricted to approved users. Contact the admin for access.
+        </Typography>
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {error}

@@ -79,6 +79,8 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 @router.post("/register", response_model=UserOut)
 def register(user_in: UserCreate, db: Session = Depends(get_db)) -> User:
+    if not settings.allow_signup:
+        raise HTTPException(status_code=403, detail="Signup disabled")
     if db.query(User).filter(User.username == user_in.username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
     if db.query(User).filter(User.email == user_in.email).first():

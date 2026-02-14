@@ -1,7 +1,12 @@
 from sqlalchemy import inspect, text
+from passlib.context import CryptContext
 
 from models import Base
-from .db import engine
+from models import User
+from .db import engine, SessionLocal
+from config import settings
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def _ensure_trade_columns() -> None:
@@ -28,3 +33,23 @@ def _ensure_trade_columns() -> None:
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_trade_columns()
+    _ensure_admin_user()
+
+
+def _ensure_admin_user() -> None:
+    if not settings.admin_password:
+        return
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.username == settings.admin_username).first()
+        if existing:
+            return
+        user = User(
+            username=settings.admin_username,
+            email=settings.admin_email,
+            password_hash=pwd_context.hash(settings.admin_password),
+        )
+        db.add(user)
+        db.commit()
+    finally:
+        db.close()

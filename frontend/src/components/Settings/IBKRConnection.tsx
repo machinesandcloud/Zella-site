@@ -11,7 +11,7 @@ import {
   TextField,
   Typography
 } from "@mui/material";
-import api, { fetchIbkrStatus, fetchIbkrWebapiStatus } from "../../services/api";
+import api, { fetchIbkrDefaults, fetchIbkrStatus, fetchIbkrWebapiStatus } from "../../services/api";
 
 const IBKRConnection = () => {
   const [host, setHost] = useState("127.0.0.1");
@@ -27,6 +27,17 @@ const IBKRConnection = () => {
     fetchIbkrWebapiStatus()
       .then((data) => setWebapi(data))
       .catch(() => setWebapi({ enabled: false }));
+  }, []);
+
+  useEffect(() => {
+    fetchIbkrDefaults()
+      .then((data) => {
+        if (data?.host) setHost(data.host);
+        if (data?.port) setPort(Number(data.port));
+        if (data?.client_id) setClientId(Number(data.client_id));
+        if (typeof data?.is_paper_trading === "boolean") setPaper(data.is_paper_trading);
+      })
+      .catch(() => undefined);
   }, []);
 
   const connect = async () => {

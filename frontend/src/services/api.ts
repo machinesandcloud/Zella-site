@@ -94,6 +94,11 @@ export const fetchIbkrWebapiStatus = async () => {
   return data;
 };
 
+export const fetchIbkrDefaults = async () => {
+  const { data } = await api.get("/api/settings/ibkr-defaults");
+  return data;
+};
+
 export const fetchPositions = async () => {
   const { data } = await api.get("/api/account/positions");
   return data;

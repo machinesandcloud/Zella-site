@@ -35,7 +35,6 @@ import IBKRConnection from "./components/Settings/IBKRConnection";
 import RiskSettings from "./components/Settings/RiskSettings";
 import StrategyConfig from "./components/Settings/StrategyConfig";
 import Login from "./components/Auth/Login";
-import Register from "./components/Auth/Register";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import AutonomyTimeline from "./components/AI/AutonomyTimeline";
 import OptionsChain from "./components/Trading/OptionsChain";
@@ -346,9 +345,6 @@ const App = () => {
               <Grid container spacing={3}>
                 <Grid item xs={12} md={6}>
                   <Login />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <Register />
                 </Grid>
                 <Grid item xs={12}>
                   <Onboarding />

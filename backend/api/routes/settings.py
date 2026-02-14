@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from api.routes.auth import get_current_user
 from core.risk_manager import RiskManager
 from models import User
+from config import settings as app_settings
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 logger = logging.getLogger("settings")
@@ -21,6 +22,13 @@ class RiskSettings(BaseModel):
     max_daily_loss: float
     max_concurrent_positions: int
     risk_per_trade_percent: float
+
+
+class IBKRDefaults(BaseModel):
+    host: str
+    port: int
+    client_id: int
+    is_paper_trading: bool
 
 
 @router.get("/risk", response_model=RiskSettings)
@@ -49,3 +57,16 @@ def update_risk_settings(
     risk_manager.set_risk_per_trade(body.risk_per_trade_percent)
     logger.info("risk_settings_updated user=%s values=%s", current_user.username, body.model_dump())
     return body
+
+
+@router.get("/ibkr-defaults", response_model=IBKRDefaults)
+def get_ibkr_defaults(
+    current_user: User = Depends(get_current_user),
+) -> IBKRDefaults:
+    is_paper = app_settings.default_trading_mode.upper() != "LIVE"
+    return IBKRDefaults(
+        host=app_settings.ibkr_host,
+        port=app_settings.ibkr_paper_port if is_paper else app_settings.ibkr_live_port,
+        client_id=app_settings.ibkr_client_id,
+        is_paper_trading=is_paper,
+    )
