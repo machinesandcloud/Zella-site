@@ -15,6 +15,7 @@ celery
 redis
 websockets
 httpx
+ibapi
 pytest
 scikit-learn
 joblib
