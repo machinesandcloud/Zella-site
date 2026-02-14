@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: str = "logs/trading_bot.log"
 
+    # CORS
+    cors_allowed_origins: str = "https://zella-site.netlify.app"
+    cors_allow_origin_regex: str = r"https://.*\\.netlify\\.app"
+
     # QA / Dev
     use_mock_ibkr: bool = True
     use_free_data: bool = True

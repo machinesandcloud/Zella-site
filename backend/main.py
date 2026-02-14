@@ -1,6 +1,7 @@
 import time
 
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 from api.routes import account, auth, backtest, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk, trades, news, market
@@ -28,6 +29,21 @@ from core.init_db import init_db
 from utils.logger import setup_logging
 
 app = FastAPI(title="Zella AI Trading API", version="0.1.0")
+
+allowed_origins = [
+    origin.strip()
+    for origin in app_settings.cors_allowed_origins.split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_origin_regex=app_settings.cors_allow_origin_regex or None,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 REQUEST_COUNT = Counter(
     "zella_http_requests_total",
