@@ -46,7 +46,7 @@ import CalendarHeatmap from "./components/Dashboard/CalendarHeatmap";
 import DailyBriefing from "./components/Dashboard/DailyBriefing";
 import Onboarding from "./components/Auth/Onboarding";
 import HelpCenter from "./components/Settings/HelpCenter";
-import { autoLogin } from "./services/api";
+import { autoLogin, fetchIbkrDefaults } from "./services/api";
 
 const NAV = [
   { label: "Command Center", value: 0 },
@@ -59,6 +59,12 @@ const NAV = [
 const App = () => {
   const [tab, setTab] = useState(0);
   const [authRequired, setAuthRequired] = useState(false);
+  const [ibkrDefaults, setIbkrDefaults] = useState<{
+    is_paper_trading: boolean;
+    use_mock_ibkr: boolean;
+    use_ibkr_webapi: boolean;
+    use_free_data: boolean;
+  } | null>(null);
   const [toast, setToast] = useState<{ open: boolean; message: string; severity: "success" | "info" | "warning" | "error" }>({
     open: false,
     message: "",
@@ -81,6 +87,12 @@ const App = () => {
           window.dispatchEvent(new CustomEvent("auth:login"));
         }
       })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    fetchIbkrDefaults()
+      .then((data) => setIbkrDefaults(data))
       .catch(() => undefined);
   }, []);
 
@@ -146,8 +158,18 @@ const App = () => {
               </Box>
             </Stack>
             <Stack direction="row" spacing={1} alignItems="center">
-              <Chip label="Paper Mode" color="secondary" size="small" />
-              <Chip label="IBKR Mock" size="small" />
+              {ibkrDefaults ? (
+                <Chip
+                  label={ibkrDefaults.is_paper_trading ? "Paper Mode" : "Live Mode"}
+                  color={ibkrDefaults.is_paper_trading ? "secondary" : "success"}
+                  size="small"
+                />
+              ) : (
+                <Chip label="Trading Mode" size="small" />
+              )}
+              {ibkrDefaults?.use_mock_ibkr && <Chip label="IBKR Mock" size="small" />}
+              {ibkrDefaults?.use_ibkr_webapi && <Chip label="IBKR Web API" size="small" />}
+              {ibkrDefaults?.use_free_data && <Chip label="Free Data" size="small" />}
               <Button
                 variant="contained"
                 color="primary"

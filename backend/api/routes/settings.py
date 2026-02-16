@@ -29,6 +29,9 @@ class IBKRDefaults(BaseModel):
     port: int
     client_id: int
     is_paper_trading: bool
+    use_mock_ibkr: bool
+    use_ibkr_webapi: bool
+    use_free_data: bool
 
 
 @router.get("/risk", response_model=RiskSettings)
@@ -69,4 +72,7 @@ def get_ibkr_defaults(
         port=app_settings.ibkr_paper_port if is_paper else app_settings.ibkr_live_port,
         client_id=app_settings.ibkr_client_id,
         is_paper_trading=is_paper,
+        use_mock_ibkr=app_settings.use_mock_ibkr,
+        use_ibkr_webapi=app_settings.use_ibkr_webapi,
+        use_free_data=app_settings.use_free_data,
     )

@@ -59,6 +59,9 @@ pip install -r backend/requirements-ibkr.txt
 
 Then set `USE_MOCK_IBKR=false` and connect to TWS/IB Gateway.
 
+For headless IB Gateway on a server (DigitalOcean droplet), follow:
+`docs/ibkr-droplet-setup.md`
+
 Key settings:
 - `IBKR_HOST`, `IBKR_PAPER_PORT`, `IBKR_LIVE_PORT`, `IBKR_CLIENT_ID`
 - `DATABASE_URL` (PostgreSQL) and `SQLITE_URL` (local dev)
