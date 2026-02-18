@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     allow_signup: bool = False
     admin_username: str = "admin"
     admin_email: str = "admin@zella.local"
-    admin_password: str = ""
-    auto_login_enabled: bool = False
+    admin_password: str = "zella-auto-login-2024"  # Auto-generated for auto-login
+    auto_login_enabled: bool = True  # Enable automatic login
 
     # Trading Defaults
     default_trading_mode: str = "PAPER"
