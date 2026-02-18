@@ -34,7 +34,7 @@ import PremarketChecklist from "./components/Trading/PremarketChecklist";
 import IBKRConnection from "./components/Settings/IBKRConnection";
 import RiskSettings from "./components/Settings/RiskSettings";
 import StrategyConfig from "./components/Settings/StrategyConfig";
-import Login from "./components/Auth/Login";
+import { autoLogin, fetchIbkrDefaults, fetchIbkrWebapiStatus } from "./services/api";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import AutonomyTimeline from "./components/AI/AutonomyTimeline";
 import OptionsChain from "./components/Trading/OptionsChain";
@@ -44,16 +44,13 @@ import StrategyBuilder from "./components/Trading/StrategyBuilder";
 import SystemHealth from "./components/Dashboard/SystemHealth";
 import CalendarHeatmap from "./components/Dashboard/CalendarHeatmap";
 import DailyBriefing from "./components/Dashboard/DailyBriefing";
-import Onboarding from "./components/Auth/Onboarding";
 import HelpCenter from "./components/Settings/HelpCenter";
-import { autoLogin, fetchIbkrDefaults } from "./services/api";
 
 const NAV = [
   { label: "Command Center", value: 0 },
   { label: "Trading", value: 1 },
   { label: "Analytics", value: 2 },
-  { label: "Settings", value: 3 },
-  { label: "Access", value: 4 }
+  { label: "Settings", value: 3 }
 ];
 
 const App = () => {
@@ -64,6 +61,11 @@ const App = () => {
     use_mock_ibkr: boolean;
     use_ibkr_webapi: boolean;
     use_free_data: boolean;
+  } | null>(null);
+  const [webapiStatus, setWebapiStatus] = useState<{
+    enabled: boolean;
+    connected?: boolean;
+    base_url?: string;
   } | null>(null);
   const [toast, setToast] = useState<{ open: boolean; message: string; severity: "success" | "info" | "warning" | "error" }>({
     open: false,
@@ -91,9 +93,40 @@ const App = () => {
   }, []);
 
   useEffect(() => {
+    if (!authRequired) return;
+    autoLogin()
+      .then((data) => {
+        if (data?.access_token) {
+          localStorage.setItem("zella_token", data.access_token);
+          setAuthRequired(false);
+          window.dispatchEvent(new CustomEvent("auth:login"));
+        }
+      })
+      .catch(() => undefined);
+  }, [authRequired]);
+
+  useEffect(() => {
     fetchIbkrDefaults()
       .then((data) => setIbkrDefaults(data))
       .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadStatus = () =>
+      fetchIbkrWebapiStatus()
+        .then((data) => {
+          if (!cancelled) setWebapiStatus(data);
+        })
+        .catch(() => {
+          if (!cancelled) setWebapiStatus({ enabled: false });
+        });
+    loadStatus();
+    const timer = window.setInterval(loadStatus, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -170,6 +203,13 @@ const App = () => {
               {ibkrDefaults?.use_mock_ibkr && <Chip label="IBKR Mock" size="small" />}
               {ibkrDefaults?.use_ibkr_webapi && <Chip label="IBKR Web API" size="small" />}
               {ibkrDefaults?.use_free_data && <Chip label="Free Data" size="small" />}
+              {webapiStatus?.enabled && (
+                <Chip
+                  label={webapiStatus.connected ? "IBKR Authenticated" : "IBKR Not Authenticated"}
+                  color={webapiStatus.connected ? "success" : "warning"}
+                  size="small"
+                />
+              )}
               <Button
                 variant="contained"
                 color="primary"
@@ -211,7 +251,7 @@ const App = () => {
             }}
           >
             <Typography variant="body2">
-              Session expired. Please log in again in the Access tab.
+              Session expired. Auto-login is retrying in the background.
             </Typography>
           </Box>
         )}
@@ -377,16 +417,6 @@ const App = () => {
               </Grid>
             )}
 
-            {tab === 4 && (
-              <Grid container spacing={3}>
-                <Grid item xs={12} md={6}>
-                  <Login />
-                </Grid>
-                <Grid item xs={12}>
-                  <Onboarding />
-                </Grid>
-              </Grid>
-            )}
           </Grid>
         </Grid>
       </Container>

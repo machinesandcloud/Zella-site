@@ -24,9 +24,21 @@ const IBKRConnection = () => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetchIbkrWebapiStatus()
-      .then((data) => setWebapi(data))
-      .catch(() => setWebapi({ enabled: false }));
+    let cancelled = false;
+    const loadStatus = () =>
+      fetchIbkrWebapiStatus()
+        .then((data) => {
+          if (!cancelled) setWebapi(data);
+        })
+        .catch(() => {
+          if (!cancelled) setWebapi({ enabled: false });
+        });
+    loadStatus();
+    const timer = window.setInterval(loadStatus, 20000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -95,10 +107,24 @@ const IBKRConnection = () => {
           IBKR Connection
         </Typography>
         {webapi.enabled && (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Web API enabled ({webapi.base_url}). Authenticate via IBKR Client Portal Gateway UI.
-            Status: {webapi.connected ? "Authenticated" : "Not authenticated"}.
-          </Typography>
+          <Stack spacing={1.5} sx={{ mb: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Web API enabled ({webapi.base_url}). Authenticate via IBKR Client Portal Gateway UI.
+            </Typography>
+            <Alert severity={webapi.connected ? "success" : "warning"}>
+              {webapi.connected ? "Authenticated via IBKR Web API." : "Not authenticated yet."}
+            </Alert>
+            <Button
+              variant="outlined"
+              onClick={() =>
+                fetchIbkrWebapiStatus()
+                  .then((data) => setWebapi(data))
+                  .catch(() => setWebapi({ enabled: false }))
+              }
+            >
+              Refresh Status
+            </Button>
+          </Stack>
         )}
         {loading && <LinearProgress sx={{ mb: 2 }} />}
         {statusMessage && (
@@ -106,33 +132,35 @@ const IBKRConnection = () => {
             {statusMessage}
           </Alert>
         )}
-        <Stack spacing={2}>
-          <TextField label="Host" value={host} onChange={(e) => setHost(e.target.value)} />
-          <TextField
-            label="Port"
-            type="number"
-            value={port}
-            onChange={(e) => setPort(Number(e.target.value))}
-          />
-          <TextField
-            label="Client ID"
-            type="number"
-            value={clientId}
-            onChange={(e) => setClientId(Number(e.target.value))}
-          />
-          <FormControlLabel
-            control={<Switch checked={paper} onChange={(e) => setPaper(e.target.checked)} />}
-            label="Paper Trading"
-          />
-          <Stack direction="row" spacing={2}>
-            <Button variant="contained" onClick={connect} disabled={webapi.enabled || loading}>
-              Connect
-            </Button>
-            <Button variant="outlined" onClick={disconnect} disabled={webapi.enabled || loading}>
-              Disconnect
-            </Button>
+        {!webapi.enabled && (
+          <Stack spacing={2}>
+            <TextField label="Host" value={host} onChange={(e) => setHost(e.target.value)} />
+            <TextField
+              label="Port"
+              type="number"
+              value={port}
+              onChange={(e) => setPort(Number(e.target.value))}
+            />
+            <TextField
+              label="Client ID"
+              type="number"
+              value={clientId}
+              onChange={(e) => setClientId(Number(e.target.value))}
+            />
+            <FormControlLabel
+              control={<Switch checked={paper} onChange={(e) => setPaper(e.target.checked)} />}
+              label="Paper Trading"
+            />
+            <Stack direction="row" spacing={2}>
+              <Button variant="contained" onClick={connect} disabled={loading}>
+                Connect
+              </Button>
+              <Button variant="outlined" onClick={disconnect} disabled={loading}>
+                Disconnect
+              </Button>
+            </Stack>
           </Stack>
-        </Stack>
+        )}
       </CardContent>
     </Card>
   );
