@@ -22,11 +22,9 @@ import {
   Collapse
 } from "@mui/material";
 import {
-  PlayArrow,
   Stop,
   Warning,
   CheckCircle,
-  TrendingUp,
   Psychology,
   Settings as SettingsIcon,
   ExpandMore,
