@@ -147,8 +147,12 @@ def on_startup() -> None:
         logger.info("Started IBKR Web API session keepalive task")
 
     # Initialize Alpaca client if enabled
+    logger.info(f"Alpaca initialization check: use_alpaca={app_settings.use_alpaca}, use_alpaca_effective={app_settings.use_alpaca_effective}")
+    logger.info(f"Alpaca config: has_api_key={bool(app_settings.alpaca_api_key)}, has_secret={bool(app_settings.alpaca_secret_key)}, paper={app_settings.alpaca_paper}")
+
     if app_settings.use_alpaca_effective:
         if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
+            logger.info(f"Attempting to initialize Alpaca client with API key: {app_settings.alpaca_api_key[:10]}...")
             alpaca_client = AlpacaClient(
                 api_key=app_settings.alpaca_api_key,
                 secret_key=app_settings.alpaca_secret_key,
@@ -159,9 +163,11 @@ def on_startup() -> None:
                 app.state.alpaca_client = alpaca_client
                 logger.info(f"Alpaca client initialized and connected (paper={app_settings.alpaca_paper})")
             else:
-                logger.error("Alpaca client failed to connect")
+                logger.error("Alpaca client failed to connect - check API keys and network connectivity")
         else:
-            logger.warning("Alpaca enabled but API keys not configured")
+            logger.warning(f"Alpaca enabled but API keys not configured (api_key={'set' if app_settings.alpaca_api_key else 'NOT SET'}, secret_key={'set' if app_settings.alpaca_secret_key else 'NOT SET'})")
+    else:
+        logger.info("Alpaca not enabled in configuration")
 
 
 @app.on_event("shutdown")
