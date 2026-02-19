@@ -30,9 +30,18 @@ class IBKRWebAPIClient:
     def is_connected(self) -> bool:
         try:
             status = self.auth_status()
-            return bool(status.get("authenticated", False))
+            return bool(status.get("authenticated", False) and status.get("connected", False))
         except Exception:
             return False
+
+    def tickle(self) -> Dict[str, Any]:
+        """Keep the session alive. Should be called every 5 minutes to prevent timeout."""
+        try:
+            response = self._client.post(self._url("/tickle"))
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {"error": str(e)}
 
     def _fetch_accounts(self) -> List[str]:
         endpoints = ["/iserver/accounts", "/portfolio/accounts"]

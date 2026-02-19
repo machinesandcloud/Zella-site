@@ -1,4 +1,6 @@
 import time
+import asyncio
+import logging
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,6 +57,20 @@ REQUEST_LATENCY = Histogram(
     "HTTP request latency in seconds",
     ["method", "path"],
 )
+
+logger = logging.getLogger("zella")
+
+
+async def keep_ibkr_session_alive():
+    """Background task to keep IBKR Web API session alive by calling /tickle every 5 minutes."""
+    while True:
+        try:
+            await asyncio.sleep(300)  # 5 minutes
+            if hasattr(app.state, "ibkr_webapi_client") and app.state.ibkr_webapi_client:
+                result = app.state.ibkr_webapi_client.tickle()
+                logger.info(f"IBKR session tickle: {result}")
+        except Exception as e:
+            logger.error(f"Error in IBKR session keepalive: {e}")
 
 
 @app.middleware("http")
@@ -123,6 +139,11 @@ def on_startup() -> None:
             "min_relative_volume": app_settings.screener_min_relative_volume,
         },
     )
+
+    # Start IBKR session keepalive task if using Web API
+    if app_settings.use_ibkr_webapi:
+        asyncio.create_task(keep_ibkr_session_alive())
+        logger.info("Started IBKR Web API session keepalive task")
 
 
 @app.on_event("shutdown")
