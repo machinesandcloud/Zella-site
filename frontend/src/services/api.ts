@@ -224,4 +224,31 @@ export const fetchStrategyLogs = async (strategyId: string) => {
   return data;
 };
 
+// ==================== Autonomous Engine API ====================
+
+export const startAutonomousEngine = async () => {
+  const { data } = await api.post("/api/ai/autonomous/start");
+  return data;
+};
+
+export const stopAutonomousEngine = async () => {
+  const { data } = await api.post("/api/ai/autonomous/stop");
+  return data;
+};
+
+export const getAutonomousStatus = async () => {
+  const { data } = await api.get("/api/ai/autonomous/status");
+  return data;
+};
+
+export const updateAutonomousConfig = async (config: Record<string, unknown>) => {
+  const { data } = await api.post("/api/ai/autonomous/config", config);
+  return data;
+};
+
+export const getStrategyPerformance = async () => {
+  const { data } = await api.get("/api/ai/autonomous/strategies");
+  return data;
+};
+
 export default api;

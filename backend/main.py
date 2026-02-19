@@ -22,6 +22,7 @@ from core.ibkr_webapi import IBKRWebAPIClient
 from core.alpaca_client import AlpacaClient
 from core.ai_activity import ActivityLog
 from core.auto_trader import AutoTrader
+from core.autonomous_engine import AutonomousEngine
 from core.mock_ibkr_client import MockIBKRClient
 from core.ibkr_client import ibkr_api_available
 from market.ibkr_provider import IBKRMarketDataProvider
@@ -184,11 +185,48 @@ def on_startup() -> None:
     else:
         logger.info("Alpaca disabled in configuration")
 
+    # Initialize Autonomous Trading Engine
+    broker_client = app.state.alpaca_client if app.state.alpaca_client else app.state.ibkr_client
+    if broker_client and broker_client.is_connected():
+        try:
+            logger.info("Initializing Autonomous Trading Engine...")
+            app.state.autonomous_engine = AutonomousEngine(
+                market_data_provider=app.state.market_data_provider,
+                strategy_engine=app.state.strategy_engine,
+                risk_manager=app.state.risk_manager,
+                position_manager=app.state.position_manager,
+                broker_client=broker_client,
+                config={
+                    "enabled": False,  # Start disabled by default
+                    "mode": "FULL_AUTO",
+                    "risk_posture": "BALANCED",
+                    "scan_interval": 60,
+                    "max_positions": 5,
+                    "enabled_strategies": "ALL"
+                }
+            )
+            logger.info("✓ Autonomous Trading Engine initialized")
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize Autonomous Engine: {e}")
+            app.state.autonomous_engine = None
+    else:
+        logger.warning("✗ Autonomous Engine not initialized - no broker connection")
+        app.state.autonomous_engine = None
+
 
 @app.on_event("shutdown")
-def on_shutdown() -> None:
+async def on_shutdown() -> None:
+    # Stop autonomous engine if running
+    if hasattr(app.state, "autonomous_engine") and app.state.autonomous_engine:
+        logger.info("Stopping Autonomous Trading Engine...")
+        await app.state.autonomous_engine.stop()
+
+    # Disconnect broker clients
     if hasattr(app.state, "ibkr_client") and app.state.ibkr_client.is_connected():
         app.state.ibkr_client.disconnect()
+
+    if hasattr(app.state, "alpaca_client") and app.state.alpaca_client and app.state.alpaca_client.is_connected():
+        app.state.alpaca_client.disconnect()
 
 
 app.include_router(auth.router)

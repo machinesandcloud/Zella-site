@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional, Dict, Any
 
 from core.auto_trader import AutoTrader
+from core.autonomous_engine import AutonomousEngine
 from api.routes.auth import get_current_user
 from core.risk_manager import RiskManager
 from core.ibkr_client import IBKRClient
@@ -14,6 +16,12 @@ def get_auto_trader() -> AutoTrader:
     from main import app
 
     return app.state.auto_trader
+
+
+def get_autonomous_engine() -> Optional[AutonomousEngine]:
+    from main import app
+
+    return getattr(app.state, "autonomous_engine", None)
 
 
 def get_ibkr_client() -> IBKRClient:
@@ -127,3 +135,73 @@ def ai_status(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     return {"status": activity_log.status}
+
+
+# ==================== Autonomous Engine Endpoints ====================
+
+@router.post("/autonomous/start")
+async def start_autonomous_engine(
+    engine: Optional[AutonomousEngine] = Depends(get_autonomous_engine),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Start the fully autonomous trading engine"""
+    if not engine:
+        raise HTTPException(status_code=503, detail="Autonomous engine not initialized")
+
+    await engine.start()
+    return {"status": "started", "message": "Autonomous trading engine started"}
+
+
+@router.post("/autonomous/stop")
+async def stop_autonomous_engine(
+    engine: Optional[AutonomousEngine] = Depends(get_autonomous_engine),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Stop the autonomous trading engine"""
+    if not engine:
+        raise HTTPException(status_code=503, detail="Autonomous engine not initialized")
+
+    await engine.stop()
+    return {"status": "stopped", "message": "Autonomous trading engine stopped"}
+
+
+@router.get("/autonomous/status")
+def get_autonomous_status(
+    engine: Optional[AutonomousEngine] = Depends(get_autonomous_engine),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Get autonomous engine status and metrics"""
+    if not engine:
+        raise HTTPException(status_code=503, detail="Autonomous engine not initialized")
+
+    return engine.get_status()
+
+
+@router.post("/autonomous/config")
+async def update_autonomous_config(
+    config: Dict[str, Any],
+    engine: Optional[AutonomousEngine] = Depends(get_autonomous_engine),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Update autonomous engine configuration"""
+    if not engine:
+        raise HTTPException(status_code=503, detail="Autonomous engine not initialized")
+
+    engine.update_config(config)
+    return {"status": "updated", "config": config}
+
+
+@router.get("/autonomous/strategies")
+def get_strategy_performance(
+    engine: Optional[AutonomousEngine] = Depends(get_autonomous_engine),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Get performance metrics for all strategies"""
+    if not engine:
+        raise HTTPException(status_code=503, detail="Autonomous engine not initialized")
+
+    return {
+        "strategies": list(engine.all_strategies.keys()),
+        "performance": engine.strategy_performance,
+        "total_strategies": len(engine.all_strategies)
+    }
