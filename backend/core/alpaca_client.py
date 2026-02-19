@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 import logging
+import signal
+from contextlib import contextmanager
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
@@ -14,6 +16,30 @@ from alpaca.data.timeframe import TimeFrame
 from datetime import datetime, timedelta
 
 logger = logging.getLogger("alpaca_client")
+
+# Request timeout in seconds
+DEFAULT_TIMEOUT = 10
+
+
+class TimeoutError(Exception):
+    """Request timeout exception."""
+    pass
+
+
+@contextmanager
+def timeout(seconds: int = DEFAULT_TIMEOUT):
+    """Context manager for request timeout."""
+    def timeout_handler(signum, frame):
+        raise TimeoutError(f"Request timed out after {seconds} seconds")
+
+    # Set the signal handler
+    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 
 class AlpacaClient:
@@ -65,15 +91,20 @@ class AlpacaClient:
             True if connection successful
         """
         try:
-            # Test connection by getting account info
-            account = self.trading_client.get_account()
-            self._connected = True
-            logger.info(f"Connected to Alpaca - Account: {account.account_number}")
-            logger.info(f"  Buying Power: ${account.buying_power}")
-            logger.info(f"  Portfolio Value: ${account.portfolio_value}")
-            return True
+            # Test connection by getting account info with timeout
+            with timeout(DEFAULT_TIMEOUT):
+                account = self.trading_client.get_account()
+                self._connected = True
+                logger.info(f"Connected to Alpaca - Account: {account.account_number}")
+                logger.info(f"  Buying Power: ${account.buying_power}")
+                logger.info(f"  Portfolio Value: ${account.portfolio_value}")
+                return True
+        except TimeoutError as e:
+            logger.error(f"Alpaca connection timeout: {e}")
+            self._connected = False
+            return False
         except Exception as e:
-            logger.error(f"Failed to connect to Alpaca: {e}")
+            logger.error(f"Failed to connect to Alpaca: {type(e).__name__}: {e}")
             self._connected = False
             return False
 

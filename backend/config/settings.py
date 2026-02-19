@@ -40,8 +40,8 @@ class Settings(BaseSettings):
     log_file: str = "logs/trading_bot.log"
 
     # CORS
-    cors_allowed_origins: str = "https://zella-site.netlify.app"
-    cors_allow_origin_regex: str = r"https://.*\\.netlify\\.app"
+    cors_allowed_origins: str = "https://zella-site.netlify.app,http://localhost:3000,http://localhost:5173"
+    cors_allow_origin_regex: str = r"https://.*\.netlify\.app"
 
     # QA / Dev
     use_mock_ibkr: bool = False
@@ -78,6 +78,34 @@ class Settings(BaseSettings):
     def use_alpaca_effective(self) -> bool:
         # Enable Alpaca if explicitly requested or if keys are present.
         return self.use_alpaca or (self.alpaca_api_key != "" and self.alpaca_secret_key != "")
+
+    def validate_configuration(self) -> list[str]:
+        """
+        Validate configuration and return list of warnings/errors.
+
+        Returns:
+            List of warning messages (empty if all OK)
+        """
+        warnings = []
+
+        # Check secret key
+        if self.secret_key == "your-secret-key-here":
+            warnings.append("⚠️  SECRET_KEY is set to default value - CHANGE THIS in production!")
+
+        # Check Alpaca configuration
+        if self.use_alpaca_effective:
+            if not self.alpaca_api_key or not self.alpaca_secret_key:
+                warnings.append("⚠️  Alpaca enabled but API keys are missing")
+            elif len(self.alpaca_api_key) < 10:
+                warnings.append("⚠️  Alpaca API key appears to be invalid (too short)")
+            elif len(self.alpaca_secret_key) < 10:
+                warnings.append("⚠️  Alpaca secret key appears to be invalid (too short)")
+
+        # Check if both IBKR and Alpaca are disabled
+        if not self.use_alpaca_effective and not self.use_ibkr_webapi and self.use_mock_ibkr:
+            warnings.append("ℹ️  Running with mock IBKR (no real trading)")
+
+        return warnings
 
 
 settings = Settings()

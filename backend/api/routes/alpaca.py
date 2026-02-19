@@ -30,20 +30,70 @@ class AlpacaConnectRequest(BaseModel):
 @router.post("/connect")
 def connect_alpaca(
     body: AlpacaConnectRequest,
-    alpaca: Optional[AlpacaClient] = Depends(get_alpaca_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Connect to Alpaca API."""
-    if not alpaca:
-        raise HTTPException(status_code=400, detail="Alpaca not enabled. Set USE_ALPACA=true in env vars.")
+    """
+    Connect to Alpaca API with new credentials or reconnect existing client.
 
-    if not alpaca.is_connected():
-        connected = alpaca.connect()
-        if not connected:
-            raise HTTPException(status_code=500, detail="Failed to connect to Alpaca API. Check your API keys.")
+    If api_key and secret_key are provided, creates a new client with those credentials.
+    Otherwise, reconnects the existing client from app state.
+    """
+    from main import app
 
-    logger.info(f"Alpaca connected - user={current_user.username}, mode={alpaca.get_trading_mode()}")
-    return {"status": "connected", "mode": alpaca.get_trading_mode()}
+    # Validate inputs if new credentials provided
+    if body.api_key and body.secret_key:
+        # Validate API key format
+        if len(body.api_key) < 10:
+            raise HTTPException(status_code=400, detail="Invalid API key format")
+        if len(body.secret_key) < 10:
+            raise HTTPException(status_code=400, detail="Invalid secret key format")
+
+        try:
+            # Create new client with provided credentials
+            logger.info(f"Creating new Alpaca client for user={current_user.username}, paper={body.paper}")
+            new_client = AlpacaClient(
+                api_key=body.api_key,
+                secret_key=body.secret_key,
+                paper=body.paper if body.paper is not None else True
+            )
+
+            # Test connection
+            if not new_client.connect():
+                raise HTTPException(
+                    status_code=401,
+                    detail="Failed to authenticate with Alpaca. Check your API keys and make sure they're valid."
+                )
+
+            # Success - replace app state client
+            app.state.alpaca_client = new_client
+            logger.info(f"✓ New Alpaca client connected - user={current_user.username}, mode={new_client.get_trading_mode()}")
+            return {"status": "connected", "mode": new_client.get_trading_mode(), "new_credentials": True}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error creating Alpaca client: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to create Alpaca client: {str(e)}")
+
+    # No new credentials - reconnect existing client
+    else:
+        alpaca = getattr(app.state, "alpaca_client", None)
+        if not alpaca:
+            raise HTTPException(
+                status_code=400,
+                detail="Alpaca not configured. Provide api_key and secret_key to set up Alpaca."
+            )
+
+        if not alpaca.is_connected():
+            connected = alpaca.connect()
+            if not connected:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to reconnect to Alpaca API. Try providing fresh API credentials."
+                )
+
+        logger.info(f"Alpaca reconnected - user={current_user.username}, mode={alpaca.get_trading_mode()}")
+        return {"status": "connected", "mode": alpaca.get_trading_mode(), "new_credentials": False}
 
 
 @router.post("/disconnect")
@@ -62,18 +112,51 @@ def disconnect_alpaca(
 
 @router.get("/status")
 def status(
-    alpaca: Optional[AlpacaClient] = Depends(get_alpaca_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Get Alpaca connection status."""
-    if not alpaca:
-        return {"enabled": False}
+    """
+    Get Alpaca connection status with detailed diagnostics.
 
-    return {
+    Returns connection state, configuration info, and helpful error messages.
+    """
+    from main import app
+    from config.settings import settings
+
+    alpaca = getattr(app.state, "alpaca_client", None)
+
+    # Alpaca not configured at all
+    if not settings.use_alpaca_effective:
+        return {
+            "enabled": False,
+            "connected": False,
+            "reason": "Alpaca not enabled in configuration",
+            "help": "Set ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables, or set USE_ALPACA=true"
+        }
+
+    # Alpaca client not initialized
+    if not alpaca:
+        has_keys = bool(settings.alpaca_api_key and settings.alpaca_secret_key)
+        return {
+            "enabled": True,
+            "connected": False,
+            "reason": "Alpaca client not initialized" if has_keys else "API keys not configured",
+            "help": "Check server logs for initialization errors" if has_keys else "Configure ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables"
+        }
+
+    # Alpaca client exists - check connection
+    connected = alpaca.is_connected()
+    result = {
         "enabled": True,
-        "connected": alpaca.is_connected(),
-        "mode": alpaca.get_trading_mode()
+        "connected": connected,
+        "mode": alpaca.get_trading_mode(),
+        "paper_trading": alpaca.paper
     }
+
+    if not connected:
+        result["reason"] = "Not connected to Alpaca"
+        result["help"] = "Click 'Connect' to establish connection, or check API keys if connection fails"
+
+    return result
 
 
 @router.get("/account")
