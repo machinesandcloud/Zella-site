@@ -19,10 +19,23 @@ const Overview = () => {
   }, []);
 
   useEffect(() => {
-    const ws = connectWebSocket("/ws/account-updates", (msg) => {
-      setTimestamp(msg.timestamp);
-    });
-    return () => ws.close();
+    let ws: WebSocket | null = null;
+    try {
+      ws = connectWebSocket("/ws/account-updates", (msg) => {
+        setTimestamp(msg.timestamp);
+      });
+    } catch (error) {
+      console.warn("WebSocket connection failed:", error);
+    }
+    return () => {
+      if (ws) {
+        try {
+          ws.close();
+        } catch (e) {
+          // Ignore close errors
+        }
+      }
+    };
   }, []);
 
   const tiles = [

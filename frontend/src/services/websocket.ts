@@ -12,8 +12,16 @@ export const connectWebSocket = (path: string, onMessage: (msg: WSMessage) => vo
       const data = JSON.parse(event.data);
       onMessage(data as WSMessage);
     } catch {
-      // ignore
+      // ignore parse errors
     }
+  };
+
+  ws.onerror = (error) => {
+    console.warn("WebSocket error:", error);
+  };
+
+  ws.onclose = () => {
+    console.log("WebSocket closed");
   };
 
   return ws;
