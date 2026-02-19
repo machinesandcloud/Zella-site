@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Box, Card, CardContent, Grid, Stack, Typography } from "@mui/material";
-import { fetchDashboardOverview } from "../../services/api";
+import { fetchAlpacaAccount } from "../../services/api";
 import { connectWebSocket } from "../../services/websocket";
 
 const Overview = () => {
@@ -8,10 +8,10 @@ const Overview = () => {
   const [timestamp, setTimestamp] = useState<string>("");
 
   useEffect(() => {
-    fetchDashboardOverview()
+    fetchAlpacaAccount()
       .then((data) => {
-        setSummary(data.account_summary || {});
-        setTimestamp(data.timestamp || "");
+        setSummary(data || {});
+        setTimestamp(new Date().toISOString());
       })
       .catch(() => {
         setSummary({});
@@ -59,7 +59,7 @@ const Overview = () => {
             <Typography variant="overline" color="text.secondary">
               System Status
             </Typography>
-            <Typography variant="body1">IBKR: {summary ? "Connected" : "Disconnected"}</Typography>
+            <Typography variant="body1">Alpaca: {summary ? "Connected" : "Disconnected"}</Typography>
             <Typography variant="body2" color="text.secondary">
               Active strategies: 0
             </Typography>

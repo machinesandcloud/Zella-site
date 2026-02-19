@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, Chip, Grid, Typography } from "@mui/material";
-import { fetchIbkrStatus } from "../../services/api";
+import { fetchAlpacaStatus } from "../../services/api";
 
 type Status = {
   connected: boolean;
@@ -11,7 +11,7 @@ const SystemHealth = () => {
   const [status, setStatus] = useState<Status | null>(null);
 
   useEffect(() => {
-    fetchIbkrStatus()
+    fetchAlpacaStatus()
       .then((data) => setStatus(data))
       .catch(() => setStatus(null));
   }, []);
@@ -24,7 +24,7 @@ const SystemHealth = () => {
         </Typography>
         <Grid container spacing={2}>
           <Grid item xs={12} md={4}>
-            <Typography variant="overline">IBKR Status</Typography>
+            <Typography variant="overline">Alpaca Status</Typography>
             <Chip
               label={status?.connected ? "Connected" : "Disconnected"}
               color={status?.connected ? "success" : "default"}
@@ -33,7 +33,7 @@ const SystemHealth = () => {
           </Grid>
           <Grid item xs={12} md={4}>
             <Typography variant="overline">Trading Mode</Typography>
-            <Typography variant="h6">{status?.mode || "--"}</Typography>
+            <Typography variant="h6">{status?.mode || "PAPER"}</Typography>
           </Grid>
           <Grid item xs={12} md={4}>
             <Typography variant="overline">Data Feed</Typography>

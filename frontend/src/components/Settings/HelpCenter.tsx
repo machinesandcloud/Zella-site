@@ -2,7 +2,7 @@ import { Card, CardContent, List, ListItem, ListItemText, Typography } from "@mu
 
 const HelpCenter = () => {
   const items = [
-    { title: "Quick Start Guide", detail: "Setup, connect IBKR, place first trade" },
+    { title: "Quick Start Guide", detail: "Setup, connect Alpaca, place first trade" },
     { title: "Risk Management", detail: "Daily loss limits, kill switch, position sizing" },
     { title: "Strategy Guide", detail: "How strategies work and when to use them" },
     { title: "Troubleshooting", detail: "Connection issues, data feed, order errors" }

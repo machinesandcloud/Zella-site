@@ -80,7 +80,7 @@ export const fetchMarketSession = async () => {
 };
 
 export const fetchAccountSummary = async () => {
-  const { data } = await api.get("/api/account/summary");
+  const { data } = await api.get("/api/alpaca/account");
   return data;
 };
 
@@ -120,7 +120,7 @@ export const autoLogin = async () => {
 };
 
 export const fetchPositions = async () => {
-  const { data } = await api.get("/api/account/positions");
+  const { data } = await api.get("/api/alpaca/positions");
   return data;
 };
 
@@ -130,12 +130,12 @@ export const closePosition = async (symbol: string) => {
 };
 
 export const fetchOrders = async () => {
-  const { data } = await api.get("/api/trading/orders");
+  const { data } = await api.get("/api/alpaca/orders");
   return data;
 };
 
 export const cancelOrder = async (orderId: number) => {
-  const { data } = await api.delete(`/api/trading/order/${orderId}`);
+  const { data } = await api.delete(`/api/alpaca/order/${orderId}`);
   return data;
 };
 

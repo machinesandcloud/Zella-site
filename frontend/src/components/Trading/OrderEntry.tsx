@@ -197,7 +197,7 @@ const OrderEntry = () => {
       return;
     }
     if (unsupported) {
-      setError("Selected order type is not available in the current IBKR mock.");
+      setError("Selected order type is not available for Alpaca.");
       return;
     }
     if (form.order_type === "BRACKET" && (!form.take_profit || !form.stop_loss)) {
@@ -211,9 +211,9 @@ const OrderEntry = () => {
       return;
     }
 
-    await api.post("/api/trading/order", {
+    await api.post("/api/alpaca/order", {
       symbol: form.symbol,
-      action: form.action,
+      side: form.action,
       order_type: form.order_type,
       quantity,
       limit_price: form.limit_price ? Number(form.limit_price) : undefined,
