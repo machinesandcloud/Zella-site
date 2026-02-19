@@ -17,7 +17,11 @@ const ActivePositions = () => {
 
   useEffect(() => {
     fetchPositions()
-      .then((data) => setPositions(data || []))
+      .then((data) => {
+        // API returns {positions: []} so extract the array
+        const posArray = Array.isArray(data) ? data : (data?.positions || []);
+        setPositions(posArray);
+      })
       .catch(() => setPositions([]));
   }, []);
 
@@ -30,7 +34,8 @@ const ActivePositions = () => {
       await closePosition(symbol);
       notify(`Close order sent for ${symbol}.`, "success");
       const data = await fetchPositions();
-      setPositions(data || []);
+      const posArray = Array.isArray(data) ? data : (data?.positions || []);
+      setPositions(posArray);
     } catch (error) {
       notify(`Failed to close ${symbol}.`, "error");
     }
