@@ -46,7 +46,6 @@ import BacktestPanel from "./components/Trading/BacktestPanel";
 import StrategyBuilder from "./components/Trading/StrategyBuilder";
 import SystemHealth from "./components/Dashboard/SystemHealth";
 import CalendarHeatmap from "./components/Dashboard/CalendarHeatmap";
-import DailyBriefing from "./components/Dashboard/DailyBriefing";
 import HelpCenter from "./components/Settings/HelpCenter";
 
 const NAV = [

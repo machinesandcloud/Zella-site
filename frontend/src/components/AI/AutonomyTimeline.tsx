@@ -3,7 +3,6 @@ import {
   Card,
   CardContent,
   Chip,
-  Divider,
   Stack,
   Typography,
   Box,
@@ -12,15 +11,6 @@ import {
   Tooltip
 } from "@mui/material";
 import {
-  Timeline,
-  TimelineItem,
-  TimelineSeparator,
-  TimelineConnector,
-  TimelineContent,
-  TimelineDot,
-  TimelineOppositeContent
-} from "@mui/lab";
-import {
   TrendingUp,
   TrendingDown,
   Radar,
@@ -28,7 +18,6 @@ import {
   Error as ErrorIcon,
   Info,
   CheckCircle,
-  Warning,
   Refresh
 } from "@mui/icons-material";
 import { fetchAiActivity, getAutonomousStatus } from "../../services/api";
@@ -96,7 +85,7 @@ const AutonomyTimeline = () => {
     }
   };
 
-  const getEventColor = (type: string, status?: string) => {
+  const getEventColor = (type: string, status?: string): "success" | "info" | "warning" | "error" | "primary" | "secondary" | "default" => {
     if (status === "ERROR") return "error";
     switch (type) {
       case "SCAN":
@@ -110,7 +99,7 @@ const AutonomyTimeline = () => {
       case "ERROR":
         return "error";
       default:
-        return "grey";
+        return "default";
     }
   };
 
@@ -166,105 +155,96 @@ const AutonomyTimeline = () => {
             </Typography>
           </Box>
         ) : (
-          <Box sx={{ maxHeight: 500, overflow: "auto" }}>
-            <Timeline position="right">
-              {allItems.map((item, index) => {
-                const isDecision = item.source === "decision";
-                const type = isDecision ? item.type : item.event_type;
-                const message = isDecision ? item.action : item.message;
-                const status = isDecision ? item.status : item.level;
-                const time = isDecision ? item.time : new Date(item.timestamp).toLocaleTimeString();
-                const details = isDecision ? item.metadata : item.details;
+          <Stack spacing={2} sx={{ maxHeight: 500, overflow: "auto" }}>
+            {allItems.map((item, index) => {
+              const isDecision = item.source === "decision";
+              const type = isDecision ? item.type : item.event_type;
+              const message = isDecision ? item.action : item.message;
+              const status = isDecision ? item.status : item.level;
+              const time = isDecision ? item.time : new Date(item.timestamp).toLocaleTimeString();
+              const details = isDecision ? item.metadata : item.details;
+              const eventColor = getEventColor(type, status);
 
-                return (
-                  <TimelineItem key={isDecision ? item.id : `${item.timestamp}-${index}`}>
-                    <TimelineOppositeContent color="text.secondary" sx={{ flex: 0.2 }}>
-                      <Typography variant="caption" fontWeight="bold">
-                        {time}
-                      </Typography>
-                    </TimelineOppositeContent>
-                    <TimelineSeparator>
-                      <TimelineDot
-                        color={getEventColor(type, status)}
-                        sx={{
-                          boxShadow: index === 0 ? "0 0 12px currentColor" : "none",
-                          animation: index === 0 ? "pulse 2s ease-in-out infinite" : "none"
-                        }}
-                      >
-                        <Avatar
-                          sx={{
-                            width: 32,
-                            height: 32,
-                            bgcolor: "transparent"
-                          }}
-                        >
-                          {getEventIcon(type, status)}
-                        </Avatar>
-                      </TimelineDot>
-                      {index < allItems.length - 1 && <TimelineConnector />}
-                    </TimelineSeparator>
-                    <TimelineContent>
-                      <Box
-                        sx={{
-                          p: 2,
-                          borderRadius: 2,
-                          bgcolor: "rgba(255,255,255,0.02)",
-                          border: "1px solid rgba(255,255,255,0.06)",
-                          mb: 2
-                        }}
-                      >
-                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                          <Chip
-                            label={type}
-                            size="small"
-                            color={getEventColor(type, status)}
-                            sx={{ height: 20, fontSize: "0.65rem" }}
-                          />
-                          <Chip
-                            label={status}
-                            size="small"
-                            color={
-                              status === "SUCCESS" ? "success" :
-                              status === "ERROR" ? "error" :
-                              "default"
-                            }
-                            sx={{ height: 20, fontSize: "0.65rem" }}
-                          />
-                        </Stack>
-                        <Typography variant="body2" fontWeight="medium" sx={{ mb: 1 }}>
-                          {message}
+              return (
+                <Box
+                  key={isDecision ? item.id : `${item.timestamp}-${index}`}
+                  sx={{
+                    p: 2,
+                    borderRadius: 2,
+                    bgcolor: "rgba(255,255,255,0.02)",
+                    border: "1px solid rgba(255,255,255,0.06)",
+                    borderLeft: `4px solid`,
+                    borderLeftColor: `${eventColor}.main`,
+                    position: "relative"
+                  }}
+                >
+                  <Stack direction="row" spacing={2} alignItems="flex-start">
+                    <Avatar
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        bgcolor: `${eventColor}.main`,
+                        boxShadow: index === 0 ? "0 0 12px currentColor" : "none",
+                        animation: index === 0 ? "pulse 2s ease-in-out infinite" : "none"
+                      }}
+                    >
+                      {getEventIcon(type, status)}
+                    </Avatar>
+                    <Box sx={{ flex: 1 }}>
+                      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                        <Chip
+                          label={type}
+                          size="small"
+                          color={eventColor}
+                          sx={{ height: 20, fontSize: "0.65rem" }}
+                        />
+                        <Chip
+                          label={status}
+                          size="small"
+                          color={
+                            status === "SUCCESS" ? "success" :
+                            status === "ERROR" ? "error" :
+                            "default"
+                          }
+                          sx={{ height: 20, fontSize: "0.65rem" }}
+                        />
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: "auto" }}>
+                          {time}
                         </Typography>
-                        {details && Object.keys(details).length > 0 && (
-                          <Box>
-                            {details.strategies && (
-                              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                                Strategies: {Array.isArray(details.strategies) ? details.strategies.join(", ") : details.strategies}
-                              </Typography>
-                            )}
-                            {details.confidence !== undefined && (
-                              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                                Confidence: {(details.confidence * 100).toFixed(0)}%
-                              </Typography>
-                            )}
-                            {details.order_id && (
-                              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                                Order ID: {details.order_id}
-                              </Typography>
-                            )}
-                            {details.count !== undefined && (
-                              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                                Count: {details.count}
-                              </Typography>
-                            )}
-                          </Box>
-                        )}
-                      </Box>
-                    </TimelineContent>
-                  </TimelineItem>
-                );
-              })}
-            </Timeline>
-          </Box>
+                      </Stack>
+                      <Typography variant="body2" fontWeight="medium" sx={{ mb: 1 }}>
+                        {message}
+                      </Typography>
+                      {details && Object.keys(details).length > 0 && (
+                        <Box>
+                          {details.strategies && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                              Strategies: {Array.isArray(details.strategies) ? details.strategies.join(", ") : details.strategies}
+                            </Typography>
+                          )}
+                          {details.confidence !== undefined && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                              Confidence: {(details.confidence * 100).toFixed(0)}%
+                            </Typography>
+                          )}
+                          {details.order_id && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                              Order ID: {details.order_id}
+                            </Typography>
+                          )}
+                          {details.count !== undefined && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                              Count: {details.count}
+                            </Typography>
+                          )}
+                        </Box>
+                      )}
+                    </Box>
+                  </Stack>
+                </Box>
+              );
+            })}
+          </Stack>
         )}
       </CardContent>
     </Card>
