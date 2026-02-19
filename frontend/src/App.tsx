@@ -37,9 +37,7 @@ import StrategyConfig from "./components/Settings/StrategyConfig";
 import { autoLogin, fetchAlpacaStatus, fetchIbkrDefaults } from "./services/api";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import AutonomyTimeline from "./components/AI/AutonomyTimeline";
-import AutonomousScannerLive from "./components/AI/AutonomousScannerLive";
-import StrategySignalsLive from "./components/AI/StrategySignalsLive";
-import OpportunityPipeline from "./components/AI/OpportunityPipeline";
+import BotThinkingProcess from "./components/AI/BotThinkingProcess";
 import OptionsChain from "./components/Trading/OptionsChain";
 import VoiceAssistantSettings from "./components/Settings/VoiceAssistantSettings";
 import BacktestPanel from "./components/Trading/BacktestPanel";
@@ -329,44 +327,42 @@ const App = () => {
           <Grid item xs={12} md={9.5}>
             {tab === 0 && (
               <Grid container spacing={3}>
-                {/* Autonomous Trading Control - Full Width */}
-                <Grid item xs={12}>
+                {/* Autonomous Trading Engine Control */}
+                <Grid item xs={12} lg={7}>
                   <AutopilotControl />
                 </Grid>
 
-                {/* Real-Time Autonomous Monitoring - 3 Column Layout */}
-                <Grid item xs={12} md={4}>
-                  <AutonomousScannerLive />
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <StrategySignalsLive />
-                </Grid>
-                <Grid item xs={12} md={4}>
+                {/* System Health */}
+                <Grid item xs={12} lg={5}>
                   <SystemHealth />
                 </Grid>
 
-                {/* Opportunity Pipeline - Full Width */}
-                <Grid item xs={12}>
-                  <OpportunityPipeline />
+                {/* Bot Thinking Process - Shows what stocks bot is analyzing and why */}
+                <Grid item xs={12} lg={6}>
+                  <BotThinkingProcess />
                 </Grid>
 
-                {/* Decision Timeline - Full Width */}
-                <Grid item xs={12}>
+                {/* Real-Time Decision Log */}
+                <Grid item xs={12} lg={6}>
                   <AutonomyTimeline />
                 </Grid>
 
-                {/* Portfolio Status */}
-                <Grid item xs={12} md={8}>
+                {/* Current Positions */}
+                <Grid item xs={12} lg={8}>
                   <ActivePositions />
                 </Grid>
-                <Grid item xs={12} md={4}>
+
+                {/* Account Overview */}
+                <Grid item xs={12} lg={4}>
                   <Overview />
                 </Grid>
 
-                {/* Risk & Performance */}
+                {/* Risk Monitoring */}
                 <Grid item xs={12} md={6}>
                   <RiskDashboard />
                 </Grid>
+
+                {/* Performance */}
                 <Grid item xs={12} md={6}>
                   <PerformanceMetrics />
                 </Grid>
