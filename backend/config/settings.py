@@ -44,8 +44,8 @@ class Settings(BaseSettings):
     cors_allow_origin_regex: str = r"https://.*\\.netlify\\.app"
 
     # QA / Dev
-    use_mock_ibkr: bool = True
-    use_free_data: bool = True
+    use_mock_ibkr: bool = False
+    use_free_data: bool = False
     use_ibkr_webapi: bool = False
     ibkr_webapi_base_url: str = "https://localhost:5000/v1/api"
     ibkr_webapi_account_id: str = ""
