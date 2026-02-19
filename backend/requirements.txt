@@ -21,4 +21,5 @@ scikit-learn
 joblib
 email-validator
 prometheus-client
+pytz
 alpaca-py
