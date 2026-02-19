@@ -185,32 +185,32 @@ def on_startup() -> None:
     else:
         logger.info("Alpaca disabled in configuration")
 
-    # Initialize Autonomous Trading Engine (Alpaca only)
-    broker_client = app.state.alpaca_client
-    if broker_client and broker_client.is_connected():
-        try:
-            logger.info("Initializing Autonomous Trading Engine...")
-            app.state.autonomous_engine = AutonomousEngine(
-                market_data_provider=app.state.market_data_provider,
-                strategy_engine=app.state.strategy_engine,
-                risk_manager=app.state.risk_manager,
-                position_manager=app.state.position_manager,
-                broker_client=broker_client,
-                config={
-                    "enabled": False,  # Start disabled by default
-                    "mode": "FULL_AUTO",
-                    "risk_posture": "BALANCED",
-                    "scan_interval": 60,
-                    "max_positions": 5,
-                    "enabled_strategies": "ALL"
-                }
-            )
-            logger.info("✓ Autonomous Trading Engine initialized")
-        except Exception as e:
-            logger.error(f"✗ Failed to initialize Autonomous Engine: {e}")
-            app.state.autonomous_engine = None
-    else:
-        logger.warning("✗ Autonomous Engine not initialized - no broker connection")
+    # Initialize Autonomous Trading Engine (Alpaca or Mock)
+    broker_client = app.state.alpaca_client if app.state.alpaca_client else app.state.ibkr_client
+
+    try:
+        logger.info("Initializing Autonomous Trading Engine...")
+        app.state.autonomous_engine = AutonomousEngine(
+            market_data_provider=app.state.market_data_provider,
+            strategy_engine=app.state.strategy_engine,
+            risk_manager=app.state.risk_manager,
+            position_manager=app.state.position_manager,
+            broker_client=broker_client,
+            config={
+                "enabled": False,  # Start disabled by default
+                "mode": "FULL_AUTO",
+                "risk_posture": "BALANCED",
+                "scan_interval": 60,
+                "max_positions": 5,
+                "enabled_strategies": "ALL"
+            }
+        )
+        if app_settings.use_mock_ibkr or not (app.state.alpaca_client and app.state.alpaca_client.is_connected()):
+            logger.info("✓ Autonomous Trading Engine initialized (DEMO MODE - no real trading)")
+        else:
+            logger.info("✓ Autonomous Trading Engine initialized (LIVE MODE)")
+    except Exception as e:
+        logger.error(f"✗ Failed to initialize Autonomous Engine: {e}")
         app.state.autonomous_engine = None
 
 

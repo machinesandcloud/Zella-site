@@ -109,41 +109,44 @@ class AutonomousEngine:
 
     def _initialize_strategies(self) -> Dict[str, Any]:
         """Initialize all 35+ trading strategies"""
+        # Default config for all strategies
+        default_config = {"parameters": {}, "enabled": True}
+
         strategies = {
             # Trend Following
-            "breakout": BreakoutStrategy(),
-            "ema_cross": EMACrossStrategy(),
-            "htf_ema_momentum": HTFEMAMomentumStrategy(),
-            "momentum": MomentumStrategy(),
-            "trend_follow": TrendFollowStrategy(),
-            "first_hour_trend": FirstHourTrendStrategy(),
+            "breakout": BreakoutStrategy(default_config),
+            "ema_cross": EMACrossStrategy(default_config),
+            "htf_ema_momentum": HTFEMAMomentumStrategy(default_config),
+            "momentum": MomentumStrategy(default_config),
+            "trend_follow": TrendFollowStrategy(default_config),
+            "first_hour_trend": FirstHourTrendStrategy(default_config),
 
             # Mean Reversion
-            "pullback": PullbackStrategy(),
-            "range_trading": RangeTradingStrategy(),
-            "rsi_exhaustion": RSIExhaustionStrategy(),
-            "rsi_extreme_reversal": RSIExtremeReversalStrategy(),
-            "vwap_bounce": VWAPBounceStrategy(),
-            "nine_forty_five_reversal": NineFortyFiveReversalStrategy(),
+            "pullback": PullbackStrategy(default_config),
+            "range_trading": RangeTradingStrategy(default_config),
+            "rsi_exhaustion": RSIExhaustionStrategy(default_config),
+            "rsi_extreme_reversal": RSIExtremeReversalStrategy(default_config),
+            "vwap_bounce": VWAPBounceStrategy(default_config),
+            "nine_forty_five_reversal": NineFortyFiveReversalStrategy(default_config),
 
             # Scalping & Day Trading
-            "scalping": ScalpingStrategy(),
-            "orb": ORBStrategy(),
-            "rip_and_dip": RipAndDipStrategy(),
-            "big_bid_scalp": BigBidScalpStrategy(),
+            "scalping": ScalpingStrategy(default_config),
+            "orb": ORBStrategy(default_config),
+            "rip_and_dip": RipAndDipStrategy(default_config),
+            "big_bid_scalp": BigBidScalpStrategy(default_config),
 
             # Advanced Pattern Recognition
-            "retail_fakeout": RetailFakeoutStrategy(),
-            "stop_hunt_reversal": StopHuntReversalStrategy(),
-            "bagholder_bounce": BagholderBounceStrategy(),
-            "broken_parabolic_short": BrokenParabolicShortStrategy(),
-            "fake_halt_trap": FakeHaltTrapStrategy(),
+            "retail_fakeout": RetailFakeoutStrategy(default_config),
+            "stop_hunt_reversal": StopHuntReversalStrategy(default_config),
+            "bagholder_bounce": BagholderBounceStrategy(default_config),
+            "broken_parabolic_short": BrokenParabolicShortStrategy(default_config),
+            "fake_halt_trap": FakeHaltTrapStrategy(default_config),
 
             # Institutional & Smart Money
-            "closing_bell_liquidity_grab": ClosingBellLiquidityGrabStrategy(),
-            "dark_pool_footprints": DarkPoolFootprintsStrategy(),
-            "market_maker_refill": MarketMakerRefillStrategy(),
-            "premarket_vwap_reclaim": PremarketVWAPReclaimStrategy(),
+            "closing_bell_liquidity_grab": ClosingBellLiquidityGrabStrategy(default_config),
+            "dark_pool_footprints": DarkPoolFootprintsStrategy(default_config),
+            "market_maker_refill": MarketMakerRefillStrategy(default_config),
+            "premarket_vwap_reclaim": PremarketVWAPReclaimStrategy(default_config),
         }
 
         logger.info(f"Initialized {len(strategies)} trading strategies")
