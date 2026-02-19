@@ -112,7 +112,10 @@ class AlpacaMarketDataProvider(MarketDataProvider):
             )
 
             # Fetch bars
-            bars_data = self.data_client.get_stock_bars(request)
+            bars_response = self.data_client.get_stock_bars(request)
+
+            # Alpaca returns a BarSet object - access .data for the actual dict
+            bars_data = bars_response.data if hasattr(bars_response, 'data') else bars_response
 
             if symbol not in bars_data:
                 logger.warning(f"No bars returned for {symbol}")
