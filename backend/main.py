@@ -185,8 +185,8 @@ def on_startup() -> None:
     else:
         logger.info("Alpaca disabled in configuration")
 
-    # Initialize Autonomous Trading Engine
-    broker_client = app.state.alpaca_client if app.state.alpaca_client else app.state.ibkr_client
+    # Initialize Autonomous Trading Engine (Alpaca only)
+    broker_client = app.state.alpaca_client
     if broker_client and broker_client.is_connected():
         try:
             logger.info("Initializing Autonomous Trading Engine...")
