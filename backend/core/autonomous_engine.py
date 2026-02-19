@@ -107,6 +107,8 @@ class AutonomousEngine:
         self.last_scanner_results: List[Dict[str, Any]] = []  # Raw screener output
         self.last_analyzed_opportunities: List[Dict[str, Any]] = []  # After strategy analysis
         self.symbols_scanned: int = 0  # Count of symbols scanned
+        self.all_evaluations: List[Dict[str, Any]] = []  # ALL stocks with pass/fail details
+        self.filter_summary: Dict[str, int] = {}  # Summary of filter pass/fail counts
 
         # ML Model for screening
         self.ml_model = MLSignalModel()
@@ -413,50 +415,89 @@ class AutonomousEngine:
             except Exception as e:
                 logger.debug(f"Could not fetch news catalysts: {e}")
 
-            # Use enhanced ML screener with time weighting
-            ranked = self.screener.rank(market_data, current_hour, current_minute)
+            # Use enhanced ML screener with DETAILED evaluation
+            passed_list, all_evaluations = self.screener.rank_with_details(market_data, current_hour, current_minute)
+
+            # Store ALL evaluations for UI display (showing why each stock passed/failed)
+            self.symbols_scanned = len(market_data)
+            self.all_evaluations = all_evaluations  # Full list with pass/fail details
+
+            # Calculate filter summary (how many failed at each filter)
+            self.filter_summary = {
+                "total": len(all_evaluations),
+                "passed": len(passed_list),
+                "failed_data": sum(1 for e in all_evaluations if e.get("filters", {}).get("data_check", {}).get("passed") == False),
+                "failed_volume": sum(1 for e in all_evaluations if e.get("filters", {}).get("volume", {}).get("passed") == False),
+                "failed_price": sum(1 for e in all_evaluations if e.get("filters", {}).get("price", {}).get("passed") == False),
+                "failed_volatility": sum(1 for e in all_evaluations if e.get("filters", {}).get("volatility", {}).get("passed") == False),
+                "failed_rvol": sum(1 for e in all_evaluations if e.get("filters", {}).get("relative_volume", {}).get("passed") == False),
+            }
 
             # Log scan results
-            pattern_count = sum(1 for r in ranked if r.get("pattern"))
-            news_count = sum(1 for r in ranked if r.get("news_catalyst"))
+            pattern_count = sum(1 for e in passed_list if e.get("data", {}).get("pattern"))
+            news_count = sum(1 for e in passed_list if e.get("data", {}).get("news_catalyst"))
 
-            logger.info(f"Found {len(ranked)} opportunities ({pattern_count} with patterns, {news_count} with news)")
+            logger.info(f"Found {len(passed_list)} opportunities out of {len(all_evaluations)} evaluated")
+            logger.info(f"  Patterns: {pattern_count}, News catalysts: {news_count}")
 
-            # Store scanner results for UI display (top 20 with full details)
-            self.symbols_scanned = len(market_data)
+            # Store passed results in old format for compatibility
             self.last_scanner_results = [
                 {
-                    "symbol": r.get("symbol"),
-                    "ml_score": round(r.get("ml_score", 0), 3),
-                    "momentum_score": round(r.get("momentum_score", 0), 3),
-                    "combined_score": round(r.get("combined_score", 0), 3),
-                    "last_price": round(r.get("last_price", 0), 2),
-                    "relative_volume": round(r.get("relative_volume", 0), 1),
-                    "float_millions": r.get("float_millions"),
-                    "float_score": round(r.get("float_score", 0), 3),
-                    "atr": round(r.get("atr", 0), 2),
-                    "atr_percent": round(r.get("atr_percent", 0), 2),
-                    "pattern": r.get("pattern"),
-                    "pattern_score": round(r.get("pattern_score", 0), 3),
-                    "news_catalyst": r.get("news_catalyst"),
-                    "news_score": round(r.get("news_score", 0), 3),
-                    "time_multiplier": round(r.get("time_multiplier", 1.0), 2),
+                    "symbol": e.get("symbol"),
+                    "ml_score": e.get("scores", {}).get("ml_score", 0),
+                    "momentum_score": e.get("scores", {}).get("momentum_score", 0),
+                    "combined_score": e.get("scores", {}).get("combined_score", 0),
+                    "last_price": e.get("data", {}).get("price", 0),
+                    "relative_volume": e.get("data", {}).get("relative_volume", 0),
+                    "float_millions": e.get("data", {}).get("float_millions"),
+                    "float_score": e.get("scores", {}).get("float_score", 0),
+                    "atr": e.get("data", {}).get("atr", 0),
+                    "atr_percent": e.get("data", {}).get("atr_percent", 0),
+                    "pattern": e.get("data", {}).get("pattern"),
+                    "pattern_score": e.get("scores", {}).get("pattern_score", 0),
+                    "news_catalyst": e.get("data", {}).get("news_catalyst"),
+                    "news_score": e.get("scores", {}).get("news_score", 0),
+                    "time_multiplier": e.get("scores", {}).get("time_multiplier", 1.0),
                 }
-                for r in ranked[:20]
+                for e in passed_list[:20]
             ]
 
             self._add_decision(
                 "SCAN",
-                f"Scanned {len(market_data)} symbols, found {len(ranked)} opportunities",
+                f"Scanned {len(market_data)} symbols, found {len(passed_list)} opportunities",
                 "INFO",
                 {
-                    "count": len(ranked),
+                    "count": len(passed_list),
+                    "total_evaluated": len(all_evaluations),
                     "patterns_detected": pattern_count,
                     "news_catalysts": news_count,
                     "power_hour": in_power_hour,
-                    "top_symbols": [r.get("symbol") for r in ranked[:5]]
+                    "top_symbols": [e.get("symbol") for e in passed_list[:5]],
+                    "filter_summary": self.filter_summary,
                 }
             )
+
+            # Convert to old format for compatibility
+            ranked = []
+            for e in passed_list:
+                ranked.append({
+                    "symbol": e.get("symbol"),
+                    "ml_score": e.get("scores", {}).get("ml_score", 0),
+                    "momentum_score": e.get("scores", {}).get("momentum_score", 0),
+                    "combined_score": e.get("scores", {}).get("combined_score", 0),
+                    "last_price": e.get("data", {}).get("price", 0),
+                    "avg_volume": e.get("data", {}).get("avg_volume", 0),
+                    "relative_volume": e.get("data", {}).get("relative_volume", 0),
+                    "float_millions": e.get("data", {}).get("float_millions"),
+                    "float_score": e.get("scores", {}).get("float_score", 0),
+                    "atr": e.get("data", {}).get("atr", 0),
+                    "atr_percent": e.get("data", {}).get("atr_percent", 0),
+                    "pattern": e.get("data", {}).get("pattern"),
+                    "pattern_score": e.get("scores", {}).get("pattern_score", 0),
+                    "news_catalyst": e.get("data", {}).get("news_catalyst"),
+                    "news_score": e.get("scores", {}).get("news_score", 0),
+                    "time_multiplier": e.get("scores", {}).get("time_multiplier", 1.0),
+                })
 
             return ranked
 
@@ -846,7 +887,12 @@ class AutonomousEngine:
                 "pattern_score": 0.15,
                 "news_score": 0.10,
                 "atr_score": 0.10,
-            }
+            },
+            # NEW: Detailed evaluation data for every stock
+            "all_evaluations": self.all_evaluations[:50],  # First 50 for performance
+            "filter_summary": self.filter_summary,
+            # Active strategies list
+            "active_strategies": list(self.all_strategies.keys()),
         }
 
     def update_config(self, config: Dict[str, Any]):

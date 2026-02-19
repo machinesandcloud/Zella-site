@@ -93,6 +93,200 @@ class MarketScreener:
         """
         return LOW_FLOAT_STOCKS.get(symbol)
 
+    def evaluate_symbol_detailed(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        current_hour: Optional[int] = None,
+        current_minute: Optional[int] = None,
+    ) -> Dict[str, any]:
+        """
+        Evaluate a symbol and return DETAILED results including pass/fail for each filter.
+        This is used for UI display to show why each stock was included or excluded.
+        """
+        result = {
+            "symbol": symbol,
+            "passed": False,
+            "filters": {},
+            "data": {},
+            "rejection_reason": None,
+        }
+
+        # Check minimum data
+        if len(df) < 20:
+            result["rejection_reason"] = "Insufficient data (< 20 bars)"
+            result["filters"]["data_check"] = {"passed": False, "reason": "< 20 bars"}
+            return result
+        result["filters"]["data_check"] = {"passed": True, "value": len(df)}
+
+        features = latest_feature_vector(df)
+        last_price = float(df["close"].iloc[-1])
+        avg_volume = float(df["volume"].tail(20).mean())
+        last_volume = float(df["volume"].iloc[-1])
+        relative_volume = last_volume / avg_volume if avg_volume else 0.0
+
+        # Store basic data
+        result["data"]["price"] = round(last_price, 2)
+        result["data"]["avg_volume"] = int(avg_volume)
+        result["data"]["last_volume"] = int(last_volume)
+        result["data"]["relative_volume"] = round(relative_volume, 2)
+        result["data"]["volatility"] = round(features.get("volatility", 0), 4)
+
+        # Volume Filter
+        vol_passed = avg_volume >= self.min_avg_volume
+        result["filters"]["volume"] = {
+            "passed": vol_passed,
+            "value": int(avg_volume),
+            "threshold": int(self.min_avg_volume),
+            "reason": f"Avg vol {int(avg_volume):,} {'≥' if vol_passed else '<'} {int(self.min_avg_volume):,}"
+        }
+        if not vol_passed:
+            result["rejection_reason"] = f"Low volume ({int(avg_volume):,} < {int(self.min_avg_volume):,})"
+            return result
+
+        # Price Filter
+        price_passed = self.min_price <= last_price <= self.max_price
+        result["filters"]["price"] = {
+            "passed": price_passed,
+            "value": round(last_price, 2),
+            "range": [self.min_price, self.max_price],
+            "reason": f"${last_price:.2f} {'within' if price_passed else 'outside'} ${self.min_price}-${self.max_price}"
+        }
+        if not price_passed:
+            result["rejection_reason"] = f"Price ${last_price:.2f} outside range ${self.min_price}-${self.max_price}"
+            return result
+
+        # Volatility Filter
+        vol_check_passed = features["volatility"] >= self.min_volatility
+        result["filters"]["volatility"] = {
+            "passed": vol_check_passed,
+            "value": round(features["volatility"], 4),
+            "threshold": self.min_volatility,
+            "reason": f"Volatility {features['volatility']:.4f} {'≥' if vol_check_passed else '<'} {self.min_volatility}"
+        }
+        if not vol_check_passed:
+            result["rejection_reason"] = f"Low volatility ({features['volatility']:.4f} < {self.min_volatility})"
+            return result
+
+        # Relative Volume Filter
+        rvol_passed = relative_volume >= self.min_relative_volume
+        result["filters"]["relative_volume"] = {
+            "passed": rvol_passed,
+            "value": round(relative_volume, 2),
+            "threshold": self.min_relative_volume,
+            "reason": f"RVol {relative_volume:.1f}x {'≥' if rvol_passed else '<'} {self.min_relative_volume}x"
+        }
+        if not rvol_passed:
+            result["rejection_reason"] = f"Low relative volume ({relative_volume:.1f}x < {self.min_relative_volume}x)"
+            return result
+
+        # If we get here, all filters passed!
+        result["passed"] = True
+
+        # Calculate scores (same logic as score_symbol)
+        float_millions = self.get_float(symbol)
+        float_score = 0.0
+        if self.enable_float_filter and float_millions is not None:
+            if float_millions <= self.max_float_millions:
+                float_score = max(0, (self.max_float_millions - float_millions) / self.max_float_millions) * 0.3
+
+        ml_score = self.model.predict(features)
+        momentum_score = float((df["close"].iloc[-1] - df["close"].iloc[-5]) / df["close"].iloc[-5])
+
+        atr_series = atr(df, 14)
+        current_atr = atr_series.iloc[-1] if len(atr_series) > 0 else 0
+        atr_percent = (current_atr / last_price) * 100 if last_price > 0 else 0
+        atr_score = min(atr_percent / 5.0, 0.2)
+
+        pattern_score = 0.0
+        detected_pattern = None
+        if self.enable_pattern_detection:
+            bull_flag = is_bull_flag(df)
+            flat_top = is_flat_top_breakout(df)
+            if bull_flag.get("detected"):
+                pattern_score = 0.25
+                detected_pattern = "BULL_FLAG"
+            elif flat_top.get("detected"):
+                pattern_score = 0.2
+                detected_pattern = "FLAT_TOP"
+
+        news_score = 0.0
+        news_catalyst = None
+        if symbol in self.news_catalysts:
+            catalyst_data = self.news_catalysts[symbol]
+            catalyst_type = catalyst_data.get("catalyst", "OTHER")
+            if catalyst_type == "EARNINGS":
+                news_score = 0.3
+            elif catalyst_type == "FDA":
+                news_score = 0.35
+            elif catalyst_type == "M&A":
+                news_score = 0.25
+            elif catalyst_type == "ANALYST":
+                news_score = 0.15
+            else:
+                news_score = 0.1
+            news_catalyst = catalyst_type
+
+        if current_hour is None:
+            current_hour = datetime.now().hour
+        if current_minute is None:
+            current_minute = datetime.now().minute
+        time_multiplier = power_hour_multiplier(current_hour, current_minute) if self.enable_power_hour_boost else 1.0
+
+        base_score = (
+            (ml_score * 0.30) +
+            (momentum_score * 0.20) +
+            (float_score * 0.15) +
+            (pattern_score * 0.15) +
+            (news_score * 0.10) +
+            (atr_score * 0.10)
+        )
+        combined_score = base_score * time_multiplier
+
+        # Store all scores
+        result["data"]["float_millions"] = float_millions
+        result["data"]["atr"] = round(current_atr, 2)
+        result["data"]["atr_percent"] = round(atr_percent, 2)
+        result["data"]["pattern"] = detected_pattern
+        result["data"]["news_catalyst"] = news_catalyst
+
+        result["scores"] = {
+            "ml_score": round(ml_score, 3),
+            "momentum_score": round(momentum_score, 4),
+            "float_score": round(float_score, 3),
+            "pattern_score": round(pattern_score, 3),
+            "news_score": round(news_score, 3),
+            "atr_score": round(atr_score, 3),
+            "time_multiplier": round(time_multiplier, 2),
+            "combined_score": round(combined_score, 3),
+        }
+
+        return result
+
+    def rank_with_details(
+        self,
+        market_data: Dict[str, pd.DataFrame],
+        current_hour: Optional[int] = None,
+        current_minute: Optional[int] = None,
+    ) -> tuple:
+        """
+        Rank all symbols and return both passed and failed evaluations.
+        Returns: (passed_list, all_evaluations)
+        """
+        all_evaluations = []
+        passed = []
+
+        for symbol, df in market_data.items():
+            evaluation = self.evaluate_symbol_detailed(symbol, df, current_hour, current_minute)
+            all_evaluations.append(evaluation)
+            if evaluation["passed"]:
+                passed.append(evaluation)
+
+        # Sort passed by combined score
+        passed = sorted(passed, key=lambda x: x["scores"]["combined_score"], reverse=True)
+
+        return passed, all_evaluations
+
     def score_symbol(
         self,
         symbol: str,
