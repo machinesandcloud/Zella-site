@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     ibkr_webapi_account_id: str = ""
     ibkr_webapi_verify_ssl: bool = False
 
+    # Alpaca Configuration
+    use_alpaca: bool = False
+    alpaca_api_key: str = ""
+    alpaca_secret_key: str = ""
+    alpaca_paper: bool = True  # True for paper trading, False for live
+
     # Screener defaults
     screener_min_avg_volume: float = 500000
     screener_min_price: float = 5.0

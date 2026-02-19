@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
-from api.routes import account, auth, backtest, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk, trades, news, market
+from api.routes import account, auth, backtest, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk, trades, news, market, alpaca
 from api.websocket.market_data import router as ws_router
 from config import settings as app_settings
 from core import (
@@ -19,6 +19,7 @@ from core import (
     StrategyEngine,
 )
 from core.ibkr_webapi import IBKRWebAPIClient
+from core.alpaca_client import AlpacaClient
 from core.ai_activity import ActivityLog
 from core.auto_trader import AutoTrader
 from core.mock_ibkr_client import MockIBKRClient
@@ -145,6 +146,23 @@ def on_startup() -> None:
         asyncio.create_task(keep_ibkr_session_alive())
         logger.info("Started IBKR Web API session keepalive task")
 
+    # Initialize Alpaca client if enabled
+    if app_settings.use_alpaca:
+        if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
+            alpaca_client = AlpacaClient(
+                api_key=app_settings.alpaca_api_key,
+                secret_key=app_settings.alpaca_secret_key,
+                paper=app_settings.alpaca_paper
+            )
+            # Auto-connect on startup
+            if alpaca_client.connect():
+                app.state.alpaca_client = alpaca_client
+                logger.info(f"Alpaca client initialized and connected (paper={app_settings.alpaca_paper})")
+            else:
+                logger.error("Alpaca client failed to connect")
+        else:
+            logger.warning("Alpaca enabled but API keys not configured")
+
 
 @app.on_event("shutdown")
 def on_shutdown() -> None:
@@ -154,6 +172,7 @@ def on_shutdown() -> None:
 
 app.include_router(auth.router)
 app.include_router(ibkr.router)
+app.include_router(alpaca.router)
 app.include_router(account.router)
 app.include_router(trading.router)
 app.include_router(strategies.router)

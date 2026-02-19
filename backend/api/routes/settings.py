@@ -32,6 +32,7 @@ class IBKRDefaults(BaseModel):
     use_mock_ibkr: bool
     use_ibkr_webapi: bool
     use_free_data: bool
+    use_alpaca: bool
 
 
 @router.get("/risk", response_model=RiskSettings)
@@ -75,4 +76,5 @@ def get_ibkr_defaults(
         use_mock_ibkr=app_settings.use_mock_ibkr,
         use_ibkr_webapi=app_settings.use_ibkr_webapi,
         use_free_data=app_settings.use_free_data,
+        use_alpaca=app_settings.use_alpaca,
     )
