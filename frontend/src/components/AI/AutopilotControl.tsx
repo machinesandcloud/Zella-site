@@ -82,9 +82,25 @@ const AutopilotControl = () => {
     try {
       const data = await getAutonomousStatus();
       setStatus(data);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error loading autonomous status:", error);
-      notify("Failed to load autonomous engine status", "error");
+      // Set demo/offline status instead of failing
+      if (error?.response?.status === 503 || error?.code === "ERR_NETWORK") {
+        setStatus({
+          enabled: false,
+          running: false,
+          mode: "FULL_AUTO",
+          risk_posture: "BALANCED",
+          last_scan: null,
+          active_positions: 0,
+          decisions: [],
+          strategy_performance: {},
+          num_strategies: 0,
+          connected: false
+        });
+      } else {
+        notify("Backend offline - showing demo mode", "warning");
+      }
     } finally {
       setRefreshing(false);
       setLoading(false);
@@ -172,7 +188,7 @@ const AutopilotControl = () => {
     window.dispatchEvent(new CustomEvent("app:toast", { detail: { message, severity } }));
   };
 
-  if (loading || !status) {
+  if (loading) {
     return (
       <Card elevation={0} sx={{ border: "1px solid var(--border)" }}>
         <CardContent>
@@ -180,6 +196,18 @@ const AutopilotControl = () => {
             <LinearProgress />
             <Typography sx={{ mt: 2 }}>Loading Autonomous Engine...</Typography>
           </Box>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!status) {
+    return (
+      <Card elevation={0} sx={{ border: "1px solid var(--border)" }}>
+        <CardContent>
+          <Alert severity="info">
+            Backend not connected. Start the backend server to enable autonomous trading features.
+          </Alert>
         </CardContent>
       </Card>
     );

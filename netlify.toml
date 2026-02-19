@@ -5,6 +5,8 @@
 
 [build.environment]
   NODE_VERSION = "18"
+  # Backend API URL - set to empty to run in demo/offline mode
+  VITE_API_URL = ""
 
 [[redirects]]
   from = "/*"

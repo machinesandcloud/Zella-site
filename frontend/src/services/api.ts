@@ -1,10 +1,15 @@
 import axios from "axios";
 
+// Demo/offline mode if VITE_API_URL is not set or empty
+const API_URL = import.meta.env.VITE_API_URL?.trim();
+const isOfflineMode = !API_URL || API_URL === "";
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:8000",
+  baseURL: isOfflineMode ? "http://localhost:8000" : API_URL,
   headers: {
     "Content-Type": "application/json"
-  }
+  },
+  timeout: isOfflineMode ? 1000 : 30000 // Fail fast in offline mode
 });
 
 api.interceptors.request.use((config) => {

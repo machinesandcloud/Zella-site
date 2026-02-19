@@ -109,7 +109,16 @@ const App = () => {
   useEffect(() => {
     fetchIbkrDefaults()
       .then((data) => setIbkrDefaults(data))
-      .catch(() => undefined);
+      .catch((error) => {
+        console.warn("Backend not available, using defaults:", error.message);
+        setIbkrDefaults({
+          is_paper_trading: true,
+          use_mock_ibkr: true,
+          use_ibkr_webapi: false,
+          use_free_data: true,
+          use_alpaca: false
+        });
+      });
   }, []);
 
   useEffect(() => {
@@ -240,6 +249,24 @@ const App = () => {
       </Box>
 
       <Container maxWidth="xl" sx={{ mt: 4 }}>
+        {!ibkrDefaults && (
+          <Box
+            sx={{
+              mb: 2,
+              p: 2,
+              borderRadius: 3,
+              border: "1px solid rgba(255,184,77,0.3)",
+              background: "rgba(255, 184, 77, 0.1)"
+            }}
+          >
+            <Typography variant="body2" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <span>⚠️</span>
+              <span>
+                Backend not connected - Running in demo mode. To enable full functionality, start the backend server.
+              </span>
+            </Typography>
+          </Box>
+        )}
         {authRequired && (
           <Box
             sx={{
