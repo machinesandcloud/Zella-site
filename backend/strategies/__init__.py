@@ -32,6 +32,8 @@ from .open_interest_fakeout import OpenInterestFakeoutStrategy
 from .premarket_vwap_reclaim import PremarketVWAPReclaimStrategy
 from .after_hours_liquidity_trap import AfterHoursLiquidityTrapStrategy
 from .closing_bell_liquidity_grab import ClosingBellLiquidityGrabStrategy
+from .bull_flag import BullFlagStrategy
+from .flat_top_breakout import FlatTopBreakoutStrategy
 
 __all__ = [
     "BaseStrategy",
@@ -68,4 +70,6 @@ __all__ = [
     "PremarketVWAPReclaimStrategy",
     "AfterHoursLiquidityTrapStrategy",
     "ClosingBellLiquidityGrabStrategy",
+    "BullFlagStrategy",
+    "FlatTopBreakoutStrategy",
 ]

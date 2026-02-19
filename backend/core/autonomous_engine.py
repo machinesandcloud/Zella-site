@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 import json
 from pathlib import Path
 
@@ -46,6 +46,16 @@ from strategies import (
     MarketMakerRefillStrategy,
     NineFortyFiveReversalStrategy,
     PremarketVWAPReclaimStrategy,
+    BullFlagStrategy,
+    FlatTopBreakoutStrategy,
+)
+from utils.indicators import (
+    atr,
+    atr_stop_loss,
+    atr_take_profit,
+    calculate_position_size_atr,
+    is_power_hour,
+    power_hour_multiplier,
 )
 
 logger = logging.getLogger("autonomous_engine")
@@ -108,11 +118,19 @@ class AutonomousEngine:
         logger.info(f"Autonomous Engine initialized - Mode: {self.mode}, Risk: {self.risk_posture}")
 
     def _initialize_strategies(self) -> Dict[str, Any]:
-        """Initialize all 35+ trading strategies"""
+        """Initialize all 37+ trading strategies including Warrior Trading patterns"""
         # Default config for all strategies
         default_config = {"parameters": {}, "enabled": True}
 
+        # ATR-enabled config for Warrior Trading strategies
+        atr_config = {"parameters": {"use_atr_stops": True, "atr_multiplier": 2.0}, "enabled": True}
+
         strategies = {
+            # === WARRIOR TRADING CORE PATTERNS (Priority) ===
+            "bull_flag": BullFlagStrategy(atr_config),  # Primary momentum pattern
+            "flat_top_breakout": FlatTopBreakoutStrategy(atr_config),  # Key resistance breakout
+            "orb": ORBStrategy(default_config),  # Opening Range Breakout
+
             # Trend Following
             "breakout": BreakoutStrategy(default_config),
             "ema_cross": EMACrossStrategy(default_config),
@@ -131,7 +149,6 @@ class AutonomousEngine:
 
             # Scalping & Day Trading
             "scalping": ScalpingStrategy(default_config),
-            "orb": ORBStrategy(default_config),
             "rip_and_dip": RipAndDipStrategy(default_config),
             "big_bid_scalp": BigBidScalpStrategy(default_config),
 
@@ -149,7 +166,7 @@ class AutonomousEngine:
             "premarket_vwap_reclaim": PremarketVWAPReclaimStrategy(default_config),
         }
 
-        logger.info(f"Initialized {len(strategies)} trading strategies")
+        logger.info(f"Initialized {len(strategies)} trading strategies (including Warrior Trading patterns)")
         return strategies
 
     def _load_state(self):
@@ -259,7 +276,17 @@ class AutonomousEngine:
                 await asyncio.sleep(60)
 
     async def _position_monitor(self):
-        """Monitor and manage existing positions"""
+        """
+        Monitor and manage existing positions using ATR-based stops
+
+        Warrior Trading approach:
+        - Use ATR for dynamic stop losses (volatility-adjusted)
+        - Trail stops as position moves in profit
+        - Take profit at 2:1 or 3:1 risk/reward
+        """
+        # Track ATR values for positions
+        position_atr: Dict[str, float] = {}
+
         while self.running:
             try:
                 positions = self.broker.get_positions()
@@ -269,28 +296,67 @@ class AutonomousEngine:
                     current_price = position.get("currentPrice", 0)
                     entry_price = position.get("avgPrice", 0)
                     pnl_percent = position.get("unrealizedPnLPercent", 0)
+                    quantity = position.get("quantity", 0)
 
-                    # Dynamic stop loss adjustment
-                    if pnl_percent > 5:  # In profit > 5%
-                        # Trail stop loss
-                        stop_price = current_price * 0.97  # 3% trailing stop
-                        logger.info(f"Trailing stop for {symbol}: ${stop_price:.2f}")
+                    if not symbol or current_price <= 0:
+                        continue
 
-                    # Take profit levels
-                    if self.risk_posture == "DEFENSIVE" and pnl_percent > 3:
-                        logger.info(f"Taking profit on {symbol}: +{pnl_percent:.2f}%")
-                        await self._close_position(symbol, "Take profit (defensive)")
-                    elif self.risk_posture == "BALANCED" and pnl_percent > 5:
-                        logger.info(f"Taking profit on {symbol}: +{pnl_percent:.2f}%")
-                        await self._close_position(symbol, "Take profit (balanced)")
-                    elif self.risk_posture == "AGGRESSIVE" and pnl_percent > 8:
-                        logger.info(f"Taking profit on {symbol}: +{pnl_percent:.2f}%")
-                        await self._close_position(symbol, "Take profit (aggressive)")
+                    # Get ATR for this symbol if not cached
+                    if symbol not in position_atr:
+                        try:
+                            bars = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
+                            if bars and len(bars) > 0:
+                                df = pd.DataFrame(bars)
+                                atr_series = atr(df, 14)
+                                position_atr[symbol] = atr_series.iloc[-1] if len(atr_series) > 0 else current_price * 0.02
+                            else:
+                                position_atr[symbol] = current_price * 0.02  # Default 2% of price
+                        except Exception:
+                            position_atr[symbol] = current_price * 0.02
 
-                    # Stop loss
-                    if pnl_percent < -2:
-                        logger.warning(f"Stop loss triggered for {symbol}: {pnl_percent:.2f}%")
-                        await self._close_position(symbol, "Stop loss")
+                    current_atr = position_atr.get(symbol, current_price * 0.02)
+
+                    # ATR-based stop loss distance (2x ATR)
+                    atr_stop_distance = current_atr * 2.0
+                    atr_stop_percent = (atr_stop_distance / entry_price) * 100 if entry_price > 0 else 2.0
+
+                    # ATR-based take profit (3x ATR for 1.5:1 risk/reward)
+                    atr_profit_distance = current_atr * 3.0
+                    atr_profit_percent = (atr_profit_distance / entry_price) * 100 if entry_price > 0 else 6.0
+
+                    # Adjust targets based on risk posture
+                    if self.risk_posture == "DEFENSIVE":
+                        profit_target = atr_profit_percent * 0.8  # Take profit earlier
+                        stop_target = atr_stop_percent * 0.8  # Tighter stop
+                    elif self.risk_posture == "AGGRESSIVE":
+                        profit_target = atr_profit_percent * 1.5  # Let winners run
+                        stop_target = atr_stop_percent * 1.2  # Wider stop
+                    else:  # BALANCED
+                        profit_target = atr_profit_percent
+                        stop_target = atr_stop_percent
+
+                    # Dynamic trailing stop when in profit
+                    if pnl_percent > profit_target / 2:  # Half way to target
+                        # Trail stop to lock in some profit
+                        trail_percent = max(1.0, atr_stop_percent * 0.7)  # Tighten to 70% of ATR
+                        if pnl_percent > profit_target:
+                            # Full target hit - trail very tight
+                            trail_percent = max(0.5, atr_stop_percent * 0.5)
+                        logger.info(f"Trailing stop for {symbol}: {trail_percent:.1f}% (ATR-based)")
+
+                    # Take profit at ATR-based target
+                    if pnl_percent >= profit_target:
+                        logger.info(f"Taking profit on {symbol}: +{pnl_percent:.2f}% (ATR target: {profit_target:.1f}%)")
+                        await self._close_position(symbol, f"Take profit (ATR target {profit_target:.1f}%)")
+                        if symbol in position_atr:
+                            del position_atr[symbol]
+
+                    # ATR-based stop loss
+                    elif pnl_percent <= -stop_target:
+                        logger.warning(f"ATR stop loss triggered for {symbol}: {pnl_percent:.2f}% (ATR stop: -{stop_target:.1f}%)")
+                        await self._close_position(symbol, f"ATR stop loss (-{stop_target:.1f}%)")
+                        if symbol in position_atr:
+                            del position_atr[symbol]
 
                 await asyncio.sleep(30)  # Check every 30 seconds
 
@@ -299,14 +365,34 @@ class AutonomousEngine:
                 await asyncio.sleep(30)
 
     async def _scan_market(self) -> List[Dict[str, Any]]:
-        """Scan market for trading opportunities"""
+        """
+        Scan market for trading opportunities using Warrior Trading criteria
+
+        Enhanced scanning includes:
+        - Power hour time weighting
+        - News catalyst integration
+        - Float filtering
+        - Pattern detection (bull flag, flat top)
+        """
         try:
             universe = self.market_data.get_universe()
             logger.info(f"Scanning {len(universe)} symbols...")
 
+            # Get current time for power hour weighting
+            now = datetime.now()
+            current_hour = now.hour
+            current_minute = now.minute
+            in_power_hour = is_power_hour(current_hour, current_minute)
+
+            if in_power_hour:
+                logger.info("🔥 POWER HOUR ACTIVE - Signals will be boosted")
+
             market_data: Dict[str, pd.DataFrame] = {}
 
-            for symbol in universe[:100]:  # Scan top 100 for performance
+            # Scan more symbols during power hour
+            scan_limit = 150 if in_power_hour else 100
+
+            for symbol in universe[:scan_limit]:
                 try:
                     bars = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
                     if bars and len(bars) > 0:
@@ -316,17 +402,81 @@ class AutonomousEngine:
                     logger.debug(f"Could not get data for {symbol}: {e}")
                     continue
 
-            # Use ML screener to rank
-            ranked = self.screener.rank(market_data)
+            # Fetch news catalysts for scanned symbols (async would be better)
+            try:
+                await self._update_news_catalysts(list(market_data.keys())[:50])  # Top 50 symbols
+            except Exception as e:
+                logger.debug(f"Could not fetch news catalysts: {e}")
 
-            logger.info(f"Found {len(ranked)} opportunities")
-            self._add_decision("SCAN", f"Scanned {len(market_data)} symbols, found {len(ranked)} opportunities", "INFO", {"count": len(ranked)})
+            # Use enhanced ML screener with time weighting
+            ranked = self.screener.rank(market_data, current_hour, current_minute)
+
+            # Log scan results
+            pattern_count = sum(1 for r in ranked if r.get("pattern"))
+            news_count = sum(1 for r in ranked if r.get("news_catalyst"))
+
+            logger.info(f"Found {len(ranked)} opportunities ({pattern_count} with patterns, {news_count} with news)")
+            self._add_decision(
+                "SCAN",
+                f"Scanned {len(market_data)} symbols, found {len(ranked)} opportunities",
+                "INFO",
+                {
+                    "count": len(ranked),
+                    "patterns_detected": pattern_count,
+                    "news_catalysts": news_count,
+                    "power_hour": in_power_hour
+                }
+            )
 
             return ranked
 
         except Exception as e:
             logger.error(f"Error scanning market: {e}")
             return []
+
+    async def _update_news_catalysts(self, symbols: List[str]) -> None:
+        """Fetch and update news catalysts for symbols"""
+        import httpx
+        import xml.etree.ElementTree as ET
+
+        catalysts = {}
+        user_agent = {"User-Agent": "ZellaAI/1.0"}
+
+        for symbol in symbols[:20]:  # Limit to avoid rate limiting
+            try:
+                url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US"
+                async with httpx.AsyncClient(timeout=5.0, headers=user_agent) as client:
+                    response = await client.get(url)
+                    if response.status_code == 200:
+                        root = ET.fromstring(response.text)
+                        for item in root.findall(".//item")[:3]:
+                            title = item.findtext("title") or ""
+                            lower = title.lower()
+
+                            # Categorize catalyst
+                            catalyst = "OTHER"
+                            if any(w in lower for w in ["earnings", "eps", "guidance", "revenue"]):
+                                catalyst = "EARNINGS"
+                            elif any(w in lower for w in ["fda", "approval", "clinical", "trial"]):
+                                catalyst = "FDA"
+                            elif any(w in lower for w in ["merger", "acquire", "acquisition", "buyout"]):
+                                catalyst = "M&A"
+                            elif any(w in lower for w in ["upgrade", "downgrade", "rating", "analyst"]):
+                                catalyst = "ANALYST"
+
+                            if catalyst != "OTHER":
+                                catalysts[symbol] = {
+                                    "catalyst": catalyst,
+                                    "headline": title,
+                                }
+                                break
+            except Exception:
+                continue
+
+        # Update screener with catalysts
+        self.screener.set_news_catalysts(catalysts)
+        if catalysts:
+            logger.info(f"Found {len(catalysts)} news catalysts: {list(catalysts.keys())}")
 
     async def _analyze_opportunities(self, opportunities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Analyze each opportunity with ALL available strategies"""
@@ -408,7 +558,12 @@ class AutonomousEngine:
         return ranked[:self.max_positions]
 
     async def _execute_trades(self, opportunities: List[Dict[str, Any]]):
-        """Execute trades for top opportunities"""
+        """
+        Execute trades for top opportunities using Warrior Trading position sizing
+
+        Position sizing formula: shares = risk_amount / ATR_stop_distance
+        This ensures consistent risk per trade regardless of stock volatility
+        """
         if not self.risk_manager.can_trade():
             logger.warning("Risk manager blocks trading")
             return
@@ -418,6 +573,11 @@ class AutonomousEngine:
         buying_power = float(account.get("BuyingPower", 0) or 0)
 
         current_positions = len(self.broker.get_positions())
+
+        # Check if we're in power hour for signal boost
+        now = datetime.now()
+        in_power_hour = is_power_hour(now.hour, now.minute)
+        time_mult = power_hour_multiplier(now.hour, now.minute)
 
         for opp in opportunities:
             if current_positions >= self.max_positions:
@@ -430,34 +590,76 @@ class AutonomousEngine:
             num_strategies = opp.get("num_strategies", 0)
             strategies = opp.get("strategies", [])
 
-            # Only trade high confidence opportunities
-            min_confidence = 0.6 if self.risk_posture == "AGGRESSIVE" else 0.7 if self.risk_posture == "BALANCED" else 0.8
-            if confidence < min_confidence:
+            # Apply power hour boost to confidence
+            adjusted_confidence = confidence * time_mult
+
+            # Lower thresholds during power hour (more aggressive)
+            if in_power_hour:
+                min_confidence = 0.55 if self.risk_posture == "AGGRESSIVE" else 0.65 if self.risk_posture == "BALANCED" else 0.75
+                min_strategies = 1 if self.risk_posture == "AGGRESSIVE" else 2 if self.risk_posture == "BALANCED" else 3
+            else:
+                min_confidence = 0.6 if self.risk_posture == "AGGRESSIVE" else 0.7 if self.risk_posture == "BALANCED" else 0.8
+                min_strategies = 2 if self.risk_posture == "AGGRESSIVE" else 3 if self.risk_posture == "BALANCED" else 4
+
+            if adjusted_confidence < min_confidence:
                 continue
 
-            # Require multiple strategies to agree
-            min_strategies = 2 if self.risk_posture == "AGGRESSIVE" else 3 if self.risk_posture == "BALANCED" else 4
             if num_strategies < min_strategies:
                 continue
 
             try:
-                # Calculate position size
                 price = opp.get("last_price", 0)
                 if price <= 0:
                     continue
 
-                # Risk-based position sizing
-                risk_percent = 0.02 if self.risk_posture == "DEFENSIVE" else 0.03 if self.risk_posture == "BALANCED" else 0.05
-                position_value = account_value * risk_percent
-                quantity = int(position_value / price)
+                # Get ATR for position sizing (Warrior Trading method)
+                atr_value = opp.get("atr", 0)
+                if atr_value <= 0:
+                    # Calculate ATR if not provided
+                    try:
+                        bars = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
+                        if bars and len(bars) > 0:
+                            df = pd.DataFrame(bars)
+                            atr_series = atr(df, 14)
+                            atr_value = atr_series.iloc[-1] if len(atr_series) > 0 else price * 0.02
+                        else:
+                            atr_value = price * 0.02  # Default 2% of price
+                    except Exception:
+                        atr_value = price * 0.02
+
+                # ATR-based position sizing (Warrior Trading formula)
+                # Risk 1-2% of account, stop at 2x ATR
+                risk_percent = 0.01 if self.risk_posture == "DEFENSIVE" else 0.015 if self.risk_posture == "BALANCED" else 0.02
+                atr_multiplier = 2.0  # 2x ATR stop loss
+
+                quantity = calculate_position_size_atr(
+                    account_value=account_value,
+                    risk_percent=risk_percent,
+                    entry_price=price,
+                    atr_value=atr_value,
+                    atr_multiplier=atr_multiplier
+                )
 
                 if quantity <= 0:
                     continue
 
+                # Ensure we don't exceed buying power
+                position_value = quantity * price
+                if position_value > buying_power * 0.2:  # Max 20% of buying power per trade
+                    quantity = int((buying_power * 0.2) / price)
+                    if quantity <= 0:
+                        continue
+
+                # Calculate ATR-based stop loss and take profit prices
+                stop_loss_price = price - (atr_value * atr_multiplier)
+                take_profit_price = price + (atr_value * atr_multiplier * 2)  # 2:1 risk/reward
+
                 # Execute trade
-                logger.info(f"🚀 EXECUTING: {action} {quantity} {symbol} @ ${price:.2f}")
+                power_hour_tag = " [POWER HOUR]" if in_power_hour else ""
+                logger.info(f"🚀 EXECUTING{power_hour_tag}: {action} {quantity} {symbol} @ ${price:.2f}")
+                logger.info(f"   ATR: ${atr_value:.2f} | Stop: ${stop_loss_price:.2f} | Target: ${take_profit_price:.2f}")
                 logger.info(f"   Strategies: {', '.join(strategies)}")
-                logger.info(f"   Confidence: {confidence:.2%}")
+                logger.info(f"   Confidence: {adjusted_confidence:.2%} (raw: {confidence:.2%})")
 
                 order = self.broker.place_market_order(symbol, quantity, action)
 
@@ -467,9 +669,15 @@ class AutonomousEngine:
                     "SUCCESS",
                     {
                         "strategies": strategies,
-                        "confidence": confidence,
+                        "confidence": adjusted_confidence,
+                        "raw_confidence": confidence,
                         "num_strategies": num_strategies,
-                        "order_id": order.get("orderId")
+                        "order_id": order.get("orderId"),
+                        "atr": atr_value,
+                        "stop_loss": stop_loss_price,
+                        "take_profit": take_profit_price,
+                        "power_hour": in_power_hour,
+                        "position_sizing": "ATR-based"
                     }
                 )
 
