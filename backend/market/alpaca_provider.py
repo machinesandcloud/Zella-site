@@ -8,7 +8,7 @@ import logging
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest
-from alpaca.data.timeframe import TimeFrame
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from market.market_data_provider import MarketDataProvider
 from market.universe import get_default_universe
@@ -91,14 +91,14 @@ class AlpacaMarketDataProvider(MarketDataProvider):
             # Map bar size to Alpaca TimeFrame
             timeframe_map = {
                 "1 min": TimeFrame.Minute,
-                "5 mins": TimeFrame(5, "Min"),
-                "15 mins": TimeFrame(15, "Min"),
+                "5 mins": TimeFrame(5, TimeFrameUnit.Minute),
+                "15 mins": TimeFrame(15, TimeFrameUnit.Minute),
                 "1 hour": TimeFrame.Hour,
                 "1 day": TimeFrame.Day,
             }
 
             delta = duration_map.get(duration, timedelta(days=1))
-            timeframe = timeframe_map.get(bar_size, TimeFrame(5, "Min"))
+            timeframe = timeframe_map.get(bar_size, TimeFrame(5, TimeFrameUnit.Minute))
 
             start_date = datetime.now() - delta
             end_date = datetime.now()
