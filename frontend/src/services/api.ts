@@ -1,15 +1,22 @@
 import axios from "axios";
 
-// Demo/offline mode if VITE_API_URL is not set or empty
+// Check if VITE_API_URL is explicitly set (not undefined, not empty)
 const API_URL = import.meta.env.VITE_API_URL?.trim();
-const isOfflineMode = !API_URL || API_URL === "";
+const hasExplicitApiUrl = API_URL !== undefined && API_URL !== "";
+
+// Use localhost:8000 as default for development
+const baseURL = hasExplicitApiUrl ? API_URL : "http://localhost:8000";
+
+// Only use fast timeout when explicitly set to empty string (Netlify demo mode)
+const isNetlifyDemoMode = import.meta.env.VITE_API_URL === "";
+const timeout = isNetlifyDemoMode ? 1000 : 30000;
 
 const api = axios.create({
-  baseURL: isOfflineMode ? "http://localhost:8000" : API_URL,
+  baseURL,
   headers: {
     "Content-Type": "application/json"
   },
-  timeout: isOfflineMode ? 1000 : 30000 // Fail fast in offline mode
+  timeout
 });
 
 api.interceptors.request.use((config) => {
