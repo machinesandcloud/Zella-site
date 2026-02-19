@@ -31,10 +31,10 @@ import OrderBook from "./components/Trading/OrderBook";
 import TimeSales from "./components/Trading/TimeSales";
 import OrderGrid from "./components/Trading/OrderGrid";
 import PremarketChecklist from "./components/Trading/PremarketChecklist";
-import IBKRConnection from "./components/Settings/IBKRConnection";
+import AlpacaConnection from "./components/Settings/AlpacaConnection";
 import RiskSettings from "./components/Settings/RiskSettings";
 import StrategyConfig from "./components/Settings/StrategyConfig";
-import { autoLogin, fetchIbkrDefaults, fetchIbkrWebapiStatus } from "./services/api";
+import { autoLogin, fetchAlpacaStatus, fetchIbkrDefaults } from "./services/api";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import AutonomyTimeline from "./components/AI/AutonomyTimeline";
 import OptionsChain from "./components/Trading/OptionsChain";
@@ -61,11 +61,12 @@ const App = () => {
     use_mock_ibkr: boolean;
     use_ibkr_webapi: boolean;
     use_free_data: boolean;
+    use_alpaca?: boolean;
   } | null>(null);
-  const [webapiStatus, setWebapiStatus] = useState<{
+  const [alpacaStatus, setAlpacaStatus] = useState<{
     enabled: boolean;
     connected?: boolean;
-    base_url?: string;
+    mode?: string;
   } | null>(null);
   const [toast, setToast] = useState<{ open: boolean; message: string; severity: "success" | "info" | "warning" | "error" }>({
     open: false,
@@ -114,12 +115,12 @@ const App = () => {
   useEffect(() => {
     let cancelled = false;
     const loadStatus = () =>
-      fetchIbkrWebapiStatus()
+      fetchAlpacaStatus()
         .then((data) => {
-          if (!cancelled) setWebapiStatus(data);
+          if (!cancelled) setAlpacaStatus(data);
         })
         .catch(() => {
-          if (!cancelled) setWebapiStatus({ enabled: false });
+          if (!cancelled) setAlpacaStatus({ enabled: false });
         });
     loadStatus();
     const timer = window.setInterval(loadStatus, 30000);
@@ -200,13 +201,12 @@ const App = () => {
               ) : (
                 <Chip label="Trading Mode" size="small" />
               )}
-              {ibkrDefaults?.use_mock_ibkr && <Chip label="IBKR Mock" size="small" />}
-              {ibkrDefaults?.use_ibkr_webapi && <Chip label="IBKR Web API" size="small" />}
+              {ibkrDefaults?.use_alpaca && <Chip label="Alpaca" size="small" />}
               {ibkrDefaults?.use_free_data && <Chip label="Free Data" size="small" />}
-              {webapiStatus?.enabled && (
+              {alpacaStatus?.enabled && (
                 <Chip
-                  label={webapiStatus.connected ? "IBKR Authenticated" : "IBKR Not Authenticated"}
-                  color={webapiStatus.connected ? "success" : "warning"}
+                  label={alpacaStatus.connected ? "Alpaca Connected" : "Alpaca Disconnected"}
+                  color={alpacaStatus.connected ? "success" : "warning"}
                   size="small"
                 />
               )}
@@ -400,7 +400,7 @@ const App = () => {
             {tab === 3 && (
               <Grid container spacing={3}>
                 <Grid item xs={12} md={6}>
-                  <IBKRConnection />
+                  <AlpacaConnection />
                 </Grid>
                 <Grid item xs={12} md={6}>
                   <RiskSettings />

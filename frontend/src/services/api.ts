@@ -99,6 +99,21 @@ export const fetchIbkrDefaults = async () => {
   return data;
 };
 
+export const fetchAlpacaStatus = async () => {
+  const { data } = await api.get("/api/alpaca/status");
+  return data;
+};
+
+export const fetchAlpacaAccount = async () => {
+  const { data } = await api.get("/api/alpaca/account");
+  return data;
+};
+
+export const fetchAlpacaPositions = async () => {
+  const { data } = await api.get("/api/alpaca/positions");
+  return data;
+};
+
 export const autoLogin = async () => {
   const { data } = await api.post("/api/auth/auto-login");
   return data;
