@@ -38,6 +38,7 @@ import { autoLogin, fetchAlpacaStatus, fetchIbkrDefaults } from "./services/api"
 import AutopilotControl from "./components/AI/AutopilotControl";
 import AutonomyTimeline from "./components/AI/AutonomyTimeline";
 import BotThinkingProcess from "./components/AI/BotThinkingProcess";
+import MarketScannerPanel from "./components/AI/MarketScannerPanel";
 import OptionsChain from "./components/Trading/OptionsChain";
 import VoiceAssistantSettings from "./components/Settings/VoiceAssistantSettings";
 import BacktestPanel from "./components/Trading/BacktestPanel";
@@ -335,6 +336,11 @@ const App = () => {
                 {/* System Health */}
                 <Grid item xs={12} lg={5}>
                   <SystemHealth />
+                </Grid>
+
+                {/* Market Scanner Analysis - Detailed evaluation data */}
+                <Grid item xs={12}>
+                  <MarketScannerPanel />
                 </Grid>
 
                 {/* Bot Thinking Process - Shows what stocks bot is analyzing and why */}

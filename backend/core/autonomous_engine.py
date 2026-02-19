@@ -103,6 +103,11 @@ class AutonomousEngine:
         self.active_symbols: Set[str] = set()
         self.strategy_performance: Dict[str, Dict[str, Any]] = {}
 
+        # Scanner results (for UI display)
+        self.last_scanner_results: List[Dict[str, Any]] = []  # Raw screener output
+        self.last_analyzed_opportunities: List[Dict[str, Any]] = []  # After strategy analysis
+        self.symbols_scanned: int = 0  # Count of symbols scanned
+
         # ML Model for screening
         self.ml_model = MLSignalModel()
         self.ml_model.load()
@@ -416,6 +421,30 @@ class AutonomousEngine:
             news_count = sum(1 for r in ranked if r.get("news_catalyst"))
 
             logger.info(f"Found {len(ranked)} opportunities ({pattern_count} with patterns, {news_count} with news)")
+
+            # Store scanner results for UI display (top 20 with full details)
+            self.symbols_scanned = len(market_data)
+            self.last_scanner_results = [
+                {
+                    "symbol": r.get("symbol"),
+                    "ml_score": round(r.get("ml_score", 0), 3),
+                    "momentum_score": round(r.get("momentum_score", 0), 3),
+                    "combined_score": round(r.get("combined_score", 0), 3),
+                    "last_price": round(r.get("last_price", 0), 2),
+                    "relative_volume": round(r.get("relative_volume", 0), 1),
+                    "float_millions": r.get("float_millions"),
+                    "float_score": round(r.get("float_score", 0), 3),
+                    "atr": round(r.get("atr", 0), 2),
+                    "atr_percent": round(r.get("atr_percent", 0), 2),
+                    "pattern": r.get("pattern"),
+                    "pattern_score": round(r.get("pattern_score", 0), 3),
+                    "news_catalyst": r.get("news_catalyst"),
+                    "news_score": round(r.get("news_score", 0), 3),
+                    "time_multiplier": round(r.get("time_multiplier", 1.0), 2),
+                }
+                for r in ranked[:20]
+            ]
+
             self._add_decision(
                 "SCAN",
                 f"Scanned {len(market_data)} symbols, found {len(ranked)} opportunities",
@@ -424,7 +453,8 @@ class AutonomousEngine:
                     "count": len(ranked),
                     "patterns_detected": pattern_count,
                     "news_catalysts": news_count,
-                    "power_hour": in_power_hour
+                    "power_hour": in_power_hour,
+                    "top_symbols": [r.get("symbol") for r in ranked[:5]]
                 }
             )
 
@@ -543,6 +573,27 @@ class AutonomousEngine:
 
             except Exception as e:
                 logger.error(f"Error analyzing {symbol}: {e}")
+
+        # Store analyzed opportunities for UI display
+        self.last_analyzed_opportunities = [
+            {
+                "symbol": a.get("symbol"),
+                "recommended_action": a.get("recommended_action"),
+                "num_strategies": a.get("num_strategies", 0),
+                "confidence": round(a.get("confidence", 0), 3),
+                "strategies": a.get("strategies", []),
+                "reasoning": a.get("reasoning", ""),
+                "ml_score": round(a.get("ml_score", 0), 3),
+                "momentum_score": round(a.get("momentum_score", 0), 3),
+                "combined_score": round(a.get("combined_score", 0), 3),
+                "last_price": round(a.get("last_price", 0), 2),
+                "relative_volume": round(a.get("relative_volume", 0), 1),
+                "pattern": a.get("pattern"),
+                "news_catalyst": a.get("news_catalyst"),
+                "atr": round(a.get("atr", 0), 2),
+            }
+            for a in analyzed[:15]
+        ]
 
         return analyzed
 
@@ -763,7 +814,12 @@ class AutonomousEngine:
             self.decisions = self.decisions[:100]
 
     def get_status(self) -> Dict[str, Any]:
-        """Get current engine status"""
+        """Get current engine status with detailed scanner information"""
+        # Check power hour status
+        now = datetime.now()
+        in_power_hour = is_power_hour(now.hour, now.minute)
+        time_mult = power_hour_multiplier(now.hour, now.minute)
+
         return {
             "enabled": self.enabled,
             "running": self.running,
@@ -774,7 +830,23 @@ class AutonomousEngine:
             "decisions": self.decisions[:20],  # Last 20 decisions
             "strategy_performance": self.strategy_performance,
             "num_strategies": len(self.all_strategies),
-            "connected": self.broker.is_connected()
+            "connected": self.broker.is_connected(),
+            # NEW: Detailed scanner data for UI
+            "symbols_scanned": self.symbols_scanned,
+            "scanner_results": self.last_scanner_results,  # Top stocks with full evaluation data
+            "analyzed_opportunities": self.last_analyzed_opportunities,  # With strategy signals
+            "power_hour": {
+                "active": in_power_hour,
+                "multiplier": time_mult,
+            },
+            "scoring_weights": {
+                "ml_score": 0.30,
+                "momentum_score": 0.20,
+                "float_score": 0.15,
+                "pattern_score": 0.15,
+                "news_score": 0.10,
+                "atr_score": 0.10,
+            }
         }
 
     def update_config(self, config: Dict[str, Any]):

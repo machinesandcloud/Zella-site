@@ -22,9 +22,18 @@ interface Decision {
   metadata?: {
     strategies?: string[];
     confidence?: number;
+    raw_confidence?: number;
     num_strategies?: number;
     order_id?: string;
     count?: number;
+    atr?: number;
+    stop_loss?: number;
+    take_profit?: number;
+    power_hour?: boolean;
+    position_sizing?: string;
+    patterns_detected?: number;
+    news_catalysts?: number;
+    top_symbols?: string[];
   };
 }
 
@@ -162,15 +171,52 @@ const BotThinkingProcess = () => {
                 <Typography variant="body2" fontWeight="medium">
                   {lastScan.action}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {lastScan.time}
-                </Typography>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  {lastScan.metadata?.power_hour && (
+                    <Chip label="POWER HOUR" size="small" color="warning" sx={{ height: 18, fontSize: "0.6rem" }} />
+                  )}
+                  <Typography variant="caption" color="text.secondary">
+                    {lastScan.time}
+                  </Typography>
+                </Stack>
               </Stack>
-              {lastScan.metadata?.count !== undefined && (
-                <Typography variant="caption" color="text.secondary">
-                  Found {lastScan.metadata.count} opportunities
-                </Typography>
-              )}
+              <Stack spacing={1}>
+                {lastScan.metadata?.count !== undefined && (
+                  <Typography variant="body2" color="success.main" fontWeight="bold">
+                    Found {lastScan.metadata.count} opportunities
+                  </Typography>
+                )}
+                <Stack direction="row" spacing={2}>
+                  {lastScan.metadata?.patterns_detected !== undefined && (
+                    <Typography variant="caption" color="text.secondary">
+                      Patterns: {lastScan.metadata.patterns_detected}
+                    </Typography>
+                  )}
+                  {lastScan.metadata?.news_catalysts !== undefined && (
+                    <Typography variant="caption" color="text.secondary">
+                      News Catalysts: {lastScan.metadata.news_catalysts}
+                    </Typography>
+                  )}
+                </Stack>
+                {lastScan.metadata?.top_symbols && lastScan.metadata.top_symbols.length > 0 && (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" fontWeight="bold" sx={{ display: "block", mb: 0.5 }}>
+                      Top Picks:
+                    </Typography>
+                    <Stack direction="row" spacing={0.5} flexWrap="wrap" gap={0.5}>
+                      {lastScan.metadata.top_symbols.map((symbol: string, idx: number) => (
+                        <Chip
+                          key={idx}
+                          label={symbol}
+                          size="small"
+                          color={idx === 0 ? "success" : idx === 1 ? "warning" : "default"}
+                          sx={{ height: 20, fontSize: "0.65rem" }}
+                        />
+                      ))}
+                    </Stack>
+                  </Box>
+                )}
+              </Stack>
             </Box>
           </Box>
         )}
@@ -291,6 +337,45 @@ const BotThinkingProcess = () => {
                       <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
                         {trade.metadata.num_strategies} strategies agreed on this trade
                       </Typography>
+                    )}
+
+                    {/* ATR-based Risk Management */}
+                    {trade.metadata?.atr !== undefined && (
+                      <Box sx={{ mt: 1, pt: 1, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+                        <Typography variant="caption" color="text.secondary" fontWeight="bold" sx={{ display: "block", mb: 0.5 }}>
+                          Risk Management (ATR-based):
+                        </Typography>
+                        <Stack direction="row" spacing={2}>
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">ATR</Typography>
+                            <Typography variant="body2" fontWeight="bold">${trade.metadata.atr.toFixed(2)}</Typography>
+                          </Box>
+                          {trade.metadata.stop_loss && (
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">Stop Loss</Typography>
+                              <Typography variant="body2" fontWeight="bold" color="error.main">
+                                ${trade.metadata.stop_loss.toFixed(2)}
+                              </Typography>
+                            </Box>
+                          )}
+                          {trade.metadata.take_profit && (
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">Take Profit</Typography>
+                              <Typography variant="body2" fontWeight="bold" color="success.main">
+                                ${trade.metadata.take_profit.toFixed(2)}
+                              </Typography>
+                            </Box>
+                          )}
+                        </Stack>
+                        {trade.metadata.power_hour && (
+                          <Chip
+                            label="POWER HOUR SIGNAL"
+                            size="small"
+                            color="warning"
+                            sx={{ mt: 1, height: 18, fontSize: "0.6rem" }}
+                          />
+                        )}
+                      </Box>
                     )}
                   </Box>
                 );
