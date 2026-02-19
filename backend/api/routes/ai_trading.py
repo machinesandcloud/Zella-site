@@ -205,3 +205,29 @@ def get_strategy_performance(
         "performance": engine.strategy_performance,
         "total_strategies": len(engine.all_strategies)
     }
+
+
+@router.post("/autonomous/scan")
+async def trigger_manual_scan(
+    engine: Optional[AutonomousEngine] = Depends(get_autonomous_engine),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Trigger a manual market scan (works even outside market hours for testing)"""
+    if not engine:
+        raise HTTPException(status_code=503, detail="Autonomous engine not initialized")
+
+    try:
+        # Run scan directly (bypass market hours check for testing)
+        opportunities = await engine._scan_market()
+        analyzed = await engine._analyze_opportunities(opportunities)
+
+        return {
+            "status": "completed",
+            "symbols_scanned": engine.symbols_scanned,
+            "opportunities_found": len(opportunities),
+            "analyzed": len(analyzed),
+            "filter_summary": engine.filter_summary,
+            "top_picks": [e.get("symbol") for e in opportunities[:5]],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")

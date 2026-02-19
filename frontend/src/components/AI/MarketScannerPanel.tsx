@@ -22,7 +22,9 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Badge,
-  Divider
+  Divider,
+  Button,
+  CircularProgress
 } from "@mui/material";
 import {
   Refresh,
@@ -36,9 +38,11 @@ import {
   VolumeUp,
   AttachMoney,
   ShowChart,
-  Newspaper
+  Newspaper,
+  PlayArrow,
+  AccessTime
 } from "@mui/icons-material";
-import { getAutonomousStatus } from "../../services/api";
+import { getAutonomousStatus, triggerManualScan } from "../../services/api";
 
 interface FilterDetail {
   passed: boolean;
@@ -112,8 +116,10 @@ const MarketScannerPanel = () => {
   const [status, setStatus] = useState<ScannerStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [viewTab, setViewTab] = useState(0);
   const [filterView, setFilterView] = useState<"all" | "passed" | "failed">("all");
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
 
   const load = async () => {
     setRefreshing(true);
@@ -125,6 +131,21 @@ const MarketScannerPanel = () => {
     } finally {
       setRefreshing(false);
       setLoading(false);
+    }
+  };
+
+  const handleManualScan = async () => {
+    setScanning(true);
+    setScanMessage(null);
+    try {
+      const result = await triggerManualScan();
+      setScanMessage(`Scanned ${result.symbols_scanned} symbols, found ${result.opportunities_found} opportunities`);
+      // Reload status to get fresh data
+      await load();
+    } catch (error: any) {
+      setScanMessage(`Scan failed: ${error?.response?.data?.detail || error.message}`);
+    } finally {
+      setScanning(false);
     }
   };
 
@@ -181,11 +202,20 @@ const MarketScannerPanel = () => {
             <Stack direction="row" alignItems="center" spacing={1}>
               <Assessment sx={{ fontSize: 28, color: "primary.main" }} />
               <Typography variant="h6" fontWeight="bold">
-                Stock Evaluation Pipeline
+                Live Stock Evaluation Pipeline
               </Typography>
+              {status.running && (
+                <Chip
+                  icon={<CircularProgress size={12} sx={{ color: "success.main" }} />}
+                  label="LIVE"
+                  color="success"
+                  size="small"
+                  sx={{ animation: "pulse 2s infinite" }}
+                />
+              )}
             </Stack>
             <Typography variant="body2" color="text.secondary">
-              See exactly how each stock is evaluated using Warrior Trading criteria
+              Real-time stock evaluation using Warrior Trading criteria
             </Typography>
           </Box>
           <Stack direction="row" spacing={1} alignItems="center">
@@ -197,13 +227,35 @@ const MarketScannerPanel = () => {
                 size="small"
               />
             )}
-            <Tooltip title="Refresh">
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              startIcon={scanning ? <CircularProgress size={16} color="inherit" /> : <PlayArrow />}
+              onClick={handleManualScan}
+              disabled={scanning}
+              sx={{ minWidth: 120 }}
+            >
+              {scanning ? "Scanning..." : "Scan Now"}
+            </Button>
+            <Tooltip title="Refresh Status">
               <IconButton size="small" onClick={load} disabled={refreshing}>
                 <Refresh className={refreshing ? "rotating" : ""} />
               </IconButton>
             </Tooltip>
           </Stack>
         </Stack>
+
+        {/* Scan Result Message */}
+        {scanMessage && (
+          <Alert
+            severity={scanMessage.includes("failed") ? "error" : "success"}
+            onClose={() => setScanMessage(null)}
+            sx={{ mb: 2 }}
+          >
+            {scanMessage}
+          </Alert>
+        )}
 
         {/* Filter Pipeline Summary */}
         {status.filter_summary && (
@@ -629,13 +681,25 @@ const MarketScannerPanel = () => {
         )}
 
         {/* Last Scan Time */}
-        {status.last_scan && (
-          <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+        <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center">
+            <Stack direction="row" spacing={1} alignItems="center">
+              <AccessTime sx={{ fontSize: 16, color: "text.secondary" }} />
+              {status.last_scan ? (
+                <Typography variant="caption" color="text.secondary">
+                  Last scan: {new Date(status.last_scan).toLocaleString()} ({Math.round((Date.now() - new Date(status.last_scan).getTime()) / 1000)}s ago)
+                </Typography>
+              ) : (
+                <Typography variant="caption" color="warning.main">
+                  No scans yet - Click "Scan Now" to start
+                </Typography>
+              )}
+            </Stack>
             <Typography variant="caption" color="text.secondary">
-              Last scan: {new Date(status.last_scan).toLocaleString()}
+              Auto-refresh: every 5 seconds
             </Typography>
-          </Box>
-        )}
+          </Stack>
+        </Box>
       </CardContent>
     </Card>
   );

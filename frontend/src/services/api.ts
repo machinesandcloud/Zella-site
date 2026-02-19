@@ -263,4 +263,9 @@ export const getStrategyPerformance = async () => {
   return data;
 };
 
+export const triggerManualScan = async () => {
+  const { data } = await api.post("/api/ai/autonomous/scan");
+  return data;
+};
+
 export default api;
