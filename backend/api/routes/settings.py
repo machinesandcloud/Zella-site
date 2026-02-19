@@ -76,5 +76,19 @@ def get_ibkr_defaults(
         use_mock_ibkr=app_settings.use_mock_ibkr,
         use_ibkr_webapi=app_settings.use_ibkr_webapi,
         use_free_data=app_settings.use_free_data,
-        use_alpaca=app_settings.use_alpaca,
+        use_alpaca=app_settings.use_alpaca_effective,
     )
+
+
+@router.get("/alpaca-debug")
+def get_alpaca_debug(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Debug endpoint to check Alpaca configuration."""
+    return {
+        "use_alpaca": app_settings.use_alpaca,
+        "use_alpaca_effective": app_settings.use_alpaca_effective,
+        "has_api_key": bool(app_settings.alpaca_api_key),
+        "has_secret_key": bool(app_settings.alpaca_secret_key),
+        "alpaca_paper": app_settings.alpaca_paper,
+    }
