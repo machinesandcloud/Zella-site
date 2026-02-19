@@ -69,14 +69,24 @@ class AlpacaClient:
         """
         try:
             # Test connection by getting account info
+            logger.info(f"Attempting Alpaca connection (paper={self.paper})...")
             account = self.trading_client.get_account()
             self._connected = True
-            logger.info(f"Connected to Alpaca - Account: {account.account_number}")
+            logger.info(f"✓ Connected to Alpaca successfully!")
+            logger.info(f"  Account: {account.account_number}")
             logger.info(f"  Buying Power: ${account.buying_power}")
             logger.info(f"  Portfolio Value: ${account.portfolio_value}")
+            logger.info(f"  Status: {account.status}")
             return True
         except Exception as e:
-            logger.error(f"Failed to connect to Alpaca: {type(e).__name__}: {e}")
+            # Log the full error details for debugging
+            import traceback
+            logger.error(f"✗ Alpaca connection failed:")
+            logger.error(f"  Error Type: {type(e).__name__}")
+            logger.error(f"  Error Message: {str(e)}")
+            logger.error(f"  Paper Mode: {self.paper}")
+            logger.error(f"  API Key (first 10): {self.api_key[:10] if len(self.api_key) >= 10 else 'TOO SHORT'}")
+            logger.error(f"  Stack Trace:\n{traceback.format_exc()}")
             self._connected = False
             return False
 
