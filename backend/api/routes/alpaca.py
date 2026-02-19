@@ -1,6 +1,7 @@
 """Alpaca API routes."""
 
 import logging
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,6 +20,38 @@ def get_alpaca_client() -> Optional[AlpacaClient]:
     """Get Alpaca client from app state."""
     from main import app
     return getattr(app.state, "alpaca_client", None)
+
+def ensure_alpaca_client() -> Optional[AlpacaClient]:
+    """Create and attach an Alpaca client if enabled and missing."""
+    from main import app
+
+    if not settings.use_alpaca_effective:
+        return None
+
+    existing = getattr(app.state, "alpaca_client", None)
+    if existing:
+        return existing
+
+    if not (settings.alpaca_api_key and settings.alpaca_secret_key):
+        return None
+
+    try:
+        logger.info("Creating Alpaca client on-demand in status check...")
+        client = AlpacaClient(
+            api_key=settings.alpaca_api_key,
+            secret_key=settings.alpaca_secret_key,
+            paper=settings.alpaca_paper
+        )
+        # Try a light connect; if it fails, still store client for retry later.
+        if client.connect():
+            logger.info("✓ Alpaca connected successfully (on-demand)")
+        else:
+            logger.warning("✗ Alpaca client created but connection failed (on-demand)")
+        app.state.alpaca_client = client
+        return client
+    except Exception as e:
+        logger.error(f"Failed to create Alpaca client on-demand: {e}")
+        return None
 
 
 class AlpacaConnectRequest(BaseModel):
@@ -123,6 +156,8 @@ def status(
     from config.settings import settings
 
     alpaca = getattr(app.state, "alpaca_client", None)
+    if not alpaca:
+        alpaca = ensure_alpaca_client()
 
     # Alpaca not configured at all
     if not settings.use_alpaca_effective:
@@ -149,7 +184,9 @@ def status(
         "enabled": True,
         "connected": connected,
         "mode": alpaca.get_trading_mode(),
-        "paper_trading": alpaca.paper
+        "paper_trading": alpaca.paper,
+        "render_commit": os.getenv("RENDER_GIT_COMMIT", ""),
+        "render_service": os.getenv("RENDER_SERVICE_ID", "")
     }
 
     if not connected:
