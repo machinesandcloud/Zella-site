@@ -37,6 +37,9 @@ import StrategyConfig from "./components/Settings/StrategyConfig";
 import { autoLogin, fetchAlpacaStatus, fetchIbkrDefaults } from "./services/api";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import AutonomyTimeline from "./components/AI/AutonomyTimeline";
+import AutonomousScannerLive from "./components/AI/AutonomousScannerLive";
+import StrategySignalsLive from "./components/AI/StrategySignalsLive";
+import OpportunityPipeline from "./components/AI/OpportunityPipeline";
 import OptionsChain from "./components/Trading/OptionsChain";
 import VoiceAssistantSettings from "./components/Settings/VoiceAssistantSettings";
 import BacktestPanel from "./components/Trading/BacktestPanel";
@@ -47,8 +50,8 @@ import DailyBriefing from "./components/Dashboard/DailyBriefing";
 import HelpCenter from "./components/Settings/HelpCenter";
 
 const NAV = [
-  { label: "Command Center", value: 0 },
-  { label: "Trading", value: 1 },
+  { label: "🤖 Autonomous Trading", value: 0 },
+  { label: "Manual Trading", value: 1 },
   { label: "Analytics", value: 2 },
   { label: "Settings", value: 3 }
 ];
@@ -194,9 +197,9 @@ const App = () => {
                 Z
               </Box>
               <Box>
-                <Typography variant="h5">Zella AI Command Center</Typography>
+                <Typography variant="h5">Zella AI Trading Platform</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Autonomous trading, always-on risk intelligence
+                  Fully Autonomous Trading • 25+ Strategies • Real-Time Intelligence
                 </Typography>
               </Box>
             </Stack>
@@ -327,31 +330,50 @@ const App = () => {
           <Grid item xs={12} md={9.5}>
             {tab === 0 && (
               <Grid container spacing={3}>
+                {/* Autonomous Trading Control - Full Width */}
                 <Grid item xs={12}>
-                  <Overview />
-                </Grid>
-                <Grid item xs={12} md={7}>
                   <AutopilotControl />
                 </Grid>
-                <Grid item xs={12} md={5}>
+
+                {/* Real-Time Autonomous Monitoring - 3 Column Layout */}
+                <Grid item xs={12} md={4}>
+                  <AutonomousScannerLive />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <StrategySignalsLive />
+                </Grid>
+                <Grid item xs={12} md={4}>
                   <SystemHealth />
                 </Grid>
+
+                {/* Opportunity Pipeline - Full Width */}
+                <Grid item xs={12}>
+                  <OpportunityPipeline />
+                </Grid>
+
+                {/* Decision Timeline - Full Width */}
                 <Grid item xs={12}>
                   <AutonomyTimeline />
                 </Grid>
+
+                {/* Portfolio Status */}
+                <Grid item xs={12} md={8}>
+                  <ActivePositions />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <Overview />
+                </Grid>
+
+                {/* Risk & Performance */}
                 <Grid item xs={12} md={6}>
                   <RiskDashboard />
                 </Grid>
                 <Grid item xs={12} md={6}>
                   <PerformanceMetrics />
                 </Grid>
+
+                {/* Equity Curve */}
                 <Grid item xs={12}>
-                  <DailyBriefing />
-                </Grid>
-                <Grid item xs={12} md={7}>
-                  <ActivePositions />
-                </Grid>
-                <Grid item xs={12} md={5}>
                   <EquityCurve />
                 </Grid>
               </Grid>
