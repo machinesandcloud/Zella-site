@@ -28,6 +28,7 @@ from core.ibkr_client import ibkr_api_available
 from market.ibkr_provider import IBKRMarketDataProvider
 from market.free_provider import FreeMarketDataProvider
 from market.webapi_provider import IBKRWebAPIProvider
+from market.alpaca_provider import AlpacaMarketDataProvider
 from market.universe import get_default_universe
 from core.init_db import init_db
 from utils.logger import setup_logging
@@ -123,7 +124,15 @@ def on_startup() -> None:
     )
     app.state.ai_activity = ActivityLog()
     app.state.strategy_configs = {}
-    if app_settings.use_ibkr_webapi:
+    # Initialize Market Data Provider
+    # Priority: Alpaca > IBKR WebAPI > Free Data > IBKR
+    if app_settings.use_alpaca and app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
+        logger.info("Using Alpaca Market Data Provider with day trading universe (90+ stocks)")
+        app.state.market_data_provider = AlpacaMarketDataProvider(
+            api_key=app_settings.alpaca_api_key,
+            secret_key=app_settings.alpaca_secret_key
+        )
+    elif app_settings.use_ibkr_webapi:
         web_client = IBKRWebAPIClient(
             base_url=app_settings.ibkr_webapi_base_url,
             account_id=app_settings.ibkr_webapi_account_id or None,
@@ -132,6 +141,7 @@ def on_startup() -> None:
         app.state.ibkr_webapi_client = web_client
         app.state.market_data_provider = IBKRWebAPIProvider(web_client)
     elif app_settings.use_free_data or app_settings.use_mock_ibkr:
+        logger.info("Using Free Market Data Provider with day trading universe (90+ stocks)")
         app.state.market_data_provider = FreeMarketDataProvider(get_default_universe())
     else:
         app.state.market_data_provider = IBKRMarketDataProvider(

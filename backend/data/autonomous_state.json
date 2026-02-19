@@ -1,7 +1,7 @@
 {
-  "enabled": true,
+  "enabled": false,
   "mode": "FULL_AUTO",
   "risk_posture": "BALANCED",
   "strategy_performance": {},
-  "last_updated": "2026-02-18T23:33:05.371065"
+  "last_updated": "2026-02-19T10:18:59.491506"
 }
