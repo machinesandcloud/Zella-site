@@ -22,8 +22,8 @@ from ai.screener import MarketScreener
 from ai.ml_model import MLSignalModel
 from strategies import (
     BreakoutStrategy,
-    EmaCrossStrategy,
-    HTFEmaMomentumStrategy,
+    EMACrossStrategy,
+    HTFEMAMomentumStrategy,
     MomentumStrategy,
     ORBStrategy,
     PullbackStrategy,
@@ -112,8 +112,8 @@ class AutonomousEngine:
         strategies = {
             # Trend Following
             "breakout": BreakoutStrategy(),
-            "ema_cross": EmaCrossStrategy(),
-            "htf_ema_momentum": HTFEmaMomentumStrategy(),
+            "ema_cross": EMACrossStrategy(),
+            "htf_ema_momentum": HTFEMAMomentumStrategy(),
             "momentum": MomentumStrategy(),
             "trend_follow": TrendFollowStrategy(),
             "first_hour_trend": FirstHourTrendStrategy(),
