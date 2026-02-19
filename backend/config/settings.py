@@ -74,5 +74,10 @@ class Settings(BaseSettings):
             return self.sqlite_url
         return self.database_url or self.sqlite_url
 
+    @property
+    def use_alpaca_effective(self) -> bool:
+        # Enable Alpaca if explicitly requested or if keys are present.
+        return self.use_alpaca or (self.alpaca_api_key != "" and self.alpaca_secret_key != "")
+
 
 settings = Settings()

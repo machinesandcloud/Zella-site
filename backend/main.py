@@ -147,7 +147,7 @@ def on_startup() -> None:
         logger.info("Started IBKR Web API session keepalive task")
 
     # Initialize Alpaca client if enabled
-    if app_settings.use_alpaca:
+    if app_settings.use_alpaca_effective:
         if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
             alpaca_client = AlpacaClient(
                 api_key=app_settings.alpaca_api_key,
