@@ -20,6 +20,7 @@ from core.position_manager import PositionManager
 from market.market_data_provider import MarketDataProvider
 from ai.screener import MarketScreener
 from ai.ml_model import MLSignalModel
+from config.settings import settings
 from strategies import (
     BreakoutStrategy,
     EMACrossStrategy,
@@ -113,7 +114,14 @@ class AutonomousEngine:
         # ML Model for screening
         self.ml_model = MLSignalModel()
         self.ml_model.load()
-        self.screener = MarketScreener(self.ml_model)
+        self.screener = MarketScreener(
+            self.ml_model,
+            min_avg_volume=settings.screener_min_avg_volume,
+            min_price=settings.screener_min_price,
+            max_price=settings.screener_max_price,
+            min_volatility=settings.screener_min_volatility,
+            min_relative_volume=settings.screener_min_relative_volume,
+        )
 
         # Initialize all available strategies
         self.all_strategies = self._initialize_strategies()

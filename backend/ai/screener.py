@@ -58,11 +58,11 @@ class MarketScreener:
     def __init__(
         self,
         model: MLSignalModel,
-        min_avg_volume: float = 500000,
-        min_price: float = 5.0,
-        max_price: float = 1000.0,
-        min_volatility: float = 0.005,
-        min_relative_volume: float = 2.0,
+        min_avg_volume: float = 100000,  # Lowered for pre-market/early trading
+        min_price: float = 1.0,  # Allow penny stocks
+        max_price: float = 500.0,  # Focus on tradeable range
+        min_volatility: float = 0.002,  # Lower volatility threshold
+        min_relative_volume: float = 1.0,  # Allow stocks at normal volume
         max_float_millions: float = 100.0,  # Warrior Trading: float < 100M
         enable_float_filter: bool = True,
         enable_pattern_detection: bool = True,
