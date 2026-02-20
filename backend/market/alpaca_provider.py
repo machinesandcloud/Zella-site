@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 import logging
+import threading
+import time
 
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest
+from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest, StockSnapshotRequest, StockLatestTradeRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from market.market_data_provider import MarketDataProvider
@@ -23,14 +25,16 @@ class AlpacaMarketDataProvider(MarketDataProvider):
     Provides:
     - Day trading universe (90+ high volume stocks)
     - Real-time and historical data via Alpaca
-    - No mock data - 100% real market information
+    - Batch quote fetching for efficiency
+    - Caching to avoid rate limits
     """
 
     def __init__(
         self,
         api_key: str,
         secret_key: str,
-        universe: Optional[List[str]] = None
+        universe: Optional[List[str]] = None,
+        cache_ttl: float = 0.5  # Cache TTL in seconds (500ms for day trading)
     ) -> None:
         """
         Initialize Alpaca market data provider.
@@ -39,9 +43,11 @@ class AlpacaMarketDataProvider(MarketDataProvider):
             api_key: Alpaca API key
             secret_key: Alpaca secret key
             universe: Optional custom universe (defaults to day trading universe)
+            cache_ttl: How long to cache quotes (in seconds)
         """
         self.api_key = api_key
         self.secret_key = secret_key
+        self.cache_ttl = cache_ttl
 
         # Use day trading universe by default
         self._universe = universe or get_default_universe()
@@ -52,7 +58,80 @@ class AlpacaMarketDataProvider(MarketDataProvider):
             secret_key=secret_key
         )
 
+        # Quote cache for fast lookups
+        self._quote_cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_timestamp: float = 0
+        self._cache_lock = threading.Lock()
+
+        # Start background refresh thread
+        self._refresh_thread = threading.Thread(target=self._background_refresh, daemon=True)
+        self._refresh_thread.start()
+
         logger.info(f"Alpaca Market Data Provider initialized with {len(self._universe)} symbols")
+
+    def _background_refresh(self) -> None:
+        """Background thread to continuously refresh quotes"""
+        while True:
+            try:
+                self._refresh_all_quotes()
+            except Exception as e:
+                logger.debug(f"Background refresh error: {e}")
+            time.sleep(self.cache_ttl)
+
+    def _refresh_all_quotes(self) -> None:
+        """Fetch quotes for all universe symbols in batches"""
+        try:
+            # Batch symbols (Alpaca allows up to 100 per request)
+            batch_size = 50
+            all_quotes = {}
+
+            for i in range(0, len(self._universe), batch_size):
+                batch = self._universe[i:i + batch_size]
+                try:
+                    request = StockLatestQuoteRequest(symbol_or_symbols=batch)
+                    quotes = self.data_client.get_stock_latest_quote(request)
+
+                    # Also get latest trades for more accurate prices
+                    trade_request = StockLatestTradeRequest(symbol_or_symbols=batch)
+                    trades = self.data_client.get_stock_latest_trade(trade_request)
+
+                    for symbol in batch:
+                        quote_data = {}
+                        if symbol in quotes:
+                            q = quotes[symbol]
+                            quote_data = {
+                                "bid": float(q.bid_price) if q.bid_price else 0,
+                                "ask": float(q.ask_price) if q.ask_price else 0,
+                                "bid_size": int(q.bid_size) if q.bid_size else 0,
+                                "ask_size": int(q.ask_size) if q.ask_size else 0,
+                                "quote_timestamp": q.timestamp.isoformat() if q.timestamp else None,
+                            }
+
+                        # Use trade price as primary price (more accurate than mid)
+                        if symbol in trades:
+                            t = trades[symbol]
+                            quote_data["price"] = float(t.price) if t.price else 0
+                            quote_data["trade_size"] = int(t.size) if t.size else 0
+                            quote_data["trade_timestamp"] = t.timestamp.isoformat() if t.timestamp else None
+                        elif quote_data.get("bid") and quote_data.get("ask"):
+                            # Fallback to mid price if no trade
+                            quote_data["price"] = (quote_data["bid"] + quote_data["ask"]) / 2
+
+                        if quote_data.get("price"):
+                            all_quotes[symbol] = quote_data
+
+                except Exception as e:
+                    logger.debug(f"Error fetching batch {i}-{i+batch_size}: {e}")
+
+            # Update cache atomically
+            with self._cache_lock:
+                self._quote_cache = all_quotes
+                self._cache_timestamp = time.time()
+
+            logger.debug(f"Refreshed {len(all_quotes)} quotes")
+
+        except Exception as e:
+            logger.error(f"Error refreshing quotes: {e}")
 
     def get_universe(self) -> List[str]:
         """Get the trading universe (90+ day trading stocks)"""
@@ -177,7 +256,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
 
     def get_market_snapshot(self, symbol: str) -> Dict[str, Any]:
         """
-        Get market snapshot for a symbol.
+        Get market snapshot for a symbol from cache (fast, no API call).
 
         Args:
             symbol: Stock symbol
@@ -185,30 +264,38 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         Returns:
             Snapshot dict with price, volume, etc.
         """
+        with self._cache_lock:
+            cached = self._quote_cache.get(symbol)
+            if cached:
+                return {
+                    "symbol": symbol,
+                    "price": cached.get("price", 0),
+                    "bid": cached.get("bid", 0),
+                    "ask": cached.get("ask", 0),
+                    "bid_size": cached.get("bid_size", 0),
+                    "ask_size": cached.get("ask_size", 0),
+                    "volume": cached.get("trade_size", cached.get("bid_size", 0) + cached.get("ask_size", 0)),
+                    "timestamp": cached.get("trade_timestamp") or cached.get("quote_timestamp") or datetime.now().isoformat()
+                }
+
+        # If not in cache, try direct fetch (rare case)
         try:
-            request = StockLatestQuoteRequest(
-                symbol_or_symbols=symbol
-            )
+            request = StockLatestTradeRequest(symbol_or_symbols=symbol)
+            trades = self.data_client.get_stock_latest_trade(request)
 
-            quote = self.data_client.get_stock_latest_quote(request)
-
-            if symbol not in quote:
-                return {}
-
-            q = quote[symbol]
-            mid_price = (q.bid_price + q.ask_price) / 2
-
-            return {
-                "symbol": symbol,
-                "price": float(mid_price),
-                "bid": float(q.bid_price),
-                "ask": float(q.ask_price),
-                "bid_size": int(q.bid_size),
-                "ask_size": int(q.ask_size),
-                "volume": int(q.bid_size + q.ask_size),
-                "timestamp": q.timestamp.isoformat()
-            }
-
+            if symbol in trades:
+                t = trades[symbol]
+                return {
+                    "symbol": symbol,
+                    "price": float(t.price) if t.price else 0,
+                    "bid": 0,
+                    "ask": 0,
+                    "bid_size": 0,
+                    "ask_size": 0,
+                    "volume": int(t.size) if t.size else 0,
+                    "timestamp": t.timestamp.isoformat() if t.timestamp else datetime.now().isoformat()
+                }
         except Exception as e:
-            logger.error(f"Error fetching snapshot for {symbol}: {e}")
-            return {}
+            logger.debug(f"Error fetching snapshot for {symbol}: {e}")
+
+        return {}

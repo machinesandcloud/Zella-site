@@ -73,12 +73,12 @@ async def _stream(websocket: WebSocket, channel: str) -> None:
 
 @router.websocket("/ws/market-data")
 async def market_data_ws(websocket: WebSocket) -> None:
-    """Real-time market data streaming at 200ms intervals for day trading."""
+    """Real-time market data streaming at 200ms intervals for day trading. Uses REAL data only."""
     symbols_param = websocket.query_params.get("symbol") or websocket.query_params.get("symbols")
     if symbols_param:
         symbols = [item.strip().upper() for item in symbols_param.split(",") if item.strip()]
     else:
-        symbols = DEFAULT_SYMBOLS[:10]  # Limit to 10 for faster updates
+        symbols = ["AAPL", "TSLA", "NVDA", "AMD", "META", "MSFT", "GOOGL", "AMZN", "SPY", "QQQ"]
 
     interval = float(websocket.query_params.get("interval", "0.2"))  # 200ms default
     interval = max(0.1, min(interval, 2.0))  # Clamp between 100ms and 2s
@@ -90,26 +90,26 @@ async def market_data_ws(websocket: WebSocket) -> None:
             batch = []
             for symbol in symbols:
                 snapshot = provider.get_market_snapshot(symbol) or {}
-                if snapshot:
+                price = snapshot.get("price", 0)
+                # Only include symbols with real prices
+                if price > 0:
                     batch.append({
                         "symbol": symbol,
-                        "price": snapshot.get("price", 0),
+                        "price": price,
                         "bid": snapshot.get("bid", 0),
                         "ask": snapshot.get("ask", 0),
                         "bid_size": snapshot.get("bid_size", 0),
                         "ask_size": snapshot.get("ask_size", 0),
                         "volume": snapshot.get("volume", 0),
                     })
-                else:
-                    ticks = FAKE_STREAM.ticks([symbol])
-                    for tick in ticks:
-                        batch.append(tick)
 
             # Send all updates in a single message for efficiency
             message = {
                 "channel": "market-data",
                 "type": "batch",
                 "data": batch,
+                "symbols_requested": len(symbols),
+                "symbols_with_data": len(batch),
                 "timestamp": datetime.utcnow().isoformat(),
             }
             await websocket.send_json(message)
@@ -123,6 +123,7 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
     """
     High-frequency live ticker feed for day trading.
     Streams real-time prices at 100ms intervals for selected symbols.
+    Uses REAL market data only - no fake prices.
     """
     symbols_param = websocket.query_params.get("symbols")
     if symbols_param:
@@ -133,7 +134,8 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
         if engine and engine.last_scanner_results:
             symbols = [r.get("symbol") for r in engine.last_scanner_results[:10] if r.get("symbol")]
         else:
-            symbols = DEFAULT_SYMBOLS[:10]
+            # Default popular day trading stocks
+            symbols = ["AAPL", "TSLA", "NVDA", "AMD", "META", "MSFT", "GOOGL", "AMZN", "SPY", "QQQ"]
 
     await websocket.accept()
 
@@ -153,11 +155,14 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
         while True:
             provider = _get_market_provider()
             tickers = []
+            data_source = "real"
 
             for symbol in symbols:
                 snapshot = provider.get_market_snapshot(symbol) or {}
-                if snapshot:
-                    current_price = snapshot.get("price", 0)
+                current_price = snapshot.get("price", 0)
+
+                # Only include symbols with real data (price > 0)
+                if current_price > 0:
                     prev_price = last_prices.get(symbol, current_price)
                     change = current_price - prev_price
                     change_pct = (change / prev_price * 100) if prev_price else 0
@@ -175,25 +180,18 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
                         "bid_size": snapshot.get("bid_size", 0),
                         "ask_size": snapshot.get("ask_size", 0),
                     })
-                else:
-                    # Fallback to fake data for testing
-                    ticks = FAKE_STREAM.ticks([symbol])
-                    for tick in ticks:
-                        current_price = tick.get("price", 0)
-                        prev_price = last_prices.get(symbol, current_price)
-                        change = current_price - prev_price
-                        last_prices[symbol] = current_price
-                        tickers.append({
-                            **tick,
-                            "change": round(change, 2),
-                            "change_pct": round((change / prev_price * 100) if prev_price else 0, 4),
-                            "direction": "up" if change > 0 else "down" if change < 0 else "flat",
-                        })
+
+            # If no real data available, indicate market may be closed
+            if not tickers:
+                data_source = "unavailable"
 
             await websocket.send_json({
                 "channel": "live-ticker",
                 "type": "update",
                 "data": tickers,
+                "data_source": data_source,
+                "symbols_requested": len(symbols),
+                "symbols_with_data": len(tickers),
                 "timestamp": datetime.utcnow().isoformat(),
             })
 
