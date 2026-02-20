@@ -33,7 +33,13 @@ from market.universe import get_default_universe
 from core.init_db import init_db
 from utils.logger import setup_logging
 
-app = FastAPI(title="Zella AI Trading API", version="0.1.0")
+app = FastAPI(title="Zella AI Trading API", version="0.1.1")
+
+
+@app.get("/")
+async def root():
+    """Root endpoint for health checks."""
+    return {"status": "ok", "service": "zella-ai-backend"}
 
 allowed_origins = [
     origin.strip()
