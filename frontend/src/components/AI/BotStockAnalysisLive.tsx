@@ -100,12 +100,16 @@ interface FilterSummary {
 interface BotActivityMessage {
   channel: string;
   type: string;
-  activity?: {
+  data?: {
+    running: boolean;
+    mode: string;
     analyzed_opportunities: AnalyzedOpportunity[];
     scanner_results: ScannerResult[];
     all_evaluations: StockEvaluation[];
     filter_summary?: FilterSummary;
+    new_scan?: boolean;
   };
+  message?: string;
   timestamp: string;
 }
 
@@ -145,8 +149,9 @@ const BotStockAnalysisLive = () => {
         try {
           const message: BotActivityMessage = JSON.parse(event.data);
 
-          if (message.type === "bot_activity" && message.activity) {
-            const { analyzed_opportunities, scanner_results, all_evaluations, filter_summary } = message.activity;
+          // Backend sends type: "status" with data object
+          if (message.type === "status" && message.data) {
+            const { analyzed_opportunities, scanner_results, all_evaluations, filter_summary } = message.data;
 
             if (analyzed_opportunities) setOpportunities(analyzed_opportunities);
             if (scanner_results) setScannerResults(scanner_results);
@@ -154,6 +159,8 @@ const BotStockAnalysisLive = () => {
             if (filter_summary) setFilterSummary(filter_summary);
 
             setLastUpdate(message.timestamp);
+          } else if (message.type === "error") {
+            console.warn("Bot activity error:", message.message);
           }
         } catch (e) {
           console.error("Error parsing bot activity message:", e);
