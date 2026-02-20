@@ -189,8 +189,20 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
                         symbols = new_symbols[:50]
                 last_symbols_update = now
 
+            # Use batch fetching if available (MUCH faster - single API call)
+            if hasattr(provider, 'get_batch_snapshots'):
+                snapshots = provider.get_batch_snapshots(symbols)
+            else:
+                # Fallback to individual fetching (slower)
+                snapshots = {}
+                for symbol in symbols:
+                    snap = provider.get_market_snapshot(symbol)
+                    if snap:
+                        snapshots[symbol] = snap
+
+            # Process all snapshots
             for symbol in symbols:
-                snapshot = provider.get_market_snapshot(symbol) or {}
+                snapshot = snapshots.get(symbol, {})
                 current_price = snapshot.get("price", 0)
 
                 # Only include symbols with real data (price > 0)
@@ -249,7 +261,7 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
                 "timestamp": datetime.utcnow().isoformat(),
             })
 
-            await asyncio.sleep(0.1)  # 100ms for real-time feel
+            await asyncio.sleep(1.0)  # 1 second between updates (Yahoo has rate limits)
     except WebSocketDisconnect:
         return
 

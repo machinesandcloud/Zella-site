@@ -57,12 +57,12 @@ class Settings(BaseSettings):
     alpaca_secret_key: str = ""
     alpaca_paper: bool = True  # True for paper trading, False for live
 
-    # Screener defaults
-    screener_min_avg_volume: float = 500000
-    screener_min_price: float = 5.0
-    screener_max_price: float = 1000.0
-    screener_min_volatility: float = 0.005
-    screener_min_relative_volume: float = 2.0
+    # Screener defaults - lowered for pre-market and early morning trading
+    screener_min_avg_volume: float = 100000  # Lowered from 500k to allow more stocks
+    screener_min_price: float = 1.0  # Allow penny stocks
+    screener_max_price: float = 500.0  # Focus on tradeable range
+    screener_min_volatility: float = 0.002  # Lower volatility threshold
+    screener_min_relative_volume: float = 1.0  # Allow stocks at normal volume
 
     class Config:
         env_file = ".env"

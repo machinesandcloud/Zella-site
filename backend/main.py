@@ -210,18 +210,28 @@ def on_startup() -> None:
             position_manager=app.state.position_manager,
             broker_client=broker_client,
             config={
-                "enabled": False,  # Start disabled by default
+                "enabled": True,  # Auto-enable for real-time scanning
                 "mode": "FULL_AUTO",
                 "risk_posture": "BALANCED",
-                "scan_interval": 60,
+                "scan_interval": 30,  # 30s for real-time updates
                 "max_positions": 5,
                 "enabled_strategies": "ALL"
             }
         )
+
+        # Auto-start the engine for real-time market scanning
+        async def start_engine_async():
+            await asyncio.sleep(2)  # Wait for full initialization
+            if hasattr(app.state, "autonomous_engine") and app.state.autonomous_engine:
+                logger.info("🚀 Auto-starting Autonomous Trading Engine...")
+                await app.state.autonomous_engine.start()
+
+        asyncio.create_task(start_engine_async())
+
         if app_settings.use_mock_ibkr or not (app.state.alpaca_client and app.state.alpaca_client.is_connected()):
-            logger.info("✓ Autonomous Trading Engine initialized (DEMO MODE - no real trading)")
+            logger.info("✓ Autonomous Trading Engine initialized and starting (DEMO MODE - scan only)")
         else:
-            logger.info("✓ Autonomous Trading Engine initialized (LIVE MODE)")
+            logger.info("✓ Autonomous Trading Engine initialized and starting (LIVE MODE)")
     except Exception as e:
         logger.error(f"✗ Failed to initialize Autonomous Engine: {e}")
         app.state.autonomous_engine = None

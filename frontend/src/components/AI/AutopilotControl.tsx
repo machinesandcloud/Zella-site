@@ -84,23 +84,19 @@ const AutopilotControl = () => {
       setStatus(data);
     } catch (error: any) {
       console.error("Error loading autonomous status:", error);
-      // Set demo/offline status instead of failing
-      if (error?.response?.status === 503 || error?.code === "ERR_NETWORK") {
-        setStatus({
-          enabled: false,
-          running: false,
-          mode: "FULL_AUTO",
-          risk_posture: "BALANCED",
-          last_scan: null,
-          active_positions: 0,
-          decisions: [],
-          strategy_performance: {},
-          num_strategies: 0,
-          connected: false
-        });
-      } else {
-        notify("Backend offline - showing demo mode", "warning");
-      }
+      // Set demo status on ANY error - don't show annoying notifications repeatedly
+      setStatus({
+        enabled: false,
+        running: false,
+        mode: "FULL_AUTO",
+        risk_posture: "BALANCED",
+        last_scan: null,
+        active_positions: 0,
+        decisions: [],
+        strategy_performance: {},
+        num_strategies: 0,
+        connected: false
+      });
     } finally {
       setRefreshing(false);
       setLoading(false);

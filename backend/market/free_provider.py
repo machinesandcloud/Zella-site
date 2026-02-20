@@ -155,3 +155,58 @@ class FreeMarketDataProvider(MarketDataProvider):
             # Timestamp
             "timestamp": quote.get("regularMarketTime", 0),
         }
+
+    def get_batch_snapshots(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Get market snapshots for multiple symbols in a single API call.
+        Much faster than calling get_market_snapshot for each symbol individually.
+        """
+        if not symbols:
+            return {}
+
+        try:
+            payload = self._yahoo_quote(symbols)
+            results = payload.get("quoteResponse", {}).get("result", [])
+            if not results:
+                return {}
+
+            snapshots = {}
+            for quote in results:
+                symbol = quote.get("symbol")
+                if not symbol:
+                    continue
+
+                price = quote.get("regularMarketPrice", 0)
+                prev_close = quote.get("regularMarketPreviousClose", 0)
+                change = quote.get("regularMarketChange", 0)
+                change_pct = quote.get("regularMarketChangePercent", 0)
+
+                if change == 0 and prev_close > 0 and price > 0:
+                    change = price - prev_close
+                    change_pct = (change / prev_close) * 100
+
+                snapshots[symbol] = {
+                    "symbol": symbol,
+                    "price": price,
+                    "open": quote.get("regularMarketOpen", 0),
+                    "high": quote.get("regularMarketDayHigh", 0),
+                    "low": quote.get("regularMarketDayLow", 0),
+                    "close": price,
+                    "volume": quote.get("regularMarketVolume", 0),
+                    "prev_close": prev_close,
+                    "prev_volume": quote.get("averageDailyVolume10Day", 0),
+                    "change": round(change, 2) if change else 0,
+                    "change_pct": round(change_pct, 2) if change_pct else 0,
+                    "bid": quote.get("bid", 0),
+                    "ask": quote.get("ask", 0),
+                    "bid_size": quote.get("bidSize", 0),
+                    "ask_size": quote.get("askSize", 0),
+                    "vwap": 0,
+                    "avg_volume": quote.get("averageDailyVolume10Day", 0),
+                    "market_cap": quote.get("marketCap", 0),
+                    "timestamp": quote.get("regularMarketTime", 0),
+                }
+
+            return snapshots
+        except Exception as e:
+            return {}

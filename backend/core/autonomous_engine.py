@@ -250,18 +250,22 @@ class AutonomousEngine:
                 await asyncio.sleep(30)
 
     async def _main_trading_loop(self):
-        """Main autonomous trading loop"""
+        """Main autonomous trading loop - scans continuously for real-time UI updates"""
         while self.running:
             try:
-                # Check if we should trade
+                # Check basic requirements
                 if not self._should_trade_now():
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(10)  # Shorter sleep when not ready
                     continue
 
-                logger.info("🔍 Starting autonomous scan cycle...")
+                # Determine scan interval based on market hours
+                is_market_open = self._is_market_hours()
+                current_scan_interval = self.scan_interval if is_market_open else 30  # 30s outside market hours
+
+                logger.info(f"🔍 Starting autonomous scan cycle... (market_open={is_market_open})")
                 self.last_scan_time = datetime.now()
 
-                # 1. Scan market for opportunities
+                # 1. Scan market for opportunities (ALWAYS - for real-time UI)
                 opportunities = await self._scan_market()
 
                 # 2. Analyze each opportunity with ALL strategies
@@ -270,17 +274,24 @@ class AutonomousEngine:
                 # 3. Rank and select best opportunities
                 top_picks = self._rank_opportunities(analyzed)
 
-                # 4. Execute trades (if in FULL_AUTO or GOD_MODE)
-                if self.mode in ["FULL_AUTO", "GOD_MODE"]:
+                # 4. Execute trades ONLY during market hours and in auto modes
+                if is_market_open and self.mode in ["FULL_AUTO", "GOD_MODE"]:
                     await self._execute_trades(top_picks)
+                elif not is_market_open and opportunities:
+                    self._add_decision(
+                        "INFO",
+                        f"Market closed - scan only mode ({len(opportunities)} opportunities)",
+                        "INFO",
+                        {"opportunities": len(opportunities), "analyzed": len(analyzed)}
+                    )
 
                 # 5. Wait for next scan
-                await asyncio.sleep(self.scan_interval)
+                await asyncio.sleep(current_scan_interval)
 
             except Exception as e:
                 logger.error(f"Error in trading loop: {e}")
                 self._add_decision("ERROR", f"Trading loop error: {str(e)}", "ERROR", {})
-                await asyncio.sleep(60)
+                await asyncio.sleep(30)
 
     async def _position_monitor(self):
         """
@@ -853,19 +864,18 @@ class AutonomousEngine:
         if not self.enabled or not self.running:
             return False
 
-        # Check market hours
-        now = datetime.now().time()
-        market_open = time(9, 30)
-        market_close = time(16, 0)
-
-        if not (market_open <= now <= market_close):
-            return False
-
         # Check if broker connected
         if not self.broker.is_connected():
             return False
 
         return True
+
+    def _is_market_hours(self) -> bool:
+        """Check if we're in regular market hours"""
+        now = datetime.now().time()
+        market_open = time(9, 30)
+        market_close = time(16, 0)
+        return market_open <= now <= market_close
 
     def _add_decision(self, decision_type: str, action: str, status: str, metadata: Dict[str, Any]):
         """Add decision to log"""

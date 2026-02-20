@@ -35,13 +35,15 @@ services:
       - key: MAX_CONCURRENT_POSITIONS
         value: "5"
       - key: SCREENER_MIN_AVG_VOLUME
-        value: "500000"
+        value: "100000"
       - key: SCREENER_MIN_PRICE
-        value: "5"
+        value: "1"
       - key: SCREENER_MAX_PRICE
-        value: "1000"
+        value: "500"
       - key: SCREENER_MIN_VOLATILITY
-        value: "0.005"
+        value: "0.002"
+      - key: SCREENER_MIN_RELATIVE_VOLUME
+        value: "1.0"
       - key: DATABASE_URL
         fromDatabase:
           name: zella-ai-db
