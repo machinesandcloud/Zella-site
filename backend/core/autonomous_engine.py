@@ -92,7 +92,7 @@ class AutonomousEngine:
         self.enabled = self.config.get("enabled", False)
         self.mode = self.config.get("mode", "FULL_AUTO")  # ASSISTED, SEMI_AUTO, FULL_AUTO, GOD_MODE
         self.risk_posture = self.config.get("risk_posture", "BALANCED")  # DEFENSIVE, BALANCED, AGGRESSIVE
-        self.scan_interval = self.config.get("scan_interval", 60)  # seconds between scans
+        self.scan_interval = self.config.get("scan_interval", 1)  # seconds between scans (1s for real-time day trading)
         self.max_positions = self.config.get("max_positions", 5)
         self.enabled_strategies = self.config.get("enabled_strategies", "ALL")
 

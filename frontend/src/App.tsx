@@ -39,6 +39,7 @@ import AutopilotControl from "./components/AI/AutopilotControl";
 import AutonomyTimeline from "./components/AI/AutonomyTimeline";
 import BotThinkingProcess from "./components/AI/BotThinkingProcess";
 import MarketScannerPanel from "./components/AI/MarketScannerPanel";
+import LiveTickerFeed from "./components/AI/LiveTickerFeed";
 import OptionsChain from "./components/Trading/OptionsChain";
 import VoiceAssistantSettings from "./components/Settings/VoiceAssistantSettings";
 import BacktestPanel from "./components/Trading/BacktestPanel";
@@ -336,6 +337,11 @@ const App = () => {
                 {/* System Health */}
                 <Grid item xs={12} lg={5}>
                   <SystemHealth />
+                </Grid>
+
+                {/* Live Ticker Feed - Real-time stock prices */}
+                <Grid item xs={12}>
+                  <LiveTickerFeed />
                 </Grid>
 
                 {/* Market Scanner Analysis - Detailed evaluation data */}
