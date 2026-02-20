@@ -52,6 +52,9 @@ interface WebSocketMessage {
   data?: TickerData[];
   symbols?: string[];
   timestamp: string;
+  data_source?: string;
+  symbols_requested?: number;
+  symbols_with_data?: number;
 }
 
 const LiveTickerFeed = () => {
@@ -63,6 +66,8 @@ const LiveTickerFeed = () => {
   const [newSymbol, setNewSymbol] = useState("");
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [updateCount, setUpdateCount] = useState(0);
+  const [dataSource, setDataSource] = useState<string>("real");
+  const [symbolsRequested, setSymbolsRequested] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -98,6 +103,8 @@ const LiveTickerFeed = () => {
             setTickers(message.data);
             setLastUpdate(message.timestamp);
             setUpdateCount((prev) => prev + 1);
+            setDataSource(message.data_source || "real");
+            setSymbolsRequested(message.symbols_requested || 0);
           }
         } catch (e) {
           console.error("Error parsing WebSocket message:", e);
@@ -409,9 +416,23 @@ const LiveTickerFeed = () => {
           </TableContainer>
         ) : connected ? (
           <Box sx={{ textAlign: "center", py: 4 }}>
-            <Typography variant="body2" color="text.secondary">
-              Waiting for market data...
-            </Typography>
+            {dataSource === "unavailable" ? (
+              <>
+                <Box sx={{ mb: 2, p: 2, borderRadius: 2, bgcolor: "rgba(255, 152, 0, 0.1)", border: "1px solid rgba(255, 152, 0, 0.3)" }}>
+                  <Typography variant="body2" color="warning.main" fontWeight="bold">
+                    Market Closed or Data Unavailable
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+                    Real-time prices are only available during market hours (9:30 AM - 4:00 PM ET).
+                    {symbolsRequested > 0 && ` Requested ${symbolsRequested} symbols.`}
+                  </Typography>
+                </Box>
+              </>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Connecting to market data feed...
+              </Typography>
+            )}
           </Box>
         ) : (
           <Box sx={{ textAlign: "center", py: 4 }}>
