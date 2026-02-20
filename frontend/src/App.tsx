@@ -60,6 +60,7 @@ const NAV = [
 const App = () => {
   const [tab, setTab] = useState(0);
   const [authRequired, setAuthRequired] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem("zella_token"));
   const [ibkrDefaults, setIbkrDefaults] = useState<{
     is_paper_trading: boolean;
     use_mock_ibkr: boolean;
@@ -79,24 +80,50 @@ const App = () => {
   });
 
   useEffect(() => {
-    const handler = () => setAuthRequired(true);
-    window.addEventListener("auth:logout", handler);
-    return () => window.removeEventListener("auth:logout", handler);
+    const logoutHandler = () => {
+      setAuthRequired(true);
+      setIsAuthenticated(false);
+    };
+    const loginHandler = () => {
+      setIsAuthenticated(true);
+      setAuthRequired(false);
+    };
+    window.addEventListener("auth:logout", logoutHandler);
+    window.addEventListener("auth:login", loginHandler);
+    return () => {
+      window.removeEventListener("auth:logout", logoutHandler);
+      window.removeEventListener("auth:login", loginHandler);
+    };
   }, []);
 
+  // Auto-login on mount if no token
   useEffect(() => {
     const token = localStorage.getItem("zella_token");
-    if (token) return;
+    if (token) {
+      setIsAuthenticated(true);
+      return;
+    }
     autoLogin()
       .then((data) => {
         if (data?.access_token) {
           localStorage.setItem("zella_token", data.access_token);
+          setIsAuthenticated(true);
           window.dispatchEvent(new CustomEvent("auth:login"));
         }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        // Set defaults even if login fails so UI shows demo mode
+        setIbkrDefaults({
+          is_paper_trading: true,
+          use_mock_ibkr: true,
+          use_ibkr_webapi: false,
+          use_free_data: true,
+          use_alpaca: false
+        });
+      });
   }, []);
 
+  // Re-authenticate when auth is required (401 response)
   useEffect(() => {
     if (!authRequired) return;
     autoLogin()
@@ -104,13 +131,16 @@ const App = () => {
         if (data?.access_token) {
           localStorage.setItem("zella_token", data.access_token);
           setAuthRequired(false);
+          setIsAuthenticated(true);
           window.dispatchEvent(new CustomEvent("auth:login"));
         }
       })
       .catch(() => undefined);
   }, [authRequired]);
 
+  // Fetch IBKR defaults only after authenticated
   useEffect(() => {
+    if (!isAuthenticated) return;
     fetchIbkrDefaults()
       .then((data) => setIbkrDefaults(data))
       .catch((error) => {
@@ -123,9 +153,11 @@ const App = () => {
           use_alpaca: false
         });
       });
-  }, []);
+  }, [isAuthenticated]);
 
+  // Fetch Alpaca status only after authenticated
   useEffect(() => {
+    if (!isAuthenticated) return;
     let cancelled = false;
     const loadStatus = () =>
       fetchAlpacaStatus()
@@ -141,7 +173,7 @@ const App = () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     const toastHandler = (event: Event) => {
