@@ -241,7 +241,7 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                 current_scan_time = engine.last_scan_time.isoformat() if engine.last_scan_time else None
                 current_decision_count = len(engine.decisions)
 
-                # Build activity update
+                # Build activity update with detailed strategy data for "Under the Hood" visualization
                 activity = {
                     "channel": "bot-activity",
                     "type": "status",
@@ -257,6 +257,21 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                             {"symbol": r.get("symbol"), "score": r.get("combined_score", 0)}
                             for r in engine.last_scanner_results[:5]
                         ],
+                        # Enhanced data for "Under the Hood" visualization
+                        "active_strategies": list(engine.all_strategies.keys()) if hasattr(engine, 'all_strategies') else [],
+                        "analyzed_opportunities": [
+                            {
+                                "symbol": opp.get("symbol"),
+                                "price": opp.get("data", {}).get("price", 0),
+                                "signals": opp.get("strategy_signals", []),
+                                "final_action": opp.get("action", "HOLD"),
+                                "aggregate_confidence": opp.get("confidence", 0),
+                                "reasoning": opp.get("reasoning", ""),
+                                "data": opp.get("data", {})
+                            }
+                            for opp in (engine.last_analyzed_opportunities or [])[:10]
+                        ],
+                        "strategy_performance": engine.strategy_performance if hasattr(engine, 'strategy_performance') else {},
                     },
                     "timestamp": datetime.utcnow().isoformat(),
                 }

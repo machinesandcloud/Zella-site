@@ -47,12 +47,14 @@ import StrategyBuilder from "./components/Trading/StrategyBuilder";
 import SystemHealth from "./components/Dashboard/SystemHealth";
 import CalendarHeatmap from "./components/Dashboard/CalendarHeatmap";
 import HelpCenter from "./components/Settings/HelpCenter";
+import UnderTheHood from "./components/AI/UnderTheHood";
 
 const NAV = [
   { label: "🤖 Autonomous Trading", value: 0 },
-  { label: "Manual Trading", value: 1 },
-  { label: "Analytics", value: 2 },
-  { label: "Settings", value: 3 }
+  { label: "🧠 Under The Hood", value: 1 },
+  { label: "Manual Trading", value: 2 },
+  { label: "Analytics", value: 3 },
+  { label: "Settings", value: 4 }
 ];
 
 const App = () => {
@@ -388,6 +390,14 @@ const App = () => {
 
             {tab === 1 && (
               <Grid container spacing={3}>
+                <Grid item xs={12}>
+                  <UnderTheHood />
+                </Grid>
+              </Grid>
+            )}
+
+            {tab === 2 && (
+              <Grid container spacing={3}>
                 <Grid item xs={12} md={8}>
                   <ChartView />
                 </Grid>
@@ -427,7 +437,7 @@ const App = () => {
               </Grid>
             )}
 
-            {tab === 2 && (
+            {tab === 3 && (
               <Grid container spacing={3}>
                 <Grid item xs={12}>
                   <PerformanceAnalytics />
@@ -453,7 +463,7 @@ const App = () => {
               </Grid>
             )}
 
-            {tab === 3 && (
+            {tab === 4 && (
               <Grid container spacing={3}>
                 <Grid item xs={12} md={6}>
                   <AlpacaConnection />
