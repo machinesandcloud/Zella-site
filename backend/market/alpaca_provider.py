@@ -79,7 +79,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
             time.sleep(self.cache_ttl)
 
     def _refresh_all_quotes(self) -> None:
-        """Fetch quotes for all universe symbols in batches"""
+        """Fetch snapshots for all universe symbols in batches using Snapshot API"""
         try:
             # Batch symbols (Alpaca allows up to 100 per request)
             batch_size = 50
@@ -88,57 +88,72 @@ class AlpacaMarketDataProvider(MarketDataProvider):
             for i in range(0, len(self._universe), batch_size):
                 batch = self._universe[i:i + batch_size]
                 try:
-                    request = StockLatestQuoteRequest(symbol_or_symbols=batch)
-                    quotes = self.data_client.get_stock_latest_quote(request)
-
-                    # Also get latest trades for more accurate prices
-                    trade_request = StockLatestTradeRequest(symbol_or_symbols=batch)
-                    trades = self.data_client.get_stock_latest_trade(trade_request)
+                    # Use Snapshot API - provides quote, trade, daily bar, and previous day bar
+                    request = StockSnapshotRequest(symbol_or_symbols=batch)
+                    snapshots = self.data_client.get_stock_snapshot(request)
 
                     for symbol in batch:
+                        if symbol not in snapshots:
+                            continue
+
+                        snap = snapshots[symbol]
                         quote_data = {}
 
-                        # Get bid/ask from quotes (NBBO - most current)
-                        if symbol in quotes:
-                            q = quotes[symbol]
-                            bid = float(q.bid_price) if q.bid_price else 0
-                            ask = float(q.ask_price) if q.ask_price else 0
-                            quote_data = {
-                                "bid": bid,
-                                "ask": ask,
-                                "bid_size": int(q.bid_size) if q.bid_size else 0,
-                                "ask_size": int(q.ask_size) if q.ask_size else 0,
-                                "quote_timestamp": q.timestamp.isoformat() if q.timestamp else None,
-                            }
-                            # Use NBBO midpoint as price (most accurate real-time)
-                            if bid > 0 and ask > 0:
-                                quote_data["price"] = round((bid + ask) / 2, 2)
+                        # Get latest quote (bid/ask)
+                        if snap.latest_quote:
+                            q = snap.latest_quote
+                            quote_data["bid"] = float(q.bid_price) if q.bid_price else 0
+                            quote_data["ask"] = float(q.ask_price) if q.ask_price else 0
+                            quote_data["bid_size"] = int(q.bid_size) if q.bid_size else 0
+                            quote_data["ask_size"] = int(q.ask_size) if q.ask_size else 0
+                            quote_data["quote_timestamp"] = q.timestamp.isoformat() if q.timestamp else None
 
-                        # Get last trade for volume/size info
-                        if symbol in trades:
-                            t = trades[symbol]
+                        # Get latest trade
+                        if snap.latest_trade:
+                            t = snap.latest_trade
+                            quote_data["price"] = float(t.price) if t.price else 0
                             quote_data["last_trade"] = float(t.price) if t.price else 0
                             quote_data["trade_size"] = int(t.size) if t.size else 0
                             quote_data["trade_timestamp"] = t.timestamp.isoformat() if t.timestamp else None
-                            # If no NBBO price, fall back to last trade
-                            if not quote_data.get("price") and t.price:
-                                quote_data["price"] = float(t.price)
+
+                        # Get today's daily bar (open, high, low, close, volume)
+                        if snap.daily_bar:
+                            db = snap.daily_bar
+                            quote_data["open"] = float(db.open) if db.open else 0
+                            quote_data["high"] = float(db.high) if db.high else 0
+                            quote_data["low"] = float(db.low) if db.low else 0
+                            quote_data["close"] = float(db.close) if db.close else 0
+                            quote_data["volume"] = int(db.volume) if db.volume else 0
+                            quote_data["vwap"] = float(db.vwap) if db.vwap else 0
+
+                        # Get previous day's close
+                        if snap.previous_daily_bar:
+                            pdb = snap.previous_daily_bar
+                            quote_data["prev_close"] = float(pdb.close) if pdb.close else 0
+                            quote_data["prev_volume"] = int(pdb.volume) if pdb.volume else 0
+
+                        # Calculate change from previous close
+                        if quote_data.get("price") and quote_data.get("prev_close"):
+                            prev = quote_data["prev_close"]
+                            curr = quote_data["price"]
+                            quote_data["change"] = round(curr - prev, 2)
+                            quote_data["change_pct"] = round((curr - prev) / prev * 100, 2) if prev else 0
 
                         if quote_data.get("price"):
                             all_quotes[symbol] = quote_data
 
                 except Exception as e:
-                    logger.debug(f"Error fetching batch {i}-{i+batch_size}: {e}")
+                    logger.debug(f"Error fetching snapshot batch {i}-{i+batch_size}: {e}")
 
             # Update cache atomically
             with self._cache_lock:
                 self._quote_cache = all_quotes
                 self._cache_timestamp = time.time()
 
-            logger.debug(f"Refreshed {len(all_quotes)} quotes")
+            logger.debug(f"Refreshed {len(all_quotes)} snapshots")
 
         except Exception as e:
-            logger.error(f"Error refreshing quotes: {e}")
+            logger.error(f"Error refreshing snapshots: {e}")
 
     def get_universe(self) -> List[str]:
         """Get the trading universe (90+ day trading stocks)"""
@@ -276,14 +291,26 @@ class AlpacaMarketDataProvider(MarketDataProvider):
             if cached:
                 return {
                     "symbol": symbol,
-                    "price": cached.get("price", 0),  # NBBO midpoint (most accurate)
-                    "last_trade": cached.get("last_trade", 0),  # Last trade price
+                    "price": cached.get("price", 0),
                     "bid": cached.get("bid", 0),
                     "ask": cached.get("ask", 0),
                     "bid_size": cached.get("bid_size", 0),
                     "ask_size": cached.get("ask_size", 0),
-                    "volume": cached.get("trade_size", 0),
-                    "timestamp": cached.get("quote_timestamp") or cached.get("trade_timestamp") or datetime.now().isoformat()
+                    # Daily data
+                    "open": cached.get("open", 0),
+                    "high": cached.get("high", 0),
+                    "low": cached.get("low", 0),
+                    "close": cached.get("close", 0),
+                    "volume": cached.get("volume", 0),
+                    "vwap": cached.get("vwap", 0),
+                    # Previous day
+                    "prev_close": cached.get("prev_close", 0),
+                    "prev_volume": cached.get("prev_volume", 0),
+                    # Change
+                    "change": cached.get("change", 0),
+                    "change_pct": cached.get("change_pct", 0),
+                    # Timestamps
+                    "timestamp": cached.get("trade_timestamp") or cached.get("quote_timestamp") or datetime.now().isoformat()
                 }
 
         # If not in cache, try direct fetch (rare case)

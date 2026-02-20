@@ -44,6 +44,15 @@ interface TickerData {
   direction: "up" | "down" | "flat";
   bid_size: number;
   ask_size: number;
+  // New fields
+  open: number;
+  prev_close: number;
+  high: number;
+  low: number;
+  vwap: number;
+  day_change: number;
+  day_change_pct: number;
+  volume: number;
 }
 
 interface WebSocketMessage {
@@ -311,11 +320,12 @@ const LiveTickerFeed = () => {
                 <TableRow>
                   <TableCell sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Symbol</TableCell>
                   <TableCell align="right" sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Price</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Change</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Day Chg</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Open</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Prev Close</TableCell>
                   <TableCell align="right" sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Bid</TableCell>
                   <TableCell align="right" sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Ask</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Spread</TableCell>
-                  <TableCell align="center" sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Size</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: "bold", bgcolor: "background.paper" }}>Volume</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -388,6 +398,16 @@ const LiveTickerFeed = () => {
                       </Stack>
                     </TableCell>
                     <TableCell align="right">
+                      <Typography variant="caption" color="text.primary">
+                        {formatPrice(ticker.open)}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="right">
+                      <Typography variant="caption" color="text.secondary">
+                        {formatPrice(ticker.prev_close)}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="right">
                       <Typography variant="caption" color="success.main">
                         {formatPrice(ticker.bid)}
                       </Typography>
@@ -398,14 +418,9 @@ const LiveTickerFeed = () => {
                       </Typography>
                     </TableCell>
                     <TableCell align="right">
-                      <Typography variant="caption" color="text.secondary">
-                        {formatPrice(ticker.spread)}
-                      </Typography>
-                    </TableCell>
-                    <TableCell align="center">
-                      <Tooltip title={`Bid: ${ticker.bid_size} | Ask: ${ticker.ask_size}`}>
+                      <Tooltip title={`VWAP: ${formatPrice(ticker.vwap)} | High: ${formatPrice(ticker.high)} | Low: ${formatPrice(ticker.low)}`}>
                         <Typography variant="caption" color="text.secondary">
-                          {formatVolume(ticker.bid_size)} x {formatVolume(ticker.ask_size)}
+                          {formatVolume(ticker.volume)}
                         </Typography>
                       </Tooltip>
                     </TableCell>

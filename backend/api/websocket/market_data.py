@@ -164,21 +164,37 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
                 # Only include symbols with real data (price > 0)
                 if current_price > 0:
                     prev_price = last_prices.get(symbol, current_price)
-                    change = current_price - prev_price
-                    change_pct = (change / prev_price * 100) if prev_price else 0
+                    tick_change = current_price - prev_price
+                    tick_change_pct = (tick_change / prev_price * 100) if prev_price else 0
                     last_prices[symbol] = current_price
+
+                    # Use pre-calculated change from previous close if available
+                    day_change = snapshot.get("change", 0)
+                    day_change_pct = snapshot.get("change_pct", 0)
 
                     tickers.append({
                         "symbol": symbol,
                         "price": round(current_price, 2),
+                        # Today's open and previous close
+                        "open": round(snapshot.get("open", 0), 2),
+                        "prev_close": round(snapshot.get("prev_close", 0), 2),
+                        # Day's range
+                        "high": round(snapshot.get("high", 0), 2),
+                        "low": round(snapshot.get("low", 0), 2),
+                        "vwap": round(snapshot.get("vwap", 0), 2),
+                        # Day change (from prev close)
+                        "day_change": round(day_change, 2),
+                        "day_change_pct": round(day_change_pct, 2),
                         "bid": round(snapshot.get("bid", 0), 2),
                         "ask": round(snapshot.get("ask", 0), 2),
                         "spread": round(snapshot.get("ask", 0) - snapshot.get("bid", 0), 2),
-                        "change": round(change, 2),
-                        "change_pct": round(change_pct, 4),
-                        "direction": "up" if change > 0 else "down" if change < 0 else "flat",
+                        # Tick change (from last update)
+                        "change": round(tick_change, 2),
+                        "change_pct": round(tick_change_pct, 4),
+                        "direction": "up" if tick_change > 0 else "down" if tick_change < 0 else "flat",
                         "bid_size": snapshot.get("bid_size", 0),
                         "ask_size": snapshot.get("ask_size", 0),
+                        "volume": snapshot.get("volume", 0),
                     })
 
             # If no real data available, indicate market may be closed
