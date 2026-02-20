@@ -101,14 +101,57 @@ class FreeMarketDataProvider(MarketDataProvider):
         }
 
     def get_market_snapshot(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get comprehensive market snapshot with all fields needed for trading decisions.
+        Yahoo Finance provides rich data including OHLCV, bid/ask, and change data.
+        """
         payload = self._yahoo_quote([symbol])
         results = payload.get("quoteResponse", {}).get("result", [])
         if not results:
             return {}
         quote = results[0]
+
+        # Current price
+        price = quote.get("regularMarketPrice", 0)
+
+        # Previous close for day change calculation
+        prev_close = quote.get("regularMarketPreviousClose", 0)
+
+        # Day change (Yahoo provides these directly)
+        change = quote.get("regularMarketChange", 0)
+        change_pct = quote.get("regularMarketChangePercent", 0)
+
+        # If change not provided, calculate from price and prev_close
+        if change == 0 and prev_close > 0 and price > 0:
+            change = price - prev_close
+            change_pct = (change / prev_close) * 100
+
         return {
             "symbol": symbol,
-            "price": quote.get("regularMarketPrice"),
-            "volume": quote.get("regularMarketVolume"),
-            "timestamp": quote.get("regularMarketTime"),
+            "price": price,
+            # Today's OHLCV
+            "open": quote.get("regularMarketOpen", 0),
+            "high": quote.get("regularMarketDayHigh", 0),
+            "low": quote.get("regularMarketDayLow", 0),
+            "close": price,  # Current price is the running close
+            "volume": quote.get("regularMarketVolume", 0),
+            # Previous day
+            "prev_close": prev_close,
+            "prev_volume": quote.get("averageDailyVolume10Day", 0),  # Use 10-day avg as proxy
+            # Day change
+            "change": round(change, 2) if change else 0,
+            "change_pct": round(change_pct, 2) if change_pct else 0,
+            # Bid/Ask (Yahoo provides these for real-time quotes)
+            "bid": quote.get("bid", 0),
+            "ask": quote.get("ask", 0),
+            "bid_size": quote.get("bidSize", 0),
+            "ask_size": quote.get("askSize", 0),
+            # Additional useful metrics
+            "vwap": 0,  # Yahoo doesn't provide VWAP directly
+            "avg_volume": quote.get("averageDailyVolume10Day", 0),
+            "market_cap": quote.get("marketCap", 0),
+            "fifty_two_week_high": quote.get("fiftyTwoWeekHigh", 0),
+            "fifty_two_week_low": quote.get("fiftyTwoWeekLow", 0),
+            # Timestamp
+            "timestamp": quote.get("regularMarketTime", 0),
         }
