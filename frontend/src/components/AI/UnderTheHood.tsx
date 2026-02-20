@@ -7,13 +7,8 @@ import {
   Typography,
   Box,
   Chip,
-  LinearProgress,
-  Tooltip,
   IconButton,
-  Divider,
-  Avatar,
   Badge,
-  CircularProgress,
   Collapse,
   Modal,
   Backdrop,
@@ -25,10 +20,6 @@ import {
   TrendingDown,
   TrendingFlat,
   Speed,
-  Refresh,
-  Circle,
-  ArrowForward,
-  DataUsage,
   Memory,
   Hub,
   Insights,
@@ -38,15 +29,12 @@ import {
   Radar,
   Timeline,
   ShowChart,
-  BarChart,
   Equalizer,
-  Visibility,
   ExpandMore,
   ExpandLess,
   Close,
   Code,
   Functions,
-  Calculate,
   KeyboardArrowRight,
   PlayArrow
 } from "@mui/icons-material";
@@ -643,7 +631,7 @@ const StrategyDetailModal = ({
                   DATA INPUTS
                 </Typography>
                 <Stack spacing={0.5}>
-                  {strategy.inputs.slice(0, 4).map((input, i) => (
+                  {strategy.inputs.slice(0, 4).map((input) => (
                     <Box
                       key={input}
                       sx={{
@@ -1390,7 +1378,7 @@ const UnderTheHood = () => {
               </Stack>
 
               <Stack spacing={1.5} sx={{ maxHeight: 450, overflow: "auto" }}>
-                {botState?.analyzed_opportunities?.slice(0, 10).map((opp, index) => (
+                {botState?.analyzed_opportunities?.slice(0, 10).map((opp) => (
                   <Box
                     key={opp.symbol}
                     sx={{

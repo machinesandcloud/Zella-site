@@ -78,7 +78,7 @@ const LiveTickerFeed = () => {
   const [dataSource, setDataSource] = useState<string>("real");
   const [symbolsRequested, setSymbolsRequested] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getWebSocketUrl = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
