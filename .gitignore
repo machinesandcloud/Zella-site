@@ -24,3 +24,6 @@ frontend/build/
 
 # Docker
 *.log
+
+# Runtime state files
+backend/data/autonomous_state.json
