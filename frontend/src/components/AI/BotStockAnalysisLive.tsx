@@ -468,18 +468,18 @@ const BotStockAnalysisLive = () => {
                         </TableCell>
                         <TableCell>
                           <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                            {opp.signals?.slice(0, 2).map((signal, i) => (
+                            {opp.strategies?.slice(0, 2).map((strategy, i) => (
                               <Chip
                                 key={i}
-                                label={signal}
+                                label={strategy}
                                 size="small"
                                 variant="outlined"
                                 sx={{ height: 16, fontSize: "0.5rem" }}
                               />
                             ))}
-                            {(opp.signals?.length || 0) > 2 && (
+                            {(opp.strategies?.length || 0) > 2 && (
                               <Chip
-                                label={`+${opp.signals.length - 2}`}
+                                label={`+${opp.strategies.length - 2}`}
                                 size="small"
                                 sx={{ height: 16, fontSize: "0.5rem" }}
                               />
