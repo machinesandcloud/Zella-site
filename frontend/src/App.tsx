@@ -62,13 +62,20 @@ const App = () => {
   const [tab, setTab] = useState(0);
   const [authRequired, setAuthRequired] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem("zella_token"));
+  // Initialize with defaults immediately to prevent "Backend not connected" during loading
   const [ibkrDefaults, setIbkrDefaults] = useState<{
     is_paper_trading: boolean;
     use_mock_ibkr: boolean;
     use_ibkr_webapi: boolean;
     use_free_data: boolean;
     use_alpaca?: boolean;
-  } | null>(null);
+  }>({
+    is_paper_trading: true,
+    use_mock_ibkr: true,
+    use_ibkr_webapi: false,
+    use_free_data: true,
+    use_alpaca: false
+  });
   const [alpacaStatus, setAlpacaStatus] = useState<{
     enabled: boolean;
     connected?: boolean;
@@ -79,6 +86,7 @@ const App = () => {
     message: "",
     severity: "info"
   });
+  const [backendConnected, setBackendConnected] = useState(false);
 
   useEffect(() => {
     const logoutHandler = () => {
@@ -109,18 +117,13 @@ const App = () => {
         if (data?.access_token) {
           localStorage.setItem("zella_token", data.access_token);
           setIsAuthenticated(true);
+          setBackendConnected(true);
           window.dispatchEvent(new CustomEvent("auth:login"));
         }
       })
       .catch(() => {
-        // Set defaults even if login fails so UI shows demo mode
-        setIbkrDefaults({
-          is_paper_trading: true,
-          use_mock_ibkr: true,
-          use_ibkr_webapi: false,
-          use_free_data: true,
-          use_alpaca: false
-        });
+        // Login failed - backend may be down, defaults are already set
+        setBackendConnected(false);
       });
   }, []);
 
@@ -143,16 +146,13 @@ const App = () => {
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchIbkrDefaults()
-      .then((data) => setIbkrDefaults(data))
+      .then((data) => {
+        setIbkrDefaults(data);
+        setBackendConnected(true);
+      })
       .catch((error) => {
         console.warn("Backend not available, using defaults:", error.message);
-        setIbkrDefaults({
-          is_paper_trading: true,
-          use_mock_ibkr: true,
-          use_ibkr_webapi: false,
-          use_free_data: true,
-          use_alpaca: false
-        });
+        setBackendConnected(false);
       });
   }, [isAuthenticated]);
 
@@ -286,7 +286,7 @@ const App = () => {
       </Box>
 
       <Container maxWidth="xl" sx={{ mt: 4 }}>
-        {!ibkrDefaults && (
+        {!backendConnected && isAuthenticated && (
           <Box
             sx={{
               mb: 2,
@@ -299,7 +299,7 @@ const App = () => {
             <Typography variant="body2" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               <span>⚠️</span>
               <span>
-                Backend not connected - Running in demo mode. To enable full functionality, start the backend server.
+                Backend not connected - Running in demo mode. Check that your backend is running at the configured URL.
               </span>
             </Typography>
           </Box>
