@@ -97,25 +97,32 @@ class AlpacaMarketDataProvider(MarketDataProvider):
 
                     for symbol in batch:
                         quote_data = {}
+
+                        # Get bid/ask from quotes (NBBO - most current)
                         if symbol in quotes:
                             q = quotes[symbol]
+                            bid = float(q.bid_price) if q.bid_price else 0
+                            ask = float(q.ask_price) if q.ask_price else 0
                             quote_data = {
-                                "bid": float(q.bid_price) if q.bid_price else 0,
-                                "ask": float(q.ask_price) if q.ask_price else 0,
+                                "bid": bid,
+                                "ask": ask,
                                 "bid_size": int(q.bid_size) if q.bid_size else 0,
                                 "ask_size": int(q.ask_size) if q.ask_size else 0,
                                 "quote_timestamp": q.timestamp.isoformat() if q.timestamp else None,
                             }
+                            # Use NBBO midpoint as price (most accurate real-time)
+                            if bid > 0 and ask > 0:
+                                quote_data["price"] = round((bid + ask) / 2, 2)
 
-                        # Use trade price as primary price (more accurate than mid)
+                        # Get last trade for volume/size info
                         if symbol in trades:
                             t = trades[symbol]
-                            quote_data["price"] = float(t.price) if t.price else 0
+                            quote_data["last_trade"] = float(t.price) if t.price else 0
                             quote_data["trade_size"] = int(t.size) if t.size else 0
                             quote_data["trade_timestamp"] = t.timestamp.isoformat() if t.timestamp else None
-                        elif quote_data.get("bid") and quote_data.get("ask"):
-                            # Fallback to mid price if no trade
-                            quote_data["price"] = (quote_data["bid"] + quote_data["ask"]) / 2
+                            # If no NBBO price, fall back to last trade
+                            if not quote_data.get("price") and t.price:
+                                quote_data["price"] = float(t.price)
 
                         if quote_data.get("price"):
                             all_quotes[symbol] = quote_data
@@ -269,13 +276,14 @@ class AlpacaMarketDataProvider(MarketDataProvider):
             if cached:
                 return {
                     "symbol": symbol,
-                    "price": cached.get("price", 0),
+                    "price": cached.get("price", 0),  # NBBO midpoint (most accurate)
+                    "last_trade": cached.get("last_trade", 0),  # Last trade price
                     "bid": cached.get("bid", 0),
                     "ask": cached.get("ask", 0),
                     "bid_size": cached.get("bid_size", 0),
                     "ask_size": cached.get("ask_size", 0),
-                    "volume": cached.get("trade_size", cached.get("bid_size", 0) + cached.get("ask_size", 0)),
-                    "timestamp": cached.get("trade_timestamp") or cached.get("quote_timestamp") or datetime.now().isoformat()
+                    "volume": cached.get("trade_size", 0),
+                    "timestamp": cached.get("quote_timestamp") or cached.get("trade_timestamp") or datetime.now().isoformat()
                 }
 
         # If not in cache, try direct fetch (rare case)
