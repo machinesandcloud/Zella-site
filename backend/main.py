@@ -100,6 +100,9 @@ def on_startup() -> None:
 
     if app_settings.use_mock_ibkr or not ibkr_api_available():
         app.state.ibkr_client = MockIBKRClient()
+        # Auto-connect mock client so autonomous engine can start
+        app.state.ibkr_client.connect_to_ibkr("127.0.0.1", 7497, 1, is_paper_trading=True)
+        logger.info("MockIBKRClient auto-connected for paper trading")
     else:
         app.state.ibkr_client = IBKRClient()
     app.state.risk_manager = RiskManager(
