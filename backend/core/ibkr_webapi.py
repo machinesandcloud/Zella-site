@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class IBKRWebAPIClient:
@@ -31,7 +34,8 @@ class IBKRWebAPIClient:
         try:
             status = self.auth_status()
             return bool(status.get("authenticated", False) and status.get("connected", False))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"IBKR Web API connection check failed: {e}")
             return False
 
     def tickle(self) -> Dict[str, Any]:
@@ -59,7 +63,8 @@ class IBKRWebAPIClient:
                     accounts = data.get("accounts") or data.get("accountIds") or []
                     if accounts:
                         return accounts
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to fetch accounts from {endpoint}: {e}")
                 continue
         return []
 

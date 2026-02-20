@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import List
 import xml.etree.ElementTree as ET
+import logging
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -9,6 +10,7 @@ from api.routes.auth import get_current_user
 from models import User
 
 router = APIRouter(prefix="/api/news", tags=["news"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("")
@@ -50,7 +52,8 @@ def _rss_fetch(url: str, headers: dict) -> List[dict]:
             response = client.get(url)
             response.raise_for_status()
             root = ET.fromstring(response.text)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"RSS fetch failed for {url}: {e}")
         return []
     items = []
     for item in root.findall(".//item")[:10]:

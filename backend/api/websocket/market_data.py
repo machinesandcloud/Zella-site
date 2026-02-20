@@ -40,7 +40,8 @@ class ConnectionManager:
             for connection in list(self.active_connections[channel]):
                 try:
                     await connection.send_json(message)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Removing disconnected client from {channel}: {e}")
                     self.active_connections[channel].discard(connection)
 
 
@@ -83,6 +84,7 @@ async def market_data_ws(websocket: WebSocket) -> None:
     interval = float(websocket.query_params.get("interval", "0.2"))  # 200ms default
     interval = max(0.1, min(interval, 2.0))  # Clamp between 100ms and 2s
 
+    # Note: Not using ConnectionManager here, so we call accept() directly
     await websocket.accept()
     try:
         while True:

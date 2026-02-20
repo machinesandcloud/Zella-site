@@ -169,33 +169,39 @@ def place_order(
         )
 
     order_id = None
-    if app_settings.use_ibkr_webapi and webapi:
-        if order_type == "MKT":
-            response = webapi.place_order(symbol, quantity, action, "MKT")
-            order_id = response[0].get("order_id") if isinstance(response, list) else response.get("order_id")
-        elif order_type == "LMT" and order_in.limit_price is not None:
-            response = webapi.place_order(symbol, quantity, action, "LMT", price=order_in.limit_price)
-            order_id = response[0].get("order_id") if isinstance(response, list) else response.get("order_id")
+    try:
+        if app_settings.use_ibkr_webapi and webapi:
+            if order_type == "MKT":
+                response = webapi.place_order(symbol, quantity, action, "MKT")
+                order_id = response[0].get("order_id") if isinstance(response, list) else response.get("order_id")
+            elif order_type == "LMT" and order_in.limit_price is not None:
+                response = webapi.place_order(symbol, quantity, action, "LMT", price=order_in.limit_price)
+                order_id = response[0].get("order_id") if isinstance(response, list) else response.get("order_id")
+            else:
+                raise HTTPException(status_code=400, detail="Order type not supported via Web API")
         else:
-            raise HTTPException(status_code=400, detail="Order type not supported via Web API")
-    else:
-        if order_type == "MKT":
-            order_id = ibkr.place_market_order(symbol, quantity, action, contract_params)
-        elif order_type == "LMT" and order_in.limit_price is not None:
-            order_id = ibkr.place_limit_order(symbol, quantity, action, order_in.limit_price, contract_params)
-        elif order_type == "STP" and order_in.stop_price is not None:
-            order_id = ibkr.place_stop_order(symbol, quantity, action, order_in.stop_price, contract_params)
-        elif order_type == "BRACKET" and order_in.take_profit and order_in.stop_loss:
-            ibkr.place_bracket_order(
-                symbol,
-                quantity,
-                action,
-                order_in.take_profit,
-                order_in.stop_loss,
-                contract_params,
-            )
-        else:
-            raise HTTPException(status_code=400, detail="Invalid order parameters")
+            if order_type == "MKT":
+                order_id = ibkr.place_market_order(symbol, quantity, action, contract_params)
+            elif order_type == "LMT" and order_in.limit_price is not None:
+                order_id = ibkr.place_limit_order(symbol, quantity, action, order_in.limit_price, contract_params)
+            elif order_type == "STP" and order_in.stop_price is not None:
+                order_id = ibkr.place_stop_order(symbol, quantity, action, order_in.stop_price, contract_params)
+            elif order_type == "BRACKET" and order_in.take_profit and order_in.stop_loss:
+                ibkr.place_bracket_order(
+                    symbol,
+                    quantity,
+                    action,
+                    order_in.take_profit,
+                    order_in.stop_loss,
+                    contract_params,
+                )
+            else:
+                raise HTTPException(status_code=400, detail="Invalid order parameters")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Broker error placing order for {symbol}: {e}")
+        raise HTTPException(status_code=503, detail=f"Broker error: {str(e)}")
 
     logger.info(
         "order_submitted symbol=%s action=%s qty=%s type=%s order_id=%s user=%s",

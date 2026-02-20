@@ -318,7 +318,8 @@ class AutonomousEngine:
                                 position_atr[symbol] = atr_series.iloc[-1] if len(atr_series) > 0 else current_price * 0.02
                             else:
                                 position_atr[symbol] = current_price * 0.02  # Default 2% of price
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"ATR calculation failed for {symbol}, using 2% default: {e}")
                             position_atr[symbol] = current_price * 0.02
 
                     current_atr = position_atr.get(symbol, current_price * 0.02)
@@ -541,7 +542,8 @@ class AutonomousEngine:
                                     "headline": title,
                                 }
                                 break
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to fetch news catalyst for {symbol}: {e}")
                 continue
 
         # Update screener with catalysts
@@ -724,7 +726,8 @@ class AutonomousEngine:
                             atr_value = atr_series.iloc[-1] if len(atr_series) > 0 else price * 0.02
                         else:
                             atr_value = price * 0.02  # Default 2% of price
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"ATR calculation failed for {symbol} in trade execution, using 2% default: {e}")
                         atr_value = price * 0.02
 
                 # ATR-based position sizing (Warrior Trading formula)
@@ -763,6 +766,15 @@ class AutonomousEngine:
 
                 order = self.broker.place_market_order(symbol, quantity, action)
 
+                # Validate order result
+                if not order or order.get("error"):
+                    error_msg = order.get("error", "Unknown error") if order else "No order response"
+                    logger.error(f"Order failed for {symbol}: {error_msg}")
+                    self._add_decision("ERROR", f"Order failed for {symbol}: {error_msg}", "ERROR", {})
+                    continue
+
+                order_id = order.get("orderId") or order.get("order_id") or order.get("id")
+
                 self._add_decision(
                     "TRADE",
                     f"{action} {quantity} {symbol} @ ${price:.2f}",
@@ -772,7 +784,7 @@ class AutonomousEngine:
                         "confidence": adjusted_confidence,
                         "raw_confidence": confidence,
                         "num_strategies": num_strategies,
-                        "order_id": order.get("orderId"),
+                        "order_id": order_id,
                         "atr": atr_value,
                         "stop_loss": stop_loss_price,
                         "take_profit": take_profit_price,
@@ -812,6 +824,15 @@ class AutonomousEngine:
 
             order = self.broker.place_market_order(symbol, abs(quantity), "SELL" if quantity > 0 else "BUY")
 
+            # Validate order result
+            if not order or order.get("error"):
+                error_msg = order.get("error", "Unknown error") if order else "No order response"
+                logger.error(f"Close order failed for {symbol}: {error_msg}")
+                self._add_decision("ERROR", f"Close order failed for {symbol}: {error_msg}", "ERROR", {})
+                return
+
+            order_id = order.get("orderId") or order.get("order_id") or order.get("id")
+
             self._add_decision(
                 "CLOSE",
                 f"Closed {symbol}: {reason}",
@@ -819,12 +840,13 @@ class AutonomousEngine:
                 {
                     "quantity": quantity,
                     "price": current_price,
-                    "order_id": order.get("orderId")
+                    "order_id": order_id
                 }
             )
 
         except Exception as e:
             logger.error(f"Error closing {symbol}: {e}")
+            self._add_decision("ERROR", f"Failed to close {symbol}: {str(e)}", "ERROR", {})
 
     def _should_trade_now(self) -> bool:
         """Check if we should trade at this time"""
