@@ -132,6 +132,7 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
         symbols = [s.strip().upper() for s in symbols_param.split(",") if s.strip()][:50]
     else:
         # Get ALL symbols from autonomous engine if available (scanner results + evaluations)
+        symbols = []
         engine = _get_autonomous_engine()
         if engine:
             # Combine scanner results (passed) with top evaluations for complete view
@@ -140,7 +141,6 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
             opp_symbols = [o.get("symbol") for o in (engine.last_analyzed_opportunities or []) if o.get("symbol")]
             # Combine and deduplicate, keeping order (scanner first, then opportunities)
             seen = set()
-            symbols = []
             for sym in scanner_symbols + opp_symbols:
                 if sym and sym not in seen:
                     symbols.append(sym)
