@@ -4,6 +4,7 @@ from typing import Dict, List, Set, Any, Optional
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 from market.fake_stream import DEFAULT_SYMBOLS, FakeMarketDataStream
 
@@ -12,24 +13,72 @@ logger = logging.getLogger("websocket_market_data")
 
 FAKE_STREAM = FakeMarketDataStream(DEFAULT_SYMBOLS)
 
-# Connection manager for broadcasting updates
+# Heartbeat interval in seconds - must be less than Render's 55s idle timeout
+HEARTBEAT_INTERVAL = 30
+
+
 class ConnectionManager:
+    """
+    Manages WebSocket connections with heartbeat support.
+    Prevents connection drops due to idle timeouts.
+    """
+
     def __init__(self):
         self.active_connections: Dict[str, Set[WebSocket]] = {}
         self.symbol_subscriptions: Dict[WebSocket, Set[str]] = {}
+        self._heartbeat_tasks: Dict[WebSocket, asyncio.Task] = {}
 
-    async def connect(self, websocket: WebSocket, channel: str):
-        await websocket.accept()
-        if channel not in self.active_connections:
-            self.active_connections[channel] = set()
-        self.active_connections[channel].add(websocket)
-        self.symbol_subscriptions[websocket] = set()
+    async def connect(self, websocket: WebSocket, channel: str) -> bool:
+        """Connect and start heartbeat. Returns True if successful."""
+        try:
+            await websocket.accept()
+            if channel not in self.active_connections:
+                self.active_connections[channel] = set()
+            self.active_connections[channel].add(websocket)
+            self.symbol_subscriptions[websocket] = set()
+
+            # Start heartbeat task for this connection
+            self._heartbeat_tasks[websocket] = asyncio.create_task(
+                self._heartbeat(websocket, channel)
+            )
+            logger.info(f"WebSocket connected to channel: {channel}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to accept WebSocket connection: {e}")
+            return False
+
+    async def _heartbeat(self, websocket: WebSocket, channel: str):
+        """Send periodic pings to keep connection alive."""
+        try:
+            while True:
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                if websocket.client_state == WebSocketState.CONNECTED:
+                    try:
+                        # Send ping frame (WebSocket protocol level)
+                        await websocket.send_json({
+                            "type": "ping",
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                    except Exception as e:
+                        logger.warning(f"Heartbeat failed for {channel}: {e}")
+                        break
+                else:
+                    break
+        except asyncio.CancelledError:
+            pass  # Task cancelled during shutdown
 
     def disconnect(self, websocket: WebSocket, channel: str):
+        """Clean up connection and cancel heartbeat."""
+        # Cancel heartbeat task
+        if websocket in self._heartbeat_tasks:
+            self._heartbeat_tasks[websocket].cancel()
+            del self._heartbeat_tasks[websocket]
+
         if channel in self.active_connections:
             self.active_connections[channel].discard(websocket)
         if websocket in self.symbol_subscriptions:
             del self.symbol_subscriptions[websocket]
+        logger.info(f"WebSocket disconnected from channel: {channel}")
 
     def subscribe_symbols(self, websocket: WebSocket, symbols: List[str]):
         if websocket in self.symbol_subscriptions:
@@ -37,12 +86,32 @@ class ConnectionManager:
 
     async def broadcast(self, channel: str, message: dict):
         if channel in self.active_connections:
+            disconnected = []
             for connection in list(self.active_connections[channel]):
                 try:
-                    await connection.send_json(message)
+                    if connection.client_state == WebSocketState.CONNECTED:
+                        await connection.send_json(message)
+                    else:
+                        disconnected.append(connection)
                 except Exception as e:
-                    logger.debug(f"Removing disconnected client from {channel}: {e}")
-                    self.active_connections[channel].discard(connection)
+                    logger.warning(f"Broadcast failed, removing client from {channel}: {e}")
+                    disconnected.append(connection)
+
+            # Clean up disconnected clients
+            for conn in disconnected:
+                self.disconnect(conn, channel)
+
+    async def shutdown(self):
+        """Gracefully close all connections."""
+        logger.info("Shutting down WebSocket connections...")
+        for channel, connections in list(self.active_connections.items()):
+            for conn in list(connections):
+                try:
+                    await conn.close(code=1001, reason="Server shutting down")
+                except Exception as e:
+                    logger.debug(f"Error closing connection: {e}")
+                self.disconnect(conn, channel)
+        logger.info("All WebSocket connections closed")
 
 
 manager = ConnectionManager()
@@ -58,18 +127,15 @@ def _get_autonomous_engine():
     return getattr(app.state, "autonomous_engine", None)
 
 
-async def _stream(websocket: WebSocket, channel: str) -> None:
-    await websocket.accept()
+async def _send_with_heartbeat(websocket: WebSocket, message: dict, channel: str):
+    """Send message with automatic heartbeat management."""
     try:
-        while True:
-            message = {
-                "channel": channel,
-                "timestamp": datetime.utcnow().isoformat(),
-            }
+        if websocket.client_state == WebSocketState.CONNECTED:
             await websocket.send_json(message)
-            await asyncio.sleep(1)
-    except WebSocketDisconnect:
-        return
+            return True
+    except Exception as e:
+        logger.error(f"Send failed on {channel}: {e}")
+    return False
 
 
 @router.websocket("/ws/market-data")
@@ -84,8 +150,11 @@ async def market_data_ws(websocket: WebSocket) -> None:
     interval = float(websocket.query_params.get("interval", "0.2"))  # 200ms default
     interval = max(0.1, min(interval, 2.0))  # Clamp between 100ms and 2s
 
-    # Note: Not using ConnectionManager here, so we call accept() directly
-    await websocket.accept()
+    channel = "market-data"
+    if not await manager.connect(websocket, channel):
+        return
+
+    last_heartbeat = datetime.utcnow()
     try:
         while True:
             provider = _get_market_provider()
@@ -107,24 +176,31 @@ async def market_data_ws(websocket: WebSocket) -> None:
 
             # Send all updates in a single message for efficiency
             message = {
-                "channel": "market-data",
+                "channel": channel,
                 "type": "batch",
                 "data": batch,
                 "symbols_requested": len(symbols),
                 "symbols_with_data": len(batch),
                 "timestamp": datetime.utcnow().isoformat(),
             }
-            await websocket.send_json(message)
+
+            if not await _send_with_heartbeat(websocket, message, channel):
+                break
+
             await asyncio.sleep(interval)
     except WebSocketDisconnect:
-        return
+        logger.info(f"Client disconnected from {channel}")
+    except Exception as e:
+        logger.error(f"Error in {channel} WebSocket: {e}")
+    finally:
+        manager.disconnect(websocket, channel)
 
 
 @router.websocket("/ws/live-ticker")
 async def live_ticker_ws(websocket: WebSocket) -> None:
     """
     High-frequency live ticker feed for day trading.
-    Streams real-time prices at 100ms intervals for selected symbols.
+    Streams real-time prices at 1s intervals for selected symbols.
     Uses REAL market data only - no fake prices.
     """
     symbols_param = websocket.query_params.get("symbols")
@@ -151,14 +227,16 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
             # Default popular day trading stocks
             symbols = ["AAPL", "TSLA", "NVDA", "AMD", "META", "MSFT", "GOOGL", "AMZN", "SPY", "QQQ"]
 
-    await websocket.accept()
+    channel = "live-ticker"
+    if not await manager.connect(websocket, channel):
+        return
 
     # Send initial subscription confirmation
     await websocket.send_json({
-        "channel": "live-ticker",
+        "channel": channel,
         "type": "subscribed",
         "symbols": symbols,
-        "interval_ms": 100,
+        "interval_ms": 1000,
         "timestamp": datetime.utcnow().isoformat(),
     })
 
@@ -251,19 +329,26 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
             if not tickers:
                 data_source = "unavailable"
 
-            await websocket.send_json({
-                "channel": "live-ticker",
+            message = {
+                "channel": channel,
                 "type": "update",
                 "data": tickers,
                 "data_source": data_source,
                 "symbols_requested": len(symbols),
                 "symbols_with_data": len(tickers),
                 "timestamp": datetime.utcnow().isoformat(),
-            })
+            }
+
+            if not await _send_with_heartbeat(websocket, message, channel):
+                break
 
             await asyncio.sleep(1.0)  # 1 second between updates (Yahoo has rate limits)
     except WebSocketDisconnect:
-        return
+        logger.info(f"Client disconnected from {channel}")
+    except Exception as e:
+        logger.error(f"Error in {channel} WebSocket: {e}")
+    finally:
+        manager.disconnect(websocket, channel)
 
 
 @router.websocket("/ws/bot-activity")
@@ -272,10 +357,12 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
     Real-time bot activity stream showing autonomous engine decisions.
     Streams: current status, scan results, trade decisions, position updates
     """
-    await websocket.accept()
+    channel = "bot-activity"
+    if not await manager.connect(websocket, channel):
+        return
 
     await websocket.send_json({
-        "channel": "bot-activity",
+        "channel": channel,
         "type": "connected",
         "timestamp": datetime.utcnow().isoformat(),
     })
@@ -293,7 +380,7 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
 
                 # Build activity update with detailed strategy data for "Under the Hood" visualization
                 activity = {
-                    "channel": "bot-activity",
+                    "channel": channel,
                     "type": "status",
                     "data": {
                         "running": engine.running,
@@ -378,38 +465,81 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                     activity["data"]["new_decisions"] = new_decisions
                     last_decision_count = current_decision_count
 
-                await websocket.send_json(activity)
+                if not await _send_with_heartbeat(websocket, activity, channel):
+                    break
             else:
-                await websocket.send_json({
-                    "channel": "bot-activity",
+                message = {
+                    "channel": channel,
                     "type": "error",
                     "message": "Autonomous engine not available",
                     "timestamp": datetime.utcnow().isoformat(),
-                })
+                }
+                if not await _send_with_heartbeat(websocket, message, channel):
+                    break
 
-            await asyncio.sleep(0.1)  # 100ms for real-time bot activity updates
+            await asyncio.sleep(0.5)  # 500ms for bot activity updates (reduced from 100ms)
     except WebSocketDisconnect:
-        return
+        logger.info(f"Client disconnected from {channel}")
+    except Exception as e:
+        logger.error(f"Error in {channel} WebSocket: {e}")
+    finally:
+        manager.disconnect(websocket, channel)
 
 
 @router.websocket("/ws/orders")
 async def orders_ws(websocket: WebSocket) -> None:
-    await _stream(websocket, "orders")
+    channel = "orders"
+    if not await manager.connect(websocket, channel):
+        return
+    try:
+        while True:
+            message = {
+                "channel": channel,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            if not await _send_with_heartbeat(websocket, message, channel):
+                break
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        logger.info(f"Client disconnected from {channel}")
+    except Exception as e:
+        logger.error(f"Error in {channel} WebSocket: {e}")
+    finally:
+        manager.disconnect(websocket, channel)
 
 
 @router.websocket("/ws/account-updates")
 async def account_updates_ws(websocket: WebSocket) -> None:
-    await _stream(websocket, "account-updates")
+    channel = "account-updates"
+    if not await manager.connect(websocket, channel):
+        return
+    try:
+        while True:
+            message = {
+                "channel": channel,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            if not await _send_with_heartbeat(websocket, message, channel):
+                break
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        logger.info(f"Client disconnected from {channel}")
+    except Exception as e:
+        logger.error(f"Error in {channel} WebSocket: {e}")
+    finally:
+        manager.disconnect(websocket, channel)
 
 
 @router.websocket("/ws/order-book")
 async def order_book_ws(websocket: WebSocket) -> None:
     symbol = (websocket.query_params.get("symbol") or "AAPL").upper()
-    await websocket.accept()
+    channel = "order-book"
+    if not await manager.connect(websocket, channel):
+        return
     try:
         while True:
             message = {
-                "channel": "order-book",
+                "channel": channel,
                 "symbol": symbol,
                 "status": "UNAVAILABLE",
                 "reason": "Free data source does not provide Level 2 order book",
@@ -419,20 +549,27 @@ async def order_book_ws(websocket: WebSocket) -> None:
                 "mid": None,
                 "spread": None,
             }
-            await websocket.send_json(message)
+            if not await _send_with_heartbeat(websocket, message, channel):
+                break
             await asyncio.sleep(2)
     except WebSocketDisconnect:
-        return
+        logger.info(f"Client disconnected from {channel}")
+    except Exception as e:
+        logger.error(f"Error in {channel} WebSocket: {e}")
+    finally:
+        manager.disconnect(websocket, channel)
 
 
 @router.websocket("/ws/time-sales")
 async def time_sales_ws(websocket: WebSocket) -> None:
     symbol = (websocket.query_params.get("symbol") or "AAPL").upper()
-    await websocket.accept()
+    channel = "time-sales"
+    if not await manager.connect(websocket, channel):
+        return
     try:
         while True:
             message = {
-                "channel": "time-sales",
+                "channel": channel,
                 "symbol": symbol,
                 "status": "UNAVAILABLE",
                 "reason": "Free data source does not provide time & sales tape",
@@ -441,7 +578,43 @@ async def time_sales_ws(websocket: WebSocket) -> None:
                 "size": None,
                 "side": None,
             }
-            await websocket.send_json(message)
+            if not await _send_with_heartbeat(websocket, message, channel):
+                break
             await asyncio.sleep(2)
     except WebSocketDisconnect:
+        logger.info(f"Client disconnected from {channel}")
+    except Exception as e:
+        logger.error(f"Error in {channel} WebSocket: {e}")
+    finally:
+        manager.disconnect(websocket, channel)
+
+
+# Health check endpoint for WebSocket connections
+@router.websocket("/ws/health")
+async def health_ws(websocket: WebSocket) -> None:
+    """WebSocket health check - responds to pings immediately."""
+    channel = "health"
+    if not await manager.connect(websocket, channel):
         return
+    try:
+        while True:
+            # Wait for client message (ping)
+            try:
+                data = await asyncio.wait_for(websocket.receive_json(), timeout=60)
+                if data.get("type") == "ping":
+                    await websocket.send_json({
+                        "type": "pong",
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+            except asyncio.TimeoutError:
+                # Send keepalive ping if no message received
+                await websocket.send_json({
+                    "type": "ping",
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+    except WebSocketDisconnect:
+        logger.info(f"Client disconnected from {channel}")
+    except Exception as e:
+        logger.error(f"Error in {channel} WebSocket: {e}")
+    finally:
+        manager.disconnect(websocket, channel)
