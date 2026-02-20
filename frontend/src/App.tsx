@@ -58,6 +58,10 @@ const NAV = [
   { label: "Settings", value: 4 }
 ];
 
+// Backend wake-up configuration for Render free tier
+const MAX_WAKE_RETRIES = 6; // Try 6 times
+const WAKE_RETRY_INTERVAL = 10000; // 10 seconds between retries (total ~60s)
+
 const App = () => {
   const [tab, setTab] = useState(0);
   const [authRequired, setAuthRequired] = useState(false);
@@ -87,6 +91,8 @@ const App = () => {
     severity: "info"
   });
   const [backendConnected, setBackendConnected] = useState(false);
+  const [isWakingUp, setIsWakingUp] = useState(true);
+  const [wakeAttempt, setWakeAttempt] = useState(0);
 
   useEffect(() => {
     const logoutHandler = () => {
@@ -105,26 +111,55 @@ const App = () => {
     };
   }, []);
 
-  // Auto-login on mount if no token
+  // Auto-login on mount with retry logic for Render cold starts
   useEffect(() => {
     const token = localStorage.getItem("zella_token");
     if (token) {
       setIsAuthenticated(true);
+      setIsWakingUp(false);
+      setBackendConnected(true);
       return;
     }
-    autoLogin()
-      .then((data) => {
+
+    let cancelled = false;
+    let attempt = 0;
+
+    const tryConnect = async () => {
+      if (cancelled) return;
+
+      attempt++;
+      setWakeAttempt(attempt);
+
+      try {
+        const data = await autoLogin();
+        if (cancelled) return;
+
         if (data?.access_token) {
           localStorage.setItem("zella_token", data.access_token);
           setIsAuthenticated(true);
           setBackendConnected(true);
+          setIsWakingUp(false);
           window.dispatchEvent(new CustomEvent("auth:login"));
         }
-      })
-      .catch(() => {
-        // Login failed - backend may be down, defaults are already set
-        setBackendConnected(false);
-      });
+      } catch {
+        if (cancelled) return;
+
+        if (attempt < MAX_WAKE_RETRIES) {
+          // Retry after interval
+          setTimeout(tryConnect, WAKE_RETRY_INTERVAL);
+        } else {
+          // All retries exhausted
+          setBackendConnected(false);
+          setIsWakingUp(false);
+        }
+      }
+    };
+
+    tryConnect();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Re-authenticate when auth is required (401 response)
@@ -286,7 +321,38 @@ const App = () => {
       </Box>
 
       <Container maxWidth="xl" sx={{ mt: 4 }}>
-        {!backendConnected && isAuthenticated && (
+        {isWakingUp && (
+          <Box
+            sx={{
+              mb: 2,
+              p: 2,
+              borderRadius: 3,
+              border: "1px solid rgba(59, 130, 246, 0.3)",
+              background: "rgba(59, 130, 246, 0.1)"
+            }}
+          >
+            <Stack direction="row" alignItems="center" spacing={2}>
+              <Box
+                sx={{
+                  width: 20,
+                  height: 20,
+                  border: "2px solid rgba(59, 130, 246, 0.3)",
+                  borderTop: "2px solid #3b82f6",
+                  borderRadius: "50%",
+                  animation: "spin 1s linear infinite",
+                  "@keyframes spin": {
+                    "0%": { transform: "rotate(0deg)" },
+                    "100%": { transform: "rotate(360deg)" }
+                  }
+                }}
+              />
+              <Typography variant="body2">
+                Waking up backend server... This may take up to 60 seconds. (Attempt {wakeAttempt}/{MAX_WAKE_RETRIES})
+              </Typography>
+            </Stack>
+          </Box>
+        )}
+        {!backendConnected && !isWakingUp && (
           <Box
             sx={{
               mb: 2,
@@ -299,8 +365,16 @@ const App = () => {
             <Typography variant="body2" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               <span>⚠️</span>
               <span>
-                Backend not connected - Running in demo mode. Check that your backend is running at the configured URL.
+                Backend not connected - Running in demo mode.
               </span>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => window.location.reload()}
+                sx={{ ml: 1, textTransform: "none", fontSize: "0.75rem" }}
+              >
+                Retry
+              </Button>
             </Typography>
           </Box>
         )}
