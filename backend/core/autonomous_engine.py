@@ -580,7 +580,11 @@ class AutonomousEngine:
                                 "strategy": strat_name,
                                 "action": signal.get("action"),
                                 "confidence": signal.get("confidence", 0.5),
-                                "reason": signal.get("reason", "")
+                                "reason": signal.get("reason", ""),
+                                # Include indicator data for UI visualization
+                                "indicators": signal.get("indicators", {}),
+                                "stop_loss": signal.get("stop_loss"),
+                                "take_profit": signal.get("take_profit"),
                             })
                     except Exception as e:
                         logger.debug(f"Strategy {strat_name} failed for {symbol}: {e}")
@@ -599,6 +603,7 @@ class AutonomousEngine:
                             "num_strategies": len(buy_signals),
                             "confidence": avg_confidence,
                             "strategies": [s["strategy"] for s in buy_signals],
+                            "strategy_signals": buy_signals,  # Include full signal data with indicators
                             "reasoning": " | ".join([f"{s['strategy']}: {s['reason']}" for s in buy_signals[:3]])
                         })
                     elif sell_signals:
@@ -609,6 +614,7 @@ class AutonomousEngine:
                             "num_strategies": len(sell_signals),
                             "confidence": avg_confidence,
                             "strategies": [s["strategy"] for s in sell_signals],
+                            "strategy_signals": sell_signals,  # Include full signal data with indicators
                             "reasoning": " | ".join([f"{s['strategy']}: {s['reason']}" for s in sell_signals[:3]])
                         })
 
@@ -623,6 +629,8 @@ class AutonomousEngine:
                 "num_strategies": a.get("num_strategies", 0),
                 "confidence": round(a.get("confidence", 0), 3),
                 "strategies": a.get("strategies", []),
+                # Include full strategy signal data with indicators for Under The Hood visualization
+                "strategy_signals": a.get("strategy_signals", []),
                 "reasoning": a.get("reasoning", ""),
                 "ml_score": round(a.get("ml_score", 0), 3),
                 "momentum_score": round(a.get("momentum_score", 0), 3),
