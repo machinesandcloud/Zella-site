@@ -19,7 +19,6 @@ import {
   Divider,
   ToggleButton,
   ToggleButtonGroup,
-  Collapse,
   IconButton
 } from "@mui/material";
 import {
@@ -88,6 +87,16 @@ interface AnalyzedOpportunity {
   pattern: string | null;
 }
 
+interface FilterSummary {
+  total: number;
+  passed: number;
+  failed_data: number;
+  failed_volume: number;
+  failed_price: number;
+  failed_volatility: number;
+  failed_rvol: number;
+}
+
 interface BotActivityMessage {
   channel: string;
   type: string;
@@ -95,15 +104,7 @@ interface BotActivityMessage {
     analyzed_opportunities: AnalyzedOpportunity[];
     scanner_results: ScannerResult[];
     all_evaluations: StockEvaluation[];
-    filter_summary?: {
-      total: number;
-      passed: number;
-      failed_data: number;
-      failed_volume: number;
-      failed_price: number;
-      failed_volatility: number;
-      failed_rvol: number;
-    };
+    filter_summary?: FilterSummary;
   };
   timestamp: string;
 }
@@ -114,12 +115,12 @@ const BotStockAnalysisLive = () => {
   const [evaluations, setEvaluations] = useState<StockEvaluation[]>([]);
   const [scannerResults, setScannerResults] = useState<ScannerResult[]>([]);
   const [opportunities, setOpportunities] = useState<AnalyzedOpportunity[]>([]);
-  const [filterSummary, setFilterSummary] = useState<BotActivityMessage["activity"]["filter_summary"] | null>(null);
+  const [filterSummary, setFilterSummary] = useState<FilterSummary | null>(null);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"leveraged" | "passed" | "all">("leveraged");
   const [showAllEvaluations, setShowAllEvaluations] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getWebSocketUrl = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -193,22 +194,7 @@ const BotStockAnalysisLive = () => {
   }, []);
 
   const passedCount = evaluations.filter(e => e.passed).length;
-  const failedCount = evaluations.filter(e => !e.passed).length;
   const leveragedCount = opportunities.length;
-
-  // Get display data based on view mode
-  const getDisplayData = () => {
-    switch (viewMode) {
-      case "leveraged":
-        return opportunities;
-      case "passed":
-        return scannerResults;
-      case "all":
-        return evaluations;
-      default:
-        return [];
-    }
-  };
 
   const formatVolume = (volume: number) => {
     if (volume >= 1000000) return `${(volume / 1000000).toFixed(1)}M`;
