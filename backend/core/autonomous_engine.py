@@ -416,8 +416,9 @@ class AutonomousEngine:
 
             market_data: Dict[str, pd.DataFrame] = {}
 
-            # Scan more symbols during power hour
-            scan_limit = 150 if in_power_hour else 100
+            # Scan ALL symbols - day traders need full market visibility
+            # Previous limit of 100-150 was missing 70% of opportunities
+            scan_limit = len(universe)  # Scan entire universe
 
             for symbol in universe[:scan_limit]:
                 try:

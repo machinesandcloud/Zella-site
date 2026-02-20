@@ -24,22 +24,31 @@ logger = logging.getLogger("market_screener")
 
 # Low float stocks database (in millions of shares)
 # These are stocks known for low float and high volatility
-# In production, this should be fetched from a data provider
+# Updated 2024 - removed delisted stocks, added current momentum plays
+# In production, this should be fetched from a data provider dynamically
 LOW_FLOAT_STOCKS = {
-    # Penny stocks and small caps with low float
-    "GME": 75, "AMC": 85, "BBBY": 60, "BB": 40, "CLOV": 35,
-    "WISH": 45, "WKHS": 25, "RIDE": 30, "SKLZ": 40, "SPCE": 50,
-    # Biotech (often low float)
+    # Popular day trading stocks with known low float
+    "GME": 75, "AMC": 85, "BB": 40, "CLOV": 35,
+    "WKHS": 25, "RIDE": 30, "SPCE": 50, "OPEN": 60,
+    # Biotech (often low float, high volatility)
     "MRNA": 95, "BNTX": 35, "NVAX": 45, "VXRT": 30, "INO": 40,
-    # Recent IPOs and SPACs (typically low float)
-    "RIVN": 90, "LCID": 85, "IONQ": 25, "RKLB": 30, "ASTR": 20,
+    "SAVA": 35, "AGEN": 30, "APLS": 45, "CRSP": 40, "EDIT": 35,
+    # EV & Clean Energy (popular momentum plays)
+    "RIVN": 90, "LCID": 85, "NIO": 80, "XPEV": 60, "LI": 70,
+    "FFIE": 20, "MULN": 15, "GOEV": 25, "FSR": 30, "BLNK": 35,
+    # Tech SPACs & Recent IPOs
+    "IONQ": 25, "RKLB": 30, "JOBY": 35, "LILM": 25, "ASTS": 30,
     # Cannabis
     "TLRY": 65, "CGC": 55, "SNDL": 80, "ACB": 45,
     # Crypto-related
     "COIN": 85, "MARA": 50, "RIOT": 45, "CLSK": 35, "MSTR": 40,
-    # High volume large caps (not low float, but tradeable)
+    "HUT": 30, "BITF": 25, "CORZ": 20,
+    # AI & Tech momentum plays
+    "PLTR": 80, "AI": 50, "SOUN": 25, "BBAI": 20, "UPST": 45,
+    "PATH": 40, "S": 35, "CFLT": 30,
+    # High volume large caps (higher float but very liquid)
     "AAPL": 500, "MSFT": 400, "NVDA": 350, "TSLA": 300, "AMZN": 450,
-    "AMD": 200, "META": 380, "GOOGL": 420,
+    "AMD": 200, "META": 380, "GOOGL": 420, "NFLX": 200, "GOOG": 420,
 }
 
 
@@ -86,6 +95,47 @@ class MarketScreener:
         """Update news catalyst data for symbols"""
         self.news_catalysts = catalysts
 
+    def calculate_gap(self, df: pd.DataFrame) -> Dict[str, float]:
+        """
+        Calculate overnight gap - KEY day trading indicator
+
+        Gap = (Today's Open - Yesterday's Close) / Yesterday's Close * 100
+
+        Day traders look for:
+        - Gap up 2%+ = bullish momentum
+        - Gap down 2%+ = bearish momentum or short opportunity
+        - Gap 5%+ = significant move, high priority
+        """
+        if len(df) < 2:
+            return {"gap_percent": 0.0, "gap_direction": "FLAT", "is_gapper": False}
+
+        # Get today's first bar and previous day's last bar
+        today_open = float(df["open"].iloc[-1])
+        prev_close = float(df["close"].iloc[-2])
+
+        if prev_close == 0:
+            return {"gap_percent": 0.0, "gap_direction": "FLAT", "is_gapper": False}
+
+        gap_percent = ((today_open - prev_close) / prev_close) * 100
+
+        # Determine gap direction and significance
+        if gap_percent >= 2.0:
+            direction = "GAP_UP"
+            is_gapper = True
+        elif gap_percent <= -2.0:
+            direction = "GAP_DOWN"
+            is_gapper = True
+        else:
+            direction = "FLAT"
+            is_gapper = False
+
+        return {
+            "gap_percent": round(gap_percent, 2),
+            "gap_direction": direction,
+            "is_gapper": is_gapper,
+            "is_significant_gap": abs(gap_percent) >= 5.0  # 5%+ is very significant
+        }
+
     def get_float(self, symbol: str) -> Optional[float]:
         """
         Get float for a symbol (in millions of shares)
@@ -125,12 +175,18 @@ class MarketScreener:
         last_volume = float(df["volume"].iloc[-1])
         relative_volume = last_volume / avg_volume if avg_volume else 0.0
 
+        # Calculate gap - KEY day trading indicator
+        gap_info = self.calculate_gap(df)
+
         # Store basic data
         result["data"]["price"] = round(last_price, 2)
         result["data"]["avg_volume"] = int(avg_volume)
         result["data"]["last_volume"] = int(last_volume)
         result["data"]["relative_volume"] = round(relative_volume, 2)
         result["data"]["volatility"] = round(features.get("volatility", 0), 4)
+        result["data"]["gap_percent"] = gap_info["gap_percent"]
+        result["data"]["gap_direction"] = gap_info["gap_direction"]
+        result["data"]["is_gapper"] = gap_info["is_gapper"]
 
         # Volume Filter
         vol_passed = avg_volume >= self.min_avg_volume
@@ -168,15 +224,22 @@ class MarketScreener:
             result["rejection_reason"] = f"Low volatility ({features['volatility']:.4f} < {self.min_volatility})"
             return result
 
-        # Relative Volume Filter
+        # Relative Volume Filter (gappers get a pass - they're hot plays even with normal volume)
         rvol_passed = relative_volume >= self.min_relative_volume
+        # Significant gappers (5%+) bypass relative volume requirement
+        # This is a KEY day trading principle - gapping stocks are in play
+        gapper_bypass = gap_info.get("is_significant_gap", False)
+        effective_rvol_passed = rvol_passed or gapper_bypass
+
         result["filters"]["relative_volume"] = {
-            "passed": rvol_passed,
+            "passed": effective_rvol_passed,
             "value": round(relative_volume, 2),
             "threshold": self.min_relative_volume,
-            "reason": f"RVol {relative_volume:.1f}x {'≥' if rvol_passed else '<'} {self.min_relative_volume}x"
+            "gapper_bypass": gapper_bypass,
+            "reason": f"RVol {relative_volume:.1f}x {'≥' if rvol_passed else '<'} {self.min_relative_volume}x" +
+                      (f" (GAPPER BYPASS: {gap_info['gap_percent']}%)" if gapper_bypass and not rvol_passed else "")
         }
-        if not rvol_passed:
+        if not effective_rvol_passed:
             result["rejection_reason"] = f"Low relative volume ({relative_volume:.1f}x < {self.min_relative_volume}x)"
             return result
 
@@ -233,10 +296,26 @@ class MarketScreener:
             current_minute = datetime.now().minute
         time_multiplier = power_hour_multiplier(current_hour, current_minute) if self.enable_power_hour_boost else 1.0
 
+        # Gap Score - KEY day trading indicator
+        # Stocks that gap significantly are "in play" and get priority
+        gap_score = 0.0
+        gap_abs = abs(gap_info["gap_percent"])
+        if gap_abs >= 10.0:
+            gap_score = 0.35  # Massive gap - very high priority
+        elif gap_abs >= 5.0:
+            gap_score = 0.25  # Significant gap
+        elif gap_abs >= 2.0:
+            gap_score = 0.15  # Notable gap
+        elif gap_abs >= 1.0:
+            gap_score = 0.05  # Small gap
+
+        # Adjusted scoring with gap as a factor
+        # ML: 25%, Momentum: 15%, Gap: 15%, Float: 10%, Pattern: 15%, News: 10%, ATR: 10%
         base_score = (
-            (ml_score * 0.30) +
-            (momentum_score * 0.20) +
-            (float_score * 0.15) +
+            (ml_score * 0.25) +
+            (momentum_score * 0.15) +
+            (gap_score * 0.15) +
+            (float_score * 0.10) +
             (pattern_score * 0.15) +
             (news_score * 0.10) +
             (atr_score * 0.10)
@@ -253,6 +332,7 @@ class MarketScreener:
         result["scores"] = {
             "ml_score": round(ml_score, 3),
             "momentum_score": round(momentum_score, 4),
+            "gap_score": round(gap_score, 3),
             "float_score": round(float_score, 3),
             "pattern_score": round(pattern_score, 3),
             "news_score": round(news_score, 3),
@@ -314,6 +394,9 @@ class MarketScreener:
         last_volume = float(df["volume"].iloc[-1])
         relative_volume = last_volume / avg_volume if avg_volume else 0.0
 
+        # Calculate gap
+        gap_info = self.calculate_gap(df)
+
         # Basic filters
         if avg_volume < self.min_avg_volume:
             return None
@@ -321,7 +404,8 @@ class MarketScreener:
             return None
         if features["volatility"] < self.min_volatility:
             return None
-        if relative_volume < self.min_relative_volume:
+        # Gappers (5%+) bypass relative volume requirement
+        if relative_volume < self.min_relative_volume and not gap_info.get("is_significant_gap", False):
             return None
 
         # Float filter (Warrior Trading: prefer float < 100M)
@@ -389,12 +473,25 @@ class MarketScreener:
                 current_minute = datetime.now().minute
             time_multiplier = power_hour_multiplier(current_hour, current_minute)
 
-        # Combined Score with Warrior Trading weighting
-        # ML: 30%, Momentum: 20%, Float: 15%, Pattern: 15%, News: 10%, ATR: 10%
+        # Gap Score - KEY day trading indicator
+        gap_score = 0.0
+        gap_abs = abs(gap_info["gap_percent"])
+        if gap_abs >= 10.0:
+            gap_score = 0.35  # Massive gap
+        elif gap_abs >= 5.0:
+            gap_score = 0.25  # Significant gap
+        elif gap_abs >= 2.0:
+            gap_score = 0.15  # Notable gap
+        elif gap_abs >= 1.0:
+            gap_score = 0.05  # Small gap
+
+        # Combined Score with gap included
+        # ML: 25%, Momentum: 15%, Gap: 15%, Float: 10%, Pattern: 15%, News: 10%, ATR: 10%
         base_score = (
-            (ml_score * 0.30) +
-            (momentum_score * 0.20) +
-            (float_score * 0.15) +
+            (ml_score * 0.25) +
+            (momentum_score * 0.15) +
+            (gap_score * 0.15) +
+            (float_score * 0.10) +
             (pattern_score * 0.15) +
             (news_score * 0.10) +
             (atr_score * 0.10)
@@ -421,6 +518,11 @@ class MarketScreener:
             "news_catalyst": news_catalyst,
             "news_score": news_score,
             "time_multiplier": time_multiplier,
+            # Gap fields - KEY day trading indicator
+            "gap_percent": gap_info["gap_percent"],
+            "gap_direction": gap_info["gap_direction"],
+            "gap_score": gap_score,
+            "is_gapper": gap_info["is_gapper"],
         }
 
     def rank(

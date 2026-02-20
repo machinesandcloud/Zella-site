@@ -20,17 +20,17 @@ TOP_500_VOLUME_STOCKS = [
     "TSM", "ASML", "MU", "NXPI", "ON", "MCHP", "MPWR", "SWKS",
     "QRVO", "TER", "ENTG", "ALGM", "SITM", "WOLF", "RMBS", "DIOD",
 
-    # SOCIAL MEDIA & INTERNET
-    "PINS", "SNAP", "TWTR", "MTCH", "BMBL", "YELP", "GRPN", "TRIP",
+    # SOCIAL MEDIA & INTERNET (Updated - removed TWTR/X)
+    "PINS", "SNAP", "RDDT", "MTCH", "BMBL", "YELP", "GRPN", "TRIP",
 
     # FINTECH & PAYMENTS
     "V", "MA", "AXP", "PYPL", "SQ", "COIN", "SOFI", "AFRM", "UPST",
     "LC", "NU", "OPEN", "INTU", "FISV", "FIS", "GPN", "PAGS",
 
-    # BANKS & FINANCIAL
+    # BANKS & FINANCIAL (Updated - removed failed banks)
     "JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "SCHW", "USB",
     "PNC", "TFC", "COF", "BK", "STT", "NTRS", "KEY", "CFG", "HBAN",
-    "RF", "FITB", "MTB", "ZION", "CMA", "WTFC", "SIVB", "PACW",
+    "RF", "FITB", "MTB", "ZION", "CMA", "WTFC", "WAL", "FRC",
 
     # INSURANCE
     "BRK.B", "PGR", "ALL", "TRV", "AIG", "MET", "PRU", "AFL", "HIG",
@@ -109,11 +109,11 @@ TOP_500_VOLUME_STOCKS = [
     # CONSTRUCTION & MATERIALS
     "CAT", "DE", "VMC", "MLM", "NUE", "STLD", "X", "CLF", "MT",
 
-    # POPULAR MEME STOCKS
-    "GME", "AMC", "BB", "BBBY", "CLOV", "WISH", "WKHS", "RIDE",
+    # POPULAR MEME & MOMENTUM STOCKS (Updated - removed delisted)
+    "GME", "AMC", "BB", "CLOV", "WKHS", "RIDE", "FFIE", "MULN",
 
-    # SPACs & HIGH VOLATILITY
-    "SPCE", "OPEN", "SKLZ", "IONQ", "BROS", "RKLB", "ASTR", "ASTS",
+    # SPACs & HIGH VOLATILITY (Updated)
+    "SPCE", "OPEN", "IONQ", "BROS", "RKLB", "ASTS", "JOBY", "LILM",
 
     # INTERNATIONAL ADRs
     "TSM", "ASML", "NIO", "BABA", "PDD", "JD", "BIDU", "SE", "GRAB",
@@ -246,3 +246,52 @@ def get_top_100() -> List[str]:
 def get_top_250() -> List[str]:
     """Get top 250 highest volume stocks"""
     return TOP_500_VOLUME_STOCKS[:250]
+
+
+def get_day_trading_universe() -> List[str]:
+    """
+    Day trading focused universe - stocks popular among active day traders
+
+    Includes:
+    - High liquidity mega caps (always in play)
+    - Popular momentum stocks (biotech, EV, AI)
+    - Leveraged ETFs (for volatility)
+    - Known low float runners
+    - Crypto-related stocks
+    """
+    return [
+        # MEGA CAP TECH (Always liquid, always in play)
+        "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD", "NFLX",
+
+        # POPULAR MOMENTUM PLAYS (Known for big moves)
+        "GME", "AMC", "PLTR", "NIO", "RIVN", "LCID", "COIN", "HOOD", "SOFI",
+        "UPST", "AFRM", "OPEN", "CLOV", "BB", "SPCE", "IONQ",
+
+        # BIOTECH (High volatility, news-driven)
+        "MRNA", "BNTX", "NVAX", "SAVA", "AGEN", "APLS", "CRSP", "EDIT", "NTLA",
+
+        # EV & CLEAN ENERGY
+        "XPEV", "LI", "FSR", "GOEV", "BLNK", "CHPT", "PLUG", "FCEL", "ENPH",
+
+        # AI & TECH MOMENTUM
+        "AI", "SOUN", "BBAI", "PATH", "S", "CFLT", "SNOW", "DDOG", "NET",
+
+        # CRYPTO-RELATED
+        "MARA", "RIOT", "CLSK", "HUT", "BITF", "MSTR",
+
+        # LEVERAGED ETFs (High volatility, day trading favorites)
+        "TQQQ", "SQQQ", "SOXL", "SOXS", "LABU", "LABD", "TNA", "TZA",
+        "UVXY", "VXX", "SPXU", "UPRO", "NUGT", "DUST", "JNUG", "JDST",
+
+        # KEY ETFs (Broad market proxies)
+        "SPY", "QQQ", "IWM", "DIA", "XLF", "XLE", "XLK", "SMH", "XBI",
+
+        # HIGH VOLUME SEMICONDUCTORS
+        "MU", "INTC", "QCOM", "AVGO", "TSM", "ASML",
+
+        # POPULAR OPTIONS PLAYS
+        "BABA", "JD", "PDD", "SE", "SNAP", "PINS", "ROKU", "DKNG",
+
+        # FINTECH
+        "SQ", "PYPL", "NU", "LC",
+    ]
