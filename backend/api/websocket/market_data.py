@@ -282,7 +282,7 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                     "timestamp": datetime.utcnow().isoformat(),
                 })
 
-            await asyncio.sleep(0.5)  # 500ms for bot activity updates
+            await asyncio.sleep(0.1)  # 100ms for real-time bot activity updates
     except WebSocketDisconnect:
         return
 
