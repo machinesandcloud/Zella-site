@@ -262,14 +262,53 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                         "analyzed_opportunities": [
                             {
                                 "symbol": opp.get("symbol"),
-                                "price": opp.get("data", {}).get("price", 0),
+                                "price": opp.get("last_price", 0),
                                 "signals": opp.get("strategy_signals", []),
-                                "final_action": opp.get("action", "HOLD"),
+                                "final_action": opp.get("recommended_action", "HOLD"),
                                 "aggregate_confidence": opp.get("confidence", 0),
+                                "num_strategies": opp.get("num_strategies", 0),
+                                "strategies": opp.get("strategies", []),
                                 "reasoning": opp.get("reasoning", ""),
-                                "data": opp.get("data", {})
+                                "ml_score": opp.get("ml_score", 0),
+                                "momentum_score": opp.get("momentum_score", 0),
+                                "combined_score": opp.get("combined_score", 0),
+                                "relative_volume": opp.get("relative_volume", 0),
+                                "atr": opp.get("atr", 0),
+                                "pattern": opp.get("pattern"),
                             }
-                            for opp in (engine.last_analyzed_opportunities or [])[:10]
+                            for opp in (engine.last_analyzed_opportunities or [])[:20]
+                        ],
+                        # ALL scanner results (stocks that passed screening)
+                        "scanner_results": [
+                            {
+                                "symbol": r.get("symbol"),
+                                "combined_score": r.get("combined_score", 0),
+                                "ml_score": r.get("ml_score", 0),
+                                "momentum_score": r.get("momentum_score", 0),
+                                "price": r.get("last_price", 0),
+                                "relative_volume": r.get("relative_volume", 0),
+                                "atr": r.get("atr", 0),
+                                "atr_percent": r.get("atr_percent", 0),
+                                "pattern": r.get("pattern"),
+                                "news_catalyst": r.get("news_catalyst"),
+                                "float_millions": r.get("float_millions"),
+                            }
+                            for r in (engine.last_scanner_results or [])[:30]
+                        ],
+                        # ALL evaluated stocks (including those that failed filters)
+                        "all_evaluations": [
+                            {
+                                "symbol": e.get("symbol"),
+                                "passed": e.get("passed", False),
+                                "filters": e.get("filters", {}),
+                                "scores": e.get("scores", {}),
+                                "data": {
+                                    "price": e.get("data", {}).get("price", 0),
+                                    "volume": e.get("data", {}).get("avg_volume", 0),
+                                    "relative_volume": e.get("data", {}).get("relative_volume", 0),
+                                }
+                            }
+                            for e in (engine.all_evaluations or [])[:50]
                         ],
                         "strategy_performance": engine.strategy_performance if hasattr(engine, 'strategy_performance') else {},
                     },

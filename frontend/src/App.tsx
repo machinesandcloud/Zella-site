@@ -40,6 +40,7 @@ import AutonomyTimeline from "./components/AI/AutonomyTimeline";
 import BotThinkingProcess from "./components/AI/BotThinkingProcess";
 import MarketScannerPanel from "./components/AI/MarketScannerPanel";
 import LiveTickerFeed from "./components/AI/LiveTickerFeed";
+import BotStockAnalysisLive from "./components/AI/BotStockAnalysisLive";
 import OptionsChain from "./components/Trading/OptionsChain";
 import VoiceAssistantSettings from "./components/Settings/VoiceAssistantSettings";
 import BacktestPanel from "./components/Trading/BacktestPanel";
@@ -376,6 +377,11 @@ const App = () => {
                 {/* Live Ticker Feed - Real-time stock prices */}
                 <Grid item xs={12}>
                   <LiveTickerFeed />
+                </Grid>
+
+                {/* Bot Stock Analysis - Shows all stocks being analyzed in real-time */}
+                <Grid item xs={12}>
+                  <BotStockAnalysisLive />
                 </Grid>
 
                 {/* Market Scanner Analysis - Detailed evaluation data */}
