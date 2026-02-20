@@ -129,13 +129,25 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
     """
     symbols_param = websocket.query_params.get("symbols")
     if symbols_param:
-        symbols = [s.strip().upper() for s in symbols_param.split(",") if s.strip()][:20]
+        symbols = [s.strip().upper() for s in symbols_param.split(",") if s.strip()][:50]
     else:
-        # Get top symbols from autonomous engine if available
+        # Get ALL symbols from autonomous engine if available (scanner results + evaluations)
         engine = _get_autonomous_engine()
-        if engine and engine.last_scanner_results:
-            symbols = [r.get("symbol") for r in engine.last_scanner_results[:10] if r.get("symbol")]
-        else:
+        if engine:
+            # Combine scanner results (passed) with top evaluations for complete view
+            scanner_symbols = [r.get("symbol") for r in (engine.last_scanner_results or []) if r.get("symbol")]
+            # Also include symbols from analyzed opportunities
+            opp_symbols = [o.get("symbol") for o in (engine.last_analyzed_opportunities or []) if o.get("symbol")]
+            # Combine and deduplicate, keeping order (scanner first, then opportunities)
+            seen = set()
+            symbols = []
+            for sym in scanner_symbols + opp_symbols:
+                if sym and sym not in seen:
+                    symbols.append(sym)
+                    seen.add(sym)
+            symbols = symbols[:50]  # Limit to 50 for performance
+
+        if not symbols:
             # Default popular day trading stocks
             symbols = ["AAPL", "TSLA", "NVDA", "AMD", "META", "MSFT", "GOOGL", "AMZN", "SPY", "QQQ"]
 
@@ -152,12 +164,30 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
 
     # Track price changes for highlighting
     last_prices: Dict[str, float] = {}
+    last_symbols_update = datetime.utcnow()
 
     try:
         while True:
             provider = _get_market_provider()
             tickers = []
             data_source = "real"
+
+            # Dynamically update symbols from engine every 5 seconds
+            now = datetime.utcnow()
+            if (now - last_symbols_update).total_seconds() > 5:
+                engine = _get_autonomous_engine()
+                if engine:
+                    scanner_symbols = [r.get("symbol") for r in (engine.last_scanner_results or []) if r.get("symbol")]
+                    opp_symbols = [o.get("symbol") for o in (engine.last_analyzed_opportunities or []) if o.get("symbol")]
+                    seen = set()
+                    new_symbols = []
+                    for sym in scanner_symbols + opp_symbols:
+                        if sym and sym not in seen:
+                            new_symbols.append(sym)
+                            seen.add(sym)
+                    if new_symbols:
+                        symbols = new_symbols[:50]
+                last_symbols_update = now
 
             for symbol in symbols:
                 snapshot = provider.get_market_snapshot(symbol) or {}
@@ -170,16 +200,22 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
                     tick_change_pct = (tick_change / prev_price * 100) if prev_price else 0
                     last_prices[symbol] = current_price
 
-                    # Use pre-calculated change from previous close if available
+                    # Calculate day change from previous close
+                    prev_close = snapshot.get("prev_close", 0)
                     day_change = snapshot.get("change", 0)
                     day_change_pct = snapshot.get("change_pct", 0)
+
+                    # If day_change not provided, calculate from price and prev_close
+                    if day_change == 0 and prev_close > 0:
+                        day_change = current_price - prev_close
+                        day_change_pct = (day_change / prev_close) * 100
 
                     tickers.append({
                         "symbol": symbol,
                         "price": round(current_price, 2),
                         # Today's open and previous close
                         "open": round(snapshot.get("open", 0), 2),
-                        "prev_close": round(snapshot.get("prev_close", 0), 2),
+                        "prev_close": round(prev_close, 2),
                         # Day's range
                         "high": round(snapshot.get("high", 0), 2),
                         "low": round(snapshot.get("low", 0), 2),
@@ -313,14 +349,15 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                             for e in (engine.all_evaluations or [])[:50]
                         ],
                         "strategy_performance": engine.strategy_performance if hasattr(engine, 'strategy_performance') else {},
+                        # Always include filter_summary if available
+                        "filter_summary": engine.filter_summary if hasattr(engine, 'filter_summary') else None,
                     },
                     "timestamp": datetime.utcnow().isoformat(),
                 }
 
-                # If new scan happened, send scan results
+                # If new scan happened, mark it
                 if current_scan_time and current_scan_time != last_scan_time:
                     activity["data"]["new_scan"] = True
-                    activity["data"]["filter_summary"] = engine.filter_summary
                     last_scan_time = current_scan_time
 
                 # If new decisions, send them

@@ -373,24 +373,24 @@ const LiveTickerFeed = () => {
                           variant="caption"
                           sx={{
                             color:
-                              ticker.change >= 0 ? "success.main" : "error.main",
+                              ticker.day_change >= 0 ? "success.main" : "error.main",
                           }}
                         >
-                          {ticker.change >= 0 ? "+" : ""}
-                          {formatPrice(ticker.change)}
+                          {ticker.day_change >= 0 ? "+" : ""}
+                          {formatPrice(ticker.day_change)}
                         </Typography>
                         <Chip
-                          label={`${ticker.change_pct >= 0 ? "+" : ""}${ticker.change_pct.toFixed(2)}%`}
+                          label={`${ticker.day_change_pct >= 0 ? "+" : ""}${ticker.day_change_pct.toFixed(2)}%`}
                           size="small"
                           sx={{
                             height: 18,
                             fontSize: "0.65rem",
                             bgcolor:
-                              ticker.change_pct >= 0
+                              ticker.day_change_pct >= 0
                                 ? "rgba(46, 125, 50, 0.2)"
                                 : "rgba(211, 47, 47, 0.2)",
                             color:
-                              ticker.change_pct >= 0
+                              ticker.day_change_pct >= 0
                                 ? "success.main"
                                 : "error.main",
                           }}
