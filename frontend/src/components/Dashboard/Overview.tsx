@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Box, Card, CardContent, Grid, Stack, Typography } from "@mui/material";
 import { fetchAlpacaAccount } from "../../services/api";
-import { connectWebSocket } from "../../services/websocket";
+import { connectWebSocket, WebSocketConnection } from "../../services/websocket";
 
 const Overview = () => {
   const [summary, setSummary] = useState<Record<string, string>>({});
@@ -19,7 +19,7 @@ const Overview = () => {
   }, []);
 
   useEffect(() => {
-    let ws: WebSocket | null = null;
+    let ws: WebSocketConnection | null = null;
     try {
       ws = connectWebSocket("/ws/account-updates", (msg) => {
         setTimestamp(msg.timestamp);
@@ -29,11 +29,7 @@ const Overview = () => {
     }
     return () => {
       if (ws) {
-        try {
-          ws.close();
-        } catch (e) {
-          // Ignore close errors
-        }
+        ws.close();
       }
     };
   }, []);
