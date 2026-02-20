@@ -13,7 +13,11 @@ import {
   Divider,
   Avatar,
   Badge,
-  CircularProgress
+  CircularProgress,
+  Collapse,
+  Modal,
+  Backdrop,
+  Fade
 } from "@mui/material";
 import {
   Psychology,
@@ -38,39 +42,447 @@ import {
   Equalizer,
   Visibility,
   ExpandMore,
-  ExpandLess
+  ExpandLess,
+  Close,
+  Code,
+  Functions,
+  Calculate,
+  KeyboardArrowRight,
+  PlayArrow
 } from "@mui/icons-material";
 
+// Strategy definitions with formulas and descriptions
+const STRATEGY_FORMULAS: Record<string, {
+  name: string;
+  description: string;
+  category: string;
+  formula: string;
+  inputs: string[];
+  conditions: string[];
+  buySignal: string;
+  sellSignal: string;
+}> = {
+  bull_flag: {
+    name: "Bull Flag",
+    description: "Identifies consolidation patterns after a strong upward move, anticipating continuation.",
+    category: "Warrior Trading",
+    formula: "BUY when: (Price > VWAP) AND (Volume > 1.5x Avg) AND (Pullback < 50% of Flag Pole)",
+    inputs: ["Price", "VWAP", "Volume", "ATR", "Previous High"],
+    conditions: [
+      "Flag pole: 5-15% move in < 30 mins",
+      "Consolidation: 3-7 candles, tight range",
+      "Volume: Decreasing during flag formation"
+    ],
+    buySignal: "Price breaks above flag resistance with volume surge",
+    sellSignal: "Price breaks below flag support or reaches 1.5x flag pole target"
+  },
+  flat_top_breakout: {
+    name: "Flat Top Breakout",
+    description: "Resistance level breakout with high volume confirmation.",
+    category: "Warrior Trading",
+    formula: "BUY when: (Price > Resistance) AND (Volume > 2x Avg) AND (RSI < 70)",
+    inputs: ["Price", "Resistance Level", "Volume", "RSI"],
+    conditions: [
+      "Multiple touches of resistance (3+)",
+      "Price action forming flat top",
+      "Building volume on each test"
+    ],
+    buySignal: "Break above resistance with 2x average volume",
+    sellSignal: "Failed breakout (price falls back below resistance)"
+  },
+  orb: {
+    name: "Opening Range Breakout",
+    description: "Trades the breakout of the first 15-30 minutes price range.",
+    category: "Warrior Trading",
+    formula: "BUY when: (Price > ORB_High) AND (Time < 10:30 AM) AND (Volume > Avg)",
+    inputs: ["Opening High", "Opening Low", "Current Price", "Volume", "Time"],
+    conditions: [
+      "Define range: First 15-30 mins",
+      "Wait for clear breakout direction",
+      "Confirm with relative volume > 1.5x"
+    ],
+    buySignal: "Price breaks above opening range high",
+    sellSignal: "Price breaks below opening range low or hits 2x range target"
+  },
+  breakout: {
+    name: "Breakout Strategy",
+    description: "Identifies price breaking through key support/resistance levels.",
+    category: "Trend Following",
+    formula: "BUY when: (Price > 20-day High) AND (Volume > 1.5x Avg) AND (ADX > 25)",
+    inputs: ["Price", "20-day High", "Volume", "ADX"],
+    conditions: [
+      "Price consolidating for 5+ days",
+      "ADX > 25 indicating trend strength",
+      "Volume confirmation on breakout"
+    ],
+    buySignal: "New 20-day high with volume surge",
+    sellSignal: "Price falls back below breakout level"
+  },
+  ema_cross: {
+    name: "EMA Crossover",
+    description: "Trades based on exponential moving average crossovers.",
+    category: "Trend Following",
+    formula: "BUY when: (EMA_9 > EMA_20) AND (Price > EMA_9) AND (EMA_20 > EMA_50)",
+    inputs: ["EMA(9)", "EMA(20)", "EMA(50)", "Price"],
+    conditions: [
+      "Fast EMA crosses above slow EMA",
+      "Price above both EMAs",
+      "Upward slope on all EMAs"
+    ],
+    buySignal: "EMA(9) crosses above EMA(20)",
+    sellSignal: "EMA(9) crosses below EMA(20)"
+  },
+  htf_ema_momentum: {
+    name: "HTF EMA Momentum",
+    description: "Uses higher timeframe EMA alignment for trend confirmation.",
+    category: "Trend Following",
+    formula: "BUY when: (Daily_EMA_20 Slope > 0) AND (4H_EMA_9 > 4H_EMA_20) AND (Price > VWAP)",
+    inputs: ["Daily EMA(20)", "4H EMA(9)", "4H EMA(20)", "VWAP"],
+    conditions: [
+      "Daily EMA(20) trending up",
+      "4H EMAs aligned bullish",
+      "Intraday price above VWAP"
+    ],
+    buySignal: "Pullback to 4H EMA(9) in uptrend",
+    sellSignal: "4H EMA bearish cross or daily EMA flattens"
+  },
+  momentum: {
+    name: "Momentum Strategy",
+    description: "Trades stocks with strong price momentum.",
+    category: "Trend Following",
+    formula: "BUY when: (ROC_10 > 5%) AND (RSI > 50) AND (Volume > 2x Avg)",
+    inputs: ["Rate of Change (10)", "RSI(14)", "Volume", "Price"],
+    conditions: [
+      "10-day ROC > 5%",
+      "RSI between 50-70 (not overbought)",
+      "Increasing volume trend"
+    ],
+    buySignal: "Strong momentum with RSI not overbought",
+    sellSignal: "Momentum weakening (ROC declining) or RSI > 80"
+  },
+  trend_follow: {
+    name: "Trend Following",
+    description: "Follows established trends using multiple indicators.",
+    category: "Trend Following",
+    formula: "BUY when: (Price > SMA_50) AND (SMA_50 > SMA_200) AND (ADX > 25)",
+    inputs: ["SMA(50)", "SMA(200)", "ADX", "Price"],
+    conditions: [
+      "Golden cross (SMA50 > SMA200)",
+      "ADX indicating strong trend",
+      "Price making higher highs"
+    ],
+    buySignal: "Pullback to SMA(50) in uptrend",
+    sellSignal: "Price closes below SMA(50) or death cross"
+  },
+  first_hour_trend: {
+    name: "First Hour Trend",
+    description: "Trades the dominant trend established in the first hour.",
+    category: "Trend Following",
+    formula: "BUY when: (First_Hour_Close > First_Hour_Open) AND (Price > First_Hour_High)",
+    inputs: ["First Hour Open", "First Hour Close", "First Hour High", "Current Price"],
+    conditions: [
+      "Clear directional move in first hour",
+      "Volume above average",
+      "Break of first hour range"
+    ],
+    buySignal: "Break above first hour high with momentum",
+    sellSignal: "Break below first hour low"
+  },
+  pullback: {
+    name: "Pullback Strategy",
+    description: "Buys dips in an uptrend when price pulls back to support.",
+    category: "Mean Reversion",
+    formula: "BUY when: (Price at EMA_20) AND (RSI < 40) AND (Uptrend Intact)",
+    inputs: ["EMA(20)", "RSI(14)", "Trend Direction", "Support Level"],
+    conditions: [
+      "Overall uptrend (higher highs/lows)",
+      "RSI showing oversold on pullback",
+      "Price at key support (EMA or fib level)"
+    ],
+    buySignal: "Bounce from EMA(20) with bullish candle",
+    sellSignal: "Break below EMA(20) or trend reversal"
+  },
+  range_trading: {
+    name: "Range Trading",
+    description: "Trades between support and resistance in sideways markets.",
+    category: "Mean Reversion",
+    formula: "BUY when: (Price at Support) AND (RSI < 30) AND (ADX < 20)",
+    inputs: ["Support Level", "Resistance Level", "RSI", "ADX"],
+    conditions: [
+      "ADX < 20 (no trend)",
+      "Clear support/resistance levels",
+      "Multiple touches of range boundaries"
+    ],
+    buySignal: "Price bounces from support with bullish signal",
+    sellSignal: "Price reaches resistance or breaks support"
+  },
+  rsi_exhaustion: {
+    name: "RSI Exhaustion",
+    description: "Trades RSI divergences at extreme levels.",
+    category: "Mean Reversion",
+    formula: "BUY when: (RSI < 25) AND (Bullish Divergence) AND (Support Nearby)",
+    inputs: ["RSI(14)", "Price", "Support Level"],
+    conditions: [
+      "RSI < 25 (extremely oversold)",
+      "Price making lower lows, RSI making higher lows",
+      "Near key support level"
+    ],
+    buySignal: "RSI divergence with bullish reversal candle",
+    sellSignal: "RSI reaches 50 or price fails to reverse"
+  },
+  rsi_extreme_reversal: {
+    name: "RSI Extreme Reversal",
+    description: "Fades extreme RSI readings expecting mean reversion.",
+    category: "Mean Reversion",
+    formula: "BUY when: (RSI < 20) AND (Price at -2 StdDev) AND (Volume Spike)",
+    inputs: ["RSI(14)", "Bollinger Bands", "Volume", "ATR"],
+    conditions: [
+      "RSI < 20 (extreme oversold)",
+      "Price at lower Bollinger Band",
+      "Capitulation volume"
+    ],
+    buySignal: "Reversal candle at extreme oversold",
+    sellSignal: "RSI returns to 50 or new lows made"
+  },
+  vwap_bounce: {
+    name: "VWAP Bounce",
+    description: "Trades bounces off the Volume Weighted Average Price.",
+    category: "Mean Reversion",
+    formula: "BUY when: (Price touches VWAP from above) AND (Uptrend) AND (Volume decreasing)",
+    inputs: ["VWAP", "Price", "Volume", "Trend"],
+    conditions: [
+      "Price in uptrend (above VWAP most of day)",
+      "Pullback to VWAP with decreasing volume",
+      "Bullish price action at VWAP"
+    ],
+    buySignal: "Bounce off VWAP with increasing volume",
+    sellSignal: "Close below VWAP or reaches prior high"
+  },
+  nine_forty_five_reversal: {
+    name: "9:45 Reversal",
+    description: "Fades the initial move after the first 15 minutes.",
+    category: "Mean Reversion",
+    formula: "FADE when: (Gap > 2%) AND (Time = 9:45) AND (Reversal Candle)",
+    inputs: ["Gap Size", "Time", "Price Action", "Volume"],
+    conditions: [
+      "Large gap (> 2%)",
+      "Initial move extending gap",
+      "Reversal candle forming at 9:45"
+    ],
+    buySignal: "Gap down reversal with bullish engulfing",
+    sellSignal: "Gap up reversal with bearish engulfing"
+  },
+  scalping: {
+    name: "Scalping",
+    description: "Quick trades capturing small price movements.",
+    category: "Scalping",
+    formula: "BUY when: (Bid/Ask Spread < 0.02%) AND (Volume > 3x Avg) AND (Momentum Positive)",
+    inputs: ["Bid/Ask Spread", "Volume", "1-min Momentum", "Level 2 Data"],
+    conditions: [
+      "Tight spread (< $0.02)",
+      "High volume for liquidity",
+      "Clear short-term momentum"
+    ],
+    buySignal: "Large bid stacking with momentum",
+    sellSignal: "Target: 0.1-0.3% or momentum reversal"
+  },
+  rip_and_dip: {
+    name: "Rip and Dip",
+    description: "Buys the first pullback after a strong initial move.",
+    category: "Scalping",
+    formula: "BUY when: (Initial Rip > 3%) AND (Pullback 30-50%) AND (Volume High)",
+    inputs: ["Initial Move %", "Pullback %", "Volume", "Time"],
+    conditions: [
+      "Strong initial move (rip) > 3%",
+      "Pullback retraces 30-50%",
+      "Within first 30 minutes"
+    ],
+    buySignal: "Bounce from pullback level with volume",
+    sellSignal: "Retest of high or new high target"
+  },
+  big_bid_scalp: {
+    name: "Big Bid Scalp",
+    description: "Scalps based on large bid orders in Level 2.",
+    category: "Scalping",
+    formula: "BUY when: (Bid Size > 5x Normal) AND (Price Holding) AND (Tape Positive)",
+    inputs: ["Level 2 Bids", "Bid Size", "Time & Sales", "Price"],
+    conditions: [
+      "Large bid size relative to normal",
+      "Bid being defended (not pulled)",
+      "Positive tape (more buys than sells)"
+    ],
+    buySignal: "Price bouncing off big bid with buying tape",
+    sellSignal: "Big bid pulled or price breaks below"
+  },
+  retail_fakeout: {
+    name: "Retail Fakeout",
+    description: "Identifies and fades false breakouts designed to trap retail.",
+    category: "Pattern Recognition",
+    formula: "FADE when: (Breakout on low volume) AND (Quick reversal) AND (Back inside range)",
+    inputs: ["Breakout Level", "Volume", "Price Action", "Time"],
+    conditions: [
+      "Breakout with below-average volume",
+      "Quick reversal back inside range",
+      "Trapped traders visible in tape"
+    ],
+    buySignal: "False breakdown reversal with volume",
+    sellSignal: "False breakout reversal with volume"
+  },
+  stop_hunt_reversal: {
+    name: "Stop Hunt Reversal",
+    description: "Trades reversals after obvious stop levels are triggered.",
+    category: "Pattern Recognition",
+    formula: "BUY when: (Price Spikes Below Support) AND (Quick Reversal) AND (Volume Spike)",
+    inputs: ["Support Level", "Price", "Volume", "Stop Level"],
+    conditions: [
+      "Price spikes through obvious stop level",
+      "Immediate reversal (< 5 min)",
+      "Volume spike on reversal"
+    ],
+    buySignal: "V-reversal after stop hunt with volume",
+    sellSignal: "Price fails to reclaim or makes new low"
+  },
+  bagholder_bounce: {
+    name: "Bagholder Bounce",
+    description: "Identifies bounce opportunities from trapped short sellers.",
+    category: "Pattern Recognition",
+    formula: "BUY when: (Short Interest > 20%) AND (Positive Catalyst) AND (Price Breaking Out)",
+    inputs: ["Short Interest %", "News/Catalyst", "Price", "Volume"],
+    conditions: [
+      "High short interest (> 20%)",
+      "Positive news or catalyst",
+      "Price breaking key resistance"
+    ],
+    buySignal: "Short squeeze starting with volume explosion",
+    sellSignal: "Volume declining or exhaustion candle"
+  },
+  broken_parabolic_short: {
+    name: "Broken Parabolic Short",
+    description: "Shorts stocks after parabolic moves break down.",
+    category: "Pattern Recognition",
+    formula: "SHORT when: (Parabolic Move > 50%) AND (Break Below Trend) AND (Exhaustion)",
+    inputs: ["Move %", "Trendline", "Volume", "RSI"],
+    conditions: [
+      "Parabolic move (> 50% in days)",
+      "Trendline or support break",
+      "Exhaustion signs (doji, volume decline)"
+    ],
+    buySignal: "N/A (Short strategy)",
+    sellSignal: "First major support break with volume"
+  },
+  fake_halt_trap: {
+    name: "Fake Halt Trap",
+    description: "Trades continuation after trading halt releases.",
+    category: "Pattern Recognition",
+    formula: "TRADE when: (Halt Lifted) AND (Direction Confirmed) AND (Volume > 5x)",
+    inputs: ["Halt Status", "Pre-halt Price", "Post-halt Price", "Volume"],
+    conditions: [
+      "Trading halt just lifted",
+      "Clear direction on resumption",
+      "Massive volume surge"
+    ],
+    buySignal: "Resume higher with buying pressure",
+    sellSignal: "Resume lower or fails to hold direction"
+  },
+  closing_bell_liquidity_grab: {
+    name: "Closing Bell Liquidity",
+    description: "Trades the liquidity surge in the last 30 minutes.",
+    category: "Smart Money",
+    formula: "TRADE when: (Time > 3:30 PM) AND (Price at Key Level) AND (Volume Surging)",
+    inputs: ["Time", "Daily VWAP", "Volume", "MOC Orders"],
+    conditions: [
+      "Last 30 minutes of trading",
+      "Price at significant level (VWAP, whole number)",
+      "Institutional flow visible"
+    ],
+    buySignal: "Strong close above VWAP with volume",
+    sellSignal: "Weak close below VWAP with volume"
+  },
+  dark_pool_footprints: {
+    name: "Dark Pool Footprints",
+    description: "Identifies large block trades suggesting institutional activity.",
+    category: "Smart Money",
+    formula: "FOLLOW when: (Block Trades > $1M) AND (Direction Consistent) AND (Price Holding)",
+    inputs: ["Block Trade Size", "Direction", "Price Level", "Time"],
+    conditions: [
+      "Large block trades (> $1M)",
+      "Consistent direction of blocks",
+      "Price holding after blocks"
+    ],
+    buySignal: "Multiple large buy blocks, price holding support",
+    sellSignal: "Multiple large sell blocks, price at resistance"
+  },
+  market_maker_refill: {
+    name: "Market Maker Refill",
+    description: "Trades the refill pattern after market maker inventory depletion.",
+    category: "Smart Money",
+    formula: "BUY when: (MM Inventory Low) AND (Spread Widening) AND (Price at Support)",
+    inputs: ["Bid/Ask Spread", "Order Book Depth", "Price", "Volume"],
+    conditions: [
+      "Spread widening (MM needs inventory)",
+      "Order book thinning",
+      "Price at key support level"
+    ],
+    buySignal: "Spread normalizing with price bounce",
+    sellSignal: "Spread widening further or support breaks"
+  },
+  premarket_vwap_reclaim: {
+    name: "Premarket VWAP Reclaim",
+    description: "Trades reclaim of VWAP after premarket gap.",
+    category: "Smart Money",
+    formula: "BUY when: (Gap Down) AND (Price Reclaims PM_VWAP) AND (Volume Increasing)",
+    inputs: ["Premarket VWAP", "Gap Size", "Current Price", "Volume"],
+    conditions: [
+      "Significant gap (> 1%)",
+      "Price trading below PM VWAP",
+      "Attempting to reclaim"
+    ],
+    buySignal: "Price reclaims and holds PM VWAP",
+    sellSignal: "Fails to hold PM VWAP or new low"
+  }
+};
+
 // Strategy categories with icons and colors
-const STRATEGY_CATEGORIES = {
+const STRATEGY_CATEGORIES: Record<string, {
+  color: string;
+  icon: string;
+  description: string;
+  strategies: string[];
+}> = {
   "Warrior Trading": {
     color: "#f59e0b",
     icon: "bolt",
+    description: "High-momentum day trading patterns popularized by Ross Cameron",
     strategies: ["bull_flag", "flat_top_breakout", "orb"]
   },
   "Trend Following": {
     color: "#22c55e",
     icon: "trending_up",
+    description: "Strategies that identify and ride established market trends",
     strategies: ["breakout", "ema_cross", "htf_ema_momentum", "momentum", "trend_follow", "first_hour_trend"]
   },
   "Mean Reversion": {
     color: "#3b82f6",
     icon: "autorenew",
+    description: "Strategies that profit from prices returning to their average",
     strategies: ["pullback", "range_trading", "rsi_exhaustion", "rsi_extreme_reversal", "vwap_bounce", "nine_forty_five_reversal"]
   },
   "Scalping": {
     color: "#ec4899",
     icon: "speed",
+    description: "Ultra-short-term trades capturing small price movements",
     strategies: ["scalping", "rip_and_dip", "big_bid_scalp"]
   },
   "Pattern Recognition": {
     color: "#8b5cf6",
     icon: "pattern",
+    description: "Identifies market manipulation patterns and traps",
     strategies: ["retail_fakeout", "stop_hunt_reversal", "bagholder_bounce", "broken_parabolic_short", "fake_halt_trap"]
   },
   "Smart Money": {
     color: "#06b6d4",
     icon: "account_balance",
+    description: "Follows institutional order flow and market maker activity",
     strategies: ["closing_bell_liquidity_grab", "dark_pool_footprints", "market_maker_refill", "premarket_vwap_reclaim"]
   }
 };
@@ -122,55 +534,254 @@ interface BotState {
   last_scan: string | null;
   active_strategies: string[];
   analyzed_opportunities: AnalyzedOpportunity[];
-  current_analysis?: {
-    symbol: string;
-    stage: string;
-    progress: number;
-  };
 }
 
-// Animated number component
-const AnimatedNumber = ({ value, decimals = 2, prefix = "", suffix = "", color = "#fff" }: {
-  value: number;
-  decimals?: number;
-  prefix?: string;
-  suffix?: string;
-  color?: string;
+// Strategy Detail Modal Component
+const StrategyDetailModal = ({
+  open,
+  onClose,
+  strategyId,
+  liveData
+}: {
+  open: boolean;
+  onClose: () => void;
+  strategyId: string | null;
+  liveData: AnalyzedOpportunity | null;
 }) => {
-  const [displayValue, setDisplayValue] = useState(value);
+  const strategy = strategyId ? STRATEGY_FORMULAS[strategyId] : null;
+  const [animationStep, setAnimationStep] = useState(0);
 
   useEffect(() => {
-    const duration = 300;
-    const startValue = displayValue;
-    const diff = value - startValue;
-    const startTime = Date.now();
+    if (open) {
+      const interval = setInterval(() => {
+        setAnimationStep(s => (s + 1) % 4);
+      }, 800);
+      return () => clearInterval(interval);
+    }
+  }, [open]);
 
-    const animate = () => {
-      const elapsed = Date.now() - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setDisplayValue(startValue + diff * eased);
+  if (!strategy) return null;
 
-      if (progress < 1) {
-        requestAnimationFrame(animate);
-      }
-    };
+  const getCategoryColor = () => {
+    for (const [, cat] of Object.entries(STRATEGY_CATEGORIES)) {
+      if (cat.strategies.includes(strategyId || "")) return cat.color;
+    }
+    return "#64748b";
+  };
 
-    requestAnimationFrame(animate);
-  }, [value]);
+  const color = getCategoryColor();
 
   return (
-    <Typography
-      component="span"
-      sx={{
-        color,
-        fontFamily: "'JetBrains Mono', monospace",
-        fontWeight: 600,
-        fontSize: "inherit"
-      }}
+    <Modal
+      open={open}
+      onClose={onClose}
+      closeAfterTransition
+      slots={{ backdrop: Backdrop }}
+      slotProps={{ backdrop: { timeout: 500 } }}
     >
-      {prefix}{displayValue.toFixed(decimals)}{suffix}
-    </Typography>
+      <Fade in={open}>
+        <Box sx={{
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: { xs: "95%", md: 800 },
+          maxHeight: "90vh",
+          overflow: "auto",
+          bgcolor: "rgba(10, 15, 25, 0.98)",
+          border: `1px solid ${color}40`,
+          borderRadius: 3,
+          boxShadow: `0 20px 60px ${color}20`,
+          p: 3
+        }}>
+          {/* Header */}
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 3 }}>
+            <Stack direction="row" alignItems="center" spacing={2}>
+              <Box sx={{
+                width: 48,
+                height: 48,
+                borderRadius: 2,
+                bgcolor: color + "20",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+              }}>
+                <Functions sx={{ color, fontSize: 28 }} />
+              </Box>
+              <Box>
+                <Typography variant="h5" fontWeight="bold" sx={{ color }}>{strategy.name}</Typography>
+                <Typography variant="body2" color="text.secondary">{strategy.category}</Typography>
+              </Box>
+            </Stack>
+            <IconButton onClick={onClose} sx={{ color: "text.secondary" }}>
+              <Close />
+            </IconButton>
+          </Stack>
+
+          {/* Description */}
+          <Box sx={{ mb: 3, p: 2, borderRadius: 2, bgcolor: "rgba(255,255,255,0.03)" }}>
+            <Typography variant="body2" color="text.secondary">{strategy.description}</Typography>
+          </Box>
+
+          {/* Live Calculation Visualization */}
+          <Box sx={{
+            mb: 3,
+            p: 2,
+            borderRadius: 2,
+            bgcolor: "rgba(59, 130, 246, 0.05)",
+            border: "1px solid rgba(59, 130, 246, 0.2)"
+          }}>
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
+              <PlayArrow sx={{ color: "#4ade80", fontSize: 20 }} />
+              <Typography variant="subtitle2" fontWeight="bold">Live Calculation Pipeline</Typography>
+            </Stack>
+
+            <Grid container spacing={2} alignItems="center">
+              {/* Inputs */}
+              <Grid item xs={12} md={3}>
+                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block" }}>
+                  DATA INPUTS
+                </Typography>
+                <Stack spacing={0.5}>
+                  {strategy.inputs.slice(0, 4).map((input, i) => (
+                    <Box
+                      key={input}
+                      sx={{
+                        px: 1.5,
+                        py: 0.75,
+                        borderRadius: 1,
+                        bgcolor: animationStep >= 1 ? color + "15" : "rgba(255,255,255,0.03)",
+                        border: `1px solid ${animationStep >= 1 ? color + "40" : "rgba(255,255,255,0.06)"}`,
+                        transition: "all 0.3s ease",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center"
+                      }}
+                    >
+                      <Typography variant="caption" sx={{ color: animationStep >= 1 ? color : "#94a3b8" }}>
+                        {input}
+                      </Typography>
+                      <Typography variant="caption" sx={{ fontFamily: "'JetBrains Mono', monospace", color: "#fff" }}>
+                        {liveData?.data ? (
+                          input.toLowerCase().includes("price") ? `$${liveData.price?.toFixed(2)}` :
+                          input.toLowerCase().includes("volume") ? `${((liveData.data.volume || 0) / 1000).toFixed(0)}K` :
+                          input.toLowerCase().includes("rsi") ? `${(liveData.data.rsi || 50).toFixed(1)}` :
+                          input.toLowerCase().includes("vwap") ? `$${(liveData.data.vwap || 0).toFixed(2)}` :
+                          "..."
+                        ) : "..."}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Stack>
+              </Grid>
+
+              {/* Arrow */}
+              <Grid item xs={12} md={1} sx={{ textAlign: "center" }}>
+                <KeyboardArrowRight sx={{
+                  color: animationStep >= 2 ? color : "#64748b",
+                  fontSize: 32,
+                  transition: "color 0.3s ease"
+                }} />
+              </Grid>
+
+              {/* Formula */}
+              <Grid item xs={12} md={5}>
+                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block" }}>
+                  ALGORITHM FORMULA
+                </Typography>
+                <Box sx={{
+                  p: 1.5,
+                  borderRadius: 2,
+                  bgcolor: animationStep >= 2 ? "rgba(139, 92, 246, 0.1)" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${animationStep >= 2 ? "#8b5cf660" : "rgba(255,255,255,0.06)"}`,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  transition: "all 0.3s ease"
+                }}>
+                  <Typography variant="caption" sx={{ color: animationStep >= 2 ? "#a78bfa" : "#94a3b8", whiteSpace: "pre-wrap" }}>
+                    {strategy.formula}
+                  </Typography>
+                </Box>
+              </Grid>
+
+              {/* Arrow */}
+              <Grid item xs={12} md={1} sx={{ textAlign: "center" }}>
+                <KeyboardArrowRight sx={{
+                  color: animationStep >= 3 ? "#22c55e" : "#64748b",
+                  fontSize: 32,
+                  transition: "color 0.3s ease"
+                }} />
+              </Grid>
+
+              {/* Output */}
+              <Grid item xs={12} md={2}>
+                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block" }}>
+                  SIGNAL OUTPUT
+                </Typography>
+                <Box sx={{
+                  p: 1.5,
+                  borderRadius: 2,
+                  bgcolor: animationStep >= 3 ? "rgba(34, 197, 94, 0.15)" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${animationStep >= 3 ? "#22c55e60" : "rgba(255,255,255,0.06)"}`,
+                  textAlign: "center",
+                  transition: "all 0.3s ease"
+                }}>
+                  <Typography variant="h6" fontWeight="bold" sx={{
+                    color: animationStep >= 3 ? (liveData?.final_action === "BUY" ? "#22c55e" : liveData?.final_action === "SELL" ? "#ef4444" : "#64748b") : "#64748b"
+                  }}>
+                    {liveData?.final_action || "HOLD"}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {((liveData?.aggregate_confidence || 0) * 100).toFixed(0)}% conf
+                  </Typography>
+                </Box>
+              </Grid>
+            </Grid>
+          </Box>
+
+          {/* Conditions & Signals */}
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={6}>
+              <Box sx={{ p: 2, borderRadius: 2, bgcolor: "rgba(255,255,255,0.02)", height: "100%" }}>
+                <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1.5, color }}>
+                  Entry Conditions
+                </Typography>
+                <Stack spacing={1}>
+                  {strategy.conditions.map((condition, i) => (
+                    <Stack key={i} direction="row" spacing={1} alignItems="flex-start">
+                      <Box sx={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        bgcolor: color,
+                        mt: 0.8,
+                        flexShrink: 0
+                      }} />
+                      <Typography variant="caption" color="text.secondary">{condition}</Typography>
+                    </Stack>
+                  ))}
+                </Stack>
+              </Box>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Stack spacing={2}>
+                <Box sx={{ p: 2, borderRadius: 2, bgcolor: "rgba(34, 197, 94, 0.05)", border: "1px solid rgba(34, 197, 94, 0.2)" }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
+                    BUY SIGNAL
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: "#4ade80" }}>{strategy.buySignal}</Typography>
+                </Box>
+                <Box sx={{ p: 2, borderRadius: 2, bgcolor: "rgba(239, 68, 68, 0.05)", border: "1px solid rgba(239, 68, 68, 0.2)" }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
+                    SELL/EXIT SIGNAL
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: "#f87171" }}>{strategy.sellSignal}</Typography>
+                </Box>
+              </Stack>
+            </Grid>
+          </Grid>
+        </Box>
+      </Fade>
+    </Modal>
   );
 };
 
@@ -202,7 +813,6 @@ const IndicatorGauge = ({ label, value, min, max, unit = "", zones, size = "medi
   return (
     <Box sx={{ textAlign: "center", position: "relative" }}>
       <svg width={gaugeSize} height={gaugeSize * 0.75} style={{ overflow: "visible" }}>
-        {/* Background arc */}
         <circle
           cx={gaugeSize / 2}
           cy={gaugeSize / 2}
@@ -214,7 +824,6 @@ const IndicatorGauge = ({ label, value, min, max, unit = "", zones, size = "medi
           strokeDasharray={`${circumference * 0.75} ${circumference * 0.25}`}
           transform={`rotate(135 ${gaugeSize / 2} ${gaugeSize / 2})`}
         />
-        {/* Value arc */}
         <circle
           cx={gaugeSize / 2}
           cy={gaugeSize / 2}
@@ -242,10 +851,7 @@ const IndicatorGauge = ({ label, value, min, max, unit = "", zones, size = "medi
         <Typography
           variant={size === "small" ? "caption" : "body2"}
           fontWeight="bold"
-          sx={{
-            fontFamily: "'JetBrains Mono', monospace",
-            color: getColor()
-          }}
+          sx={{ fontFamily: "'JetBrains Mono', monospace", color: getColor() }}
         >
           {value.toFixed(1)}{unit}
         </Typography>
@@ -265,11 +871,9 @@ const MiniSparkline = ({ data, color = "#3b82f6", width = 60, height = 20 }: {
   height?: number;
 }) => {
   if (data.length < 2) return null;
-
   const min = Math.min(...data);
   const max = Math.max(...data);
   const range = max - min || 1;
-
   const points = data.map((val, i) => {
     const x = (i / (data.length - 1)) * width;
     const y = height - ((val - min) / range) * height;
@@ -295,8 +899,8 @@ const UnderTheHood = () => {
   const [botState, setBotState] = useState<BotState | null>(null);
   const [connected, setConnected] = useState(false);
   const [updateCount, setUpdateCount] = useState(0);
-  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-  const [animatingStrategy, setAnimatingStrategy] = useState<string | null>(null);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null);
   const [expandedOpportunity, setExpandedOpportunity] = useState<string | null>(null);
   const [priceHistory, setPriceHistory] = useState<Record<string, number[]>>({});
   const wsRef = useRef<WebSocket | null>(null);
@@ -310,7 +914,6 @@ const UnderTheHood = () => {
   useEffect(() => {
     const connect = () => {
       const ws = new WebSocket(getWebSocketUrl());
-
       ws.onopen = () => setConnected(true);
       ws.onclose = () => {
         setConnected(false);
@@ -329,7 +932,6 @@ const UnderTheHood = () => {
             }));
             setUpdateCount(c => c + 1);
 
-            // Track price history for sparklines
             if (message.data.analyzed_opportunities) {
               setPriceHistory(prev => {
                 const updated = { ...prev };
@@ -341,15 +943,6 @@ const UnderTheHood = () => {
                 });
                 return updated;
               });
-            }
-
-            // Animate strategy when new signals come in
-            if (message.data.new_decisions?.length > 0) {
-              const strategies = message.data.new_decisions[0]?.strategies || [];
-              if (strategies.length > 0) {
-                setAnimatingStrategy(strategies[0]);
-                setTimeout(() => setAnimatingStrategy(null), 1500);
-              }
             }
           }
         } catch (e) {
@@ -370,7 +963,7 @@ const UnderTheHood = () => {
         return { category, ...data };
       }
     }
-    return { category: "Other", color: "#64748b", strategies: [] };
+    return { category: "Other", color: "#64748b", strategies: [], description: "" };
   };
 
   const formatStrategyName = (name: string) => {
@@ -385,7 +978,6 @@ const UnderTheHood = () => {
     }
   };
 
-  // Aggregate data for the data crunch panel
   const aggregatedData = useMemo(() => {
     const opps = botState?.analyzed_opportunities || [];
     if (opps.length === 0) return null;
@@ -407,7 +999,14 @@ const UnderTheHood = () => {
     };
   }, [botState?.analyzed_opportunities]);
 
-  const selectedOpportunity = botState?.analyzed_opportunities?.find(o => o.symbol === selectedSymbol);
+  // Get live data for selected strategy (first opportunity that uses it)
+  const liveDataForStrategy = useMemo(() => {
+    if (!selectedStrategy || !botState?.analyzed_opportunities) return null;
+    const opp = botState.analyzed_opportunities.find(o =>
+      o.signals?.some(s => s.strategy === selectedStrategy)
+    );
+    return opp || botState.analyzed_opportunities[0] || null;
+  }, [selectedStrategy, botState?.analyzed_opportunities]);
 
   return (
     <Card
@@ -419,6 +1018,14 @@ const UnderTheHood = () => {
         overflow: "hidden"
       }}
     >
+      {/* Strategy Detail Modal */}
+      <StrategyDetailModal
+        open={!!selectedStrategy}
+        onClose={() => setSelectedStrategy(null)}
+        strategyId={selectedStrategy}
+        liveData={liveDataForStrategy}
+      />
+
       {/* Animated background grid */}
       <Box
         sx={{
@@ -495,7 +1102,7 @@ const UnderTheHood = () => {
                 />
               </Stack>
               <Typography variant="body2" color="text.secondary">
-                Real-time algorithmic decision visualization • Data Granularity View
+                Click any strategy to see its formula and live calculation
               </Typography>
             </Box>
           </Stack>
@@ -503,7 +1110,7 @@ const UnderTheHood = () => {
           <Stack direction="row" spacing={2} alignItems="center">
             <Chip
               icon={<Memory sx={{ fontSize: 16 }} />}
-              label={`${botState?.active_strategies?.length || 0} Strategies`}
+              label={`${botState?.active_strategies?.length || 0} Active`}
               size="small"
               sx={{ bgcolor: "rgba(139, 92, 246, 0.15)", color: "#a78bfa" }}
             />
@@ -512,11 +1119,6 @@ const UnderTheHood = () => {
               label={`${botState?.symbols_scanned || 0} Scanned`}
               size="small"
               sx={{ bgcolor: "rgba(34, 197, 94, 0.15)", color: "#4ade80" }}
-            />
-            <Chip
-              label={`${updateCount} updates`}
-              size="small"
-              sx={{ bgcolor: "rgba(59, 130, 246, 0.15)", color: "#60a5fa" }}
             />
           </Stack>
         </Stack>
@@ -541,13 +1143,12 @@ const UnderTheHood = () => {
               border: "1px solid rgba(34, 197, 94, 0.3)"
             }}>
               <Typography variant="caption" sx={{ color: "#4ade80", fontFamily: "'JetBrains Mono', monospace" }}>
-                Processing {botState?.analyzed_opportunities?.length || 0} symbols @ 100ms
+                Processing @ 100ms intervals
               </Typography>
             </Box>
           </Stack>
 
           <Grid container spacing={3}>
-            {/* Indicator Gauges */}
             <Grid item xs={12} md={5}>
               <Stack direction="row" spacing={2} justifyContent="space-around" alignItems="flex-start">
                 <IndicatorGauge
@@ -588,7 +1189,6 @@ const UnderTheHood = () => {
               </Stack>
             </Grid>
 
-            {/* Live Numbers */}
             <Grid item xs={12} md={7}>
               <Grid container spacing={2}>
                 {[
@@ -611,15 +1211,7 @@ const UnderTheHood = () => {
                       <Typography
                         variant="h6"
                         fontWeight="bold"
-                        sx={{
-                          fontFamily: "'JetBrains Mono', monospace",
-                          color: item.color,
-                          animation: "numberPulse 0.5s ease-out",
-                          "@keyframes numberPulse": {
-                            "0%": { opacity: 0.7 },
-                            "100%": { opacity: 1 }
-                          }
-                        }}
+                        sx={{ fontFamily: "'JetBrains Mono', monospace", color: item.color }}
                       >
                         {item.format(item.value)}
                       </Typography>
@@ -631,109 +1223,147 @@ const UnderTheHood = () => {
           </Grid>
         </Box>
 
-        {/* Main Visualization Grid */}
+        {/* Main Grid: Strategy Neural Network */}
         <Grid container spacing={3}>
-          {/* Left: Strategy Categories */}
-          <Grid item xs={12} md={4}>
+          {/* Strategy Categories - Expandable */}
+          <Grid item xs={12} md={5}>
             <Box sx={{
               p: 2,
               borderRadius: 3,
               bgcolor: "rgba(255,255,255,0.02)",
-              border: "1px solid rgba(255,255,255,0.06)",
-              height: "100%"
+              border: "1px solid rgba(255,255,255,0.06)"
             }}>
               <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
                 <Hub sx={{ color: "primary.main" }} />
                 <Typography variant="subtitle1" fontWeight="bold">Strategy Neural Network</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ ml: "auto" }}>
+                  Click to explore
+                </Typography>
               </Stack>
 
-              <Stack spacing={2}>
+              <Stack spacing={1.5}>
                 {Object.entries(STRATEGY_CATEGORIES).map(([category, data]) => {
                   const activeInCategory = botState?.active_strategies?.filter(s =>
                     data.strategies.includes(s)
                   ).length || 0;
+                  const isExpanded = expandedCategory === category;
 
                   return (
-                    <Box
-                      key={category}
-                      sx={{
-                        p: 1.5,
-                        borderRadius: 2,
-                        bgcolor: "rgba(255,255,255,0.02)",
-                        border: `1px solid ${activeInCategory > 0 ? data.color + '40' : 'rgba(255,255,255,0.04)'}`,
-                        transition: "all 0.3s ease",
-                        "&:hover": {
-                          bgcolor: "rgba(255,255,255,0.04)",
-                          transform: "translateX(4px)"
-                        }
-                      }}
-                    >
-                      <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Stack direction="row" spacing={1.5} alignItems="center">
-                          <Box
-                            sx={{
-                              width: 36,
-                              height: 36,
-                              borderRadius: 2,
-                              bgcolor: data.color + "20",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center"
-                            }}
-                          >
-                            <Bolt sx={{ color: data.color, fontSize: 20 }} />
-                          </Box>
-                          <Box>
-                            <Typography variant="body2" fontWeight="bold" sx={{ color: data.color }}>
-                              {category}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {data.strategies.length} strategies
-                            </Typography>
-                          </Box>
+                    <Box key={category}>
+                      <Box
+                        onClick={() => setExpandedCategory(isExpanded ? null : category)}
+                        sx={{
+                          p: 1.5,
+                          borderRadius: 2,
+                          bgcolor: isExpanded ? data.color + "10" : "rgba(255,255,255,0.02)",
+                          border: `1px solid ${isExpanded || activeInCategory > 0 ? data.color + '40' : 'rgba(255,255,255,0.04)'}`,
+                          cursor: "pointer",
+                          transition: "all 0.3s ease",
+                          "&:hover": {
+                            bgcolor: data.color + "15",
+                            transform: "translateX(4px)"
+                          }
+                        }}
+                      >
+                        <Stack direction="row" justifyContent="space-between" alignItems="center">
+                          <Stack direction="row" spacing={1.5} alignItems="center">
+                            <Box
+                              sx={{
+                                width: 36,
+                                height: 36,
+                                borderRadius: 2,
+                                bgcolor: data.color + "20",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center"
+                              }}
+                            >
+                              <Bolt sx={{ color: data.color, fontSize: 20 }} />
+                            </Box>
+                            <Box>
+                              <Typography variant="body2" fontWeight="bold" sx={{ color: data.color }}>
+                                {category}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {data.strategies.length} strategies
+                              </Typography>
+                            </Box>
+                          </Stack>
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Chip
+                              label={`${activeInCategory} active`}
+                              size="small"
+                              sx={{
+                                height: 20,
+                                fontSize: "0.65rem",
+                                bgcolor: activeInCategory > 0 ? data.color + "20" : "transparent",
+                                color: activeInCategory > 0 ? data.color : "text.secondary"
+                              }}
+                            />
+                            {isExpanded ? (
+                              <ExpandLess sx={{ color: data.color }} />
+                            ) : (
+                              <ExpandMore sx={{ color: "text.secondary" }} />
+                            )}
+                          </Stack>
                         </Stack>
-                        <Chip
-                          label={`${activeInCategory} active`}
-                          size="small"
-                          sx={{
-                            height: 20,
-                            fontSize: "0.65rem",
-                            bgcolor: activeInCategory > 0 ? data.color + "20" : "transparent",
-                            color: activeInCategory > 0 ? data.color : "text.secondary",
-                            border: `1px solid ${activeInCategory > 0 ? data.color + '40' : 'rgba(255,255,255,0.1)'}`
-                          }}
-                        />
-                      </Stack>
+                      </Box>
 
-                      {/* Mini strategy indicators */}
-                      <Stack direction="row" spacing={0.5} sx={{ mt: 1, flexWrap: "wrap", gap: 0.5 }}>
-                        {data.strategies.slice(0, 4).map(strat => {
-                          const isActive = botState?.active_strategies?.includes(strat);
-                          const isAnimating = animatingStrategy === strat;
-                          return (
-                            <Tooltip key={strat} title={formatStrategyName(strat)}>
-                              <Box
-                                sx={{
-                                  width: 8,
-                                  height: 8,
-                                  borderRadius: "50%",
-                                  bgcolor: isActive ? data.color : "rgba(255,255,255,0.1)",
-                                  animation: isAnimating ? "stratPulse 0.5s ease-in-out infinite" : "none",
-                                  "@keyframes stratPulse": {
-                                    "0%, 100%": { transform: "scale(1)", opacity: 1 },
-                                    "50%": { transform: "scale(1.5)", opacity: 0.7 }
-                                  }
-                                }}
-                              />
-                            </Tooltip>
-                          );
-                        })}
-                        {data.strategies.length > 4 && (
-                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.6rem" }}>
-                            +{data.strategies.length - 4}
+                      {/* Expanded Strategies List */}
+                      <Collapse in={isExpanded}>
+                        <Box sx={{ pl: 2, pt: 1 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+                            {data.description}
                           </Typography>
-                        )}
-                      </Stack>
+                          <Stack spacing={0.5}>
+                            {data.strategies.map(stratId => {
+                              const stratInfo = STRATEGY_FORMULAS[stratId];
+                              const isActive = botState?.active_strategies?.includes(stratId);
+                              return (
+                                <Box
+                                  key={stratId}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedStrategy(stratId);
+                                  }}
+                                  sx={{
+                                    p: 1,
+                                    borderRadius: 1,
+                                    bgcolor: isActive ? data.color + "15" : "rgba(255,255,255,0.02)",
+                                    border: `1px solid ${isActive ? data.color + "30" : "rgba(255,255,255,0.04)"}`,
+                                    cursor: "pointer",
+                                    transition: "all 0.2s ease",
+                                    "&:hover": {
+                                      bgcolor: data.color + "20",
+                                      borderColor: data.color + "50"
+                                    }
+                                  }}
+                                >
+                                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                                    <Stack direction="row" spacing={1} alignItems="center">
+                                      <Box sx={{
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: "50%",
+                                        bgcolor: isActive ? data.color : "rgba(255,255,255,0.2)"
+                                      }} />
+                                      <Typography variant="caption" sx={{ color: isActive ? data.color : "text.primary" }}>
+                                        {stratInfo?.name || formatStrategyName(stratId)}
+                                      </Typography>
+                                    </Stack>
+                                    <Stack direction="row" spacing={0.5} alignItems="center">
+                                      <Code sx={{ fontSize: 14, color: "text.secondary" }} />
+                                      <Typography variant="caption" color="text.secondary">
+                                        View Formula
+                                      </Typography>
+                                    </Stack>
+                                  </Stack>
+                                </Box>
+                              );
+                            })}
+                          </Stack>
+                        </Box>
+                      </Collapse>
                     </Box>
                   );
                 })}
@@ -741,200 +1371,8 @@ const UnderTheHood = () => {
             </Box>
           </Grid>
 
-          {/* Center: Signal Flow Visualization */}
-          <Grid item xs={12} md={4}>
-            <Box sx={{
-              p: 2,
-              borderRadius: 3,
-              bgcolor: "rgba(255,255,255,0.02)",
-              border: "1px solid rgba(255,255,255,0.06)",
-              minHeight: 400
-            }}>
-              <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-                <DataUsage sx={{ color: "primary.main" }} />
-                <Typography variant="subtitle1" fontWeight="bold">Calculation Pipeline</Typography>
-              </Stack>
-
-              {/* Signal Flow Diagram */}
-              <Box sx={{ position: "relative", minHeight: 350 }}>
-                {/* Data Input Layer - Now with actual values */}
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block" }}>
-                    RAW DATA INPUTS
-                  </Typography>
-                  <Stack spacing={1}>
-                    {[
-                      { name: "Price", value: `$${(aggregatedData?.avgPrice || 0).toFixed(2)}`, color: "#22c55e" },
-                      { name: "Volume", value: `${((aggregatedData?.totalVolume || 0) / 1000000).toFixed(1)}M`, color: "#3b82f6" },
-                      { name: "RSI", value: `${(aggregatedData?.avgRsi || 50).toFixed(1)}`, color: "#f59e0b" }
-                    ].map((input, i) => (
-                      <Box
-                        key={input.name}
-                        sx={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          px: 2,
-                          py: 1,
-                          borderRadius: 1,
-                          bgcolor: "rgba(59, 130, 246, 0.05)",
-                          border: "1px solid rgba(59, 130, 246, 0.2)",
-                          animation: `dataFlow ${1 + i * 0.2}s ease-in-out infinite`,
-                          "@keyframes dataFlow": {
-                            "0%, 100%": { borderColor: "rgba(59, 130, 246, 0.2)" },
-                            "50%": { borderColor: "rgba(59, 130, 246, 0.5)" }
-                          }
-                        }}
-                      >
-                        <Typography variant="caption" sx={{ color: "#94a3b8" }}>
-                          {input.name}
-                        </Typography>
-                        <Typography
-                          variant="caption"
-                          sx={{
-                            color: input.color,
-                            fontFamily: "'JetBrains Mono', monospace",
-                            fontWeight: 600
-                          }}
-                        >
-                          {input.value}
-                        </Typography>
-                      </Box>
-                    ))}
-                  </Stack>
-                </Box>
-
-                {/* Flow Lines */}
-                <Box sx={{
-                  height: 30,
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  position: "relative"
-                }}>
-                  <Box sx={{
-                    width: 2,
-                    height: "100%",
-                    background: "linear-gradient(180deg, rgba(59,130,246,0.5) 0%, rgba(139,92,246,0.5) 100%)",
-                    animation: "flowDown 1s ease-in-out infinite",
-                    "@keyframes flowDown": {
-                      "0%": { opacity: 0.3 },
-                      "50%": { opacity: 1 },
-                      "100%": { opacity: 0.3 }
-                    }
-                  }} />
-                  <ArrowForward sx={{
-                    position: "absolute",
-                    bottom: 0,
-                    transform: "rotate(90deg)",
-                    color: "rgba(139,92,246,0.5)",
-                    fontSize: 16
-                  }} />
-                </Box>
-
-                {/* Strategy Processing Layer */}
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block", textAlign: "center" }}>
-                    STRATEGY AGGREGATION
-                  </Typography>
-                  <Box sx={{
-                    p: 2,
-                    borderRadius: 2,
-                    background: "linear-gradient(135deg, rgba(139,92,246,0.1) 0%, rgba(59,130,246,0.1) 100%)",
-                    border: "1px solid rgba(139,92,246,0.3)",
-                    textAlign: "center"
-                  }}>
-                    <Stack direction="row" justifyContent="center" spacing={3}>
-                      <Box sx={{ textAlign: "center" }}>
-                        <Typography variant="h4" fontWeight="bold" sx={{ color: "#22c55e", fontFamily: "'JetBrains Mono', monospace" }}>
-                          {botState?.analyzed_opportunities?.filter(o => o.final_action === "BUY").length || 0}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">BUY</Typography>
-                      </Box>
-                      <Divider orientation="vertical" flexItem sx={{ bgcolor: "rgba(255,255,255,0.1)" }} />
-                      <Box sx={{ textAlign: "center" }}>
-                        <Typography variant="h4" fontWeight="bold" sx={{ color: "#ef4444", fontFamily: "'JetBrains Mono', monospace" }}>
-                          {botState?.analyzed_opportunities?.filter(o => o.final_action === "SELL").length || 0}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">SELL</Typography>
-                      </Box>
-                      <Divider orientation="vertical" flexItem sx={{ bgcolor: "rgba(255,255,255,0.1)" }} />
-                      <Box sx={{ textAlign: "center" }}>
-                        <Typography variant="h4" fontWeight="bold" sx={{ color: "#64748b", fontFamily: "'JetBrains Mono', monospace" }}>
-                          {botState?.analyzed_opportunities?.filter(o => o.final_action === "HOLD").length || 0}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">HOLD</Typography>
-                      </Box>
-                    </Stack>
-                  </Box>
-                </Box>
-
-                {/* Flow Lines */}
-                <Box sx={{
-                  height: 30,
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  position: "relative"
-                }}>
-                  <Box sx={{
-                    width: 2,
-                    height: "100%",
-                    background: "linear-gradient(180deg, rgba(139,92,246,0.5) 0%, rgba(34,197,94,0.5) 100%)"
-                  }} />
-                  <ArrowForward sx={{
-                    position: "absolute",
-                    bottom: 0,
-                    transform: "rotate(90deg)",
-                    color: "rgba(34,197,94,0.5)",
-                    fontSize: 16
-                  }} />
-                </Box>
-
-                {/* Decision Output */}
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block", textAlign: "center" }}>
-                    FINAL DECISION LAYER
-                  </Typography>
-                  <Box sx={{
-                    p: 2,
-                    borderRadius: 2,
-                    background: "linear-gradient(135deg, rgba(34,197,94,0.15) 0%, rgba(22,163,74,0.15) 100%)",
-                    border: "1px solid rgba(34,197,94,0.4)",
-                    textAlign: "center"
-                  }}>
-                    <Stack spacing={1}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Typography variant="caption" color="text.secondary">
-                          Confidence Threshold
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: "#4ade80", fontFamily: "'JetBrains Mono', monospace" }}>
-                          {botState?.risk_posture === "AGGRESSIVE" ? "50%" : botState?.risk_posture === "CONSERVATIVE" ? "80%" : "65%"}
-                        </Typography>
-                      </Stack>
-                      <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Typography variant="caption" color="text.secondary">
-                          Risk Posture
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: "#f59e0b", fontFamily: "'JetBrains Mono', monospace" }}>
-                          {botState?.risk_posture || "MODERATE"}
-                        </Typography>
-                      </Stack>
-                      <Divider sx={{ bgcolor: "rgba(255,255,255,0.1)", my: 1 }} />
-                      <Chip
-                        label={botState?.mode || "MONITORING"}
-                        color={botState?.running ? "success" : "default"}
-                        sx={{ fontWeight: "bold" }}
-                      />
-                    </Stack>
-                  </Box>
-                </Box>
-              </Box>
-            </Box>
-          </Grid>
-
-          {/* Right: Live Opportunities with Granular Data */}
-          <Grid item xs={12} md={4}>
+          {/* Live Analysis Panel */}
+          <Grid item xs={12} md={7}>
             <Box sx={{
               p: 2,
               borderRadius: 3,
@@ -947,12 +1385,12 @@ const UnderTheHood = () => {
                 <Typography variant="subtitle1" fontWeight="bold">Live Analysis</Typography>
                 <Box sx={{ flexGrow: 1 }} />
                 <Typography variant="caption" color="text.secondary">
-                  {botState?.analyzed_opportunities?.length || 0} active
+                  {botState?.analyzed_opportunities?.length || 0} opportunities
                 </Typography>
               </Stack>
 
-              <Stack spacing={1.5} sx={{ maxHeight: 380, overflow: "auto" }}>
-                {botState?.analyzed_opportunities?.slice(0, 8).map((opp, index) => (
+              <Stack spacing={1.5} sx={{ maxHeight: 450, overflow: "auto" }}>
+                {botState?.analyzed_opportunities?.slice(0, 10).map((opp, index) => (
                   <Box
                     key={opp.symbol}
                     sx={{
@@ -962,14 +1400,7 @@ const UnderTheHood = () => {
                       border: `1px solid ${expandedOpportunity === opp.symbol ? "rgba(59,130,246,0.3)" : "rgba(255,255,255,0.04)"}`,
                       cursor: "pointer",
                       transition: "all 0.2s ease",
-                      animation: index < 3 ? `slideIn ${0.3 + index * 0.1}s ease-out` : "none",
-                      "@keyframes slideIn": {
-                        "0%": { opacity: 0, transform: "translateX(20px)" },
-                        "100%": { opacity: 1, transform: "translateX(0)" }
-                      },
-                      "&:hover": {
-                        bgcolor: "rgba(255,255,255,0.04)"
-                      }
+                      "&:hover": { bgcolor: "rgba(255,255,255,0.04)" }
                     }}
                     onClick={() => setExpandedOpportunity(expandedOpportunity === opp.symbol ? null : opp.symbol)}
                   >
@@ -983,8 +1414,7 @@ const UnderTheHood = () => {
                             bgcolor: getSignalColor(opp.final_action) + "15",
                             display: "flex",
                             alignItems: "center",
-                            justifyContent: "center",
-                            border: `1px solid ${getSignalColor(opp.final_action)}30`
+                            justifyContent: "center"
                           }}
                         >
                           {opp.final_action === "BUY" ? (
@@ -1007,13 +1437,7 @@ const UnderTheHood = () => {
                               />
                             )}
                           </Stack>
-                          <Typography
-                            variant="caption"
-                            sx={{
-                              fontFamily: "'JetBrains Mono', monospace",
-                              color: "#94a3b8"
-                            }}
-                          >
+                          <Typography variant="caption" sx={{ fontFamily: "'JetBrains Mono', monospace", color: "#94a3b8" }}>
                             ${opp.price?.toFixed(2) || "N/A"}
                           </Typography>
                         </Box>
@@ -1036,41 +1460,24 @@ const UnderTheHood = () => {
                       </Stack>
                     </Stack>
 
-                    {/* Expanded Granular Data */}
-                    {expandedOpportunity === opp.symbol && (
+                    {/* Expanded Details */}
+                    <Collapse in={expandedOpportunity === opp.symbol}>
                       <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-                        {/* Raw Data Section */}
-                        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-                          RAW MARKET DATA
-                        </Typography>
                         <Grid container spacing={1} sx={{ mb: 2 }}>
                           {[
                             { label: "Open", value: opp.data?.open, format: (v: number) => `$${v.toFixed(2)}` },
                             { label: "High", value: opp.data?.high, format: (v: number) => `$${v.toFixed(2)}` },
                             { label: "Low", value: opp.data?.low, format: (v: number) => `$${v.toFixed(2)}` },
                             { label: "Vol", value: opp.data?.volume, format: (v: number) => `${(v / 1000).toFixed(0)}K` },
-                            { label: "RVol", value: opp.data?.relative_volume, format: (v: number) => `${v?.toFixed(1)}x` },
-                            { label: "ATR%", value: opp.data?.atr_percent, format: (v: number) => `${(v * 100).toFixed(2)}%` }
+                            { label: "RSI", value: opp.data?.rsi, format: (v: number) => v.toFixed(1) },
+                            { label: "VWAP", value: opp.data?.vwap, format: (v: number) => `$${v.toFixed(2)}` }
                           ].map(item => (
                             <Grid item xs={4} key={item.label}>
-                              <Box sx={{
-                                p: 0.75,
-                                borderRadius: 1,
-                                bgcolor: "rgba(255,255,255,0.03)",
-                                textAlign: "center"
-                              }}>
+                              <Box sx={{ p: 0.75, borderRadius: 1, bgcolor: "rgba(255,255,255,0.03)", textAlign: "center" }}>
                                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.6rem" }}>
                                   {item.label}
                                 </Typography>
-                                <Typography
-                                  variant="caption"
-                                  sx={{
-                                    display: "block",
-                                    fontFamily: "'JetBrains Mono', monospace",
-                                    color: "#fff",
-                                    fontWeight: 600
-                                  }}
-                                >
+                                <Typography variant="caption" sx={{ display: "block", fontFamily: "'JetBrains Mono', monospace", color: "#fff", fontWeight: 600 }}>
                                   {item.value ? item.format(item.value) : "N/A"}
                                 </Typography>
                               </Box>
@@ -1078,49 +1485,8 @@ const UnderTheHood = () => {
                           ))}
                         </Grid>
 
-                        {/* Indicator Values */}
                         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-                          INDICATOR VALUES
-                        </Typography>
-                        <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-                          {[
-                            { label: "RSI", value: opp.data?.rsi, color: opp.data?.rsi && opp.data.rsi > 70 ? "#ef4444" : opp.data?.rsi && opp.data.rsi < 30 ? "#22c55e" : "#f59e0b" },
-                            { label: "VWAP", value: opp.data?.vwap, prefix: "$" },
-                            { label: "Bid", value: opp.data?.bid, prefix: "$" },
-                            { label: "Ask", value: opp.data?.ask, prefix: "$" }
-                          ].map(item => (
-                            <Box
-                              key={item.label}
-                              sx={{
-                                flex: 1,
-                                p: 0.75,
-                                borderRadius: 1,
-                                bgcolor: "rgba(59, 130, 246, 0.05)",
-                                border: "1px solid rgba(59, 130, 246, 0.1)",
-                                textAlign: "center"
-                              }}
-                            >
-                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.55rem" }}>
-                                {item.label}
-                              </Typography>
-                              <Typography
-                                variant="caption"
-                                sx={{
-                                  display: "block",
-                                  fontFamily: "'JetBrains Mono', monospace",
-                                  color: item.color || "#60a5fa",
-                                  fontWeight: 600
-                                }}
-                              >
-                                {item.value ? `${item.prefix || ""}${item.value.toFixed(2)}` : "N/A"}
-                              </Typography>
-                            </Box>
-                          ))}
-                        </Stack>
-
-                        {/* Contributing Strategies */}
-                        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-                          STRATEGY SIGNALS ({opp.signals?.length || 0})
+                          CONTRIBUTING STRATEGIES ({opp.signals?.length || 0})
                         </Typography>
                         <Stack spacing={0.5}>
                           {opp.signals?.slice(0, 4).map(sig => {
@@ -1131,12 +1497,18 @@ const UnderTheHood = () => {
                                 direction="row"
                                 justifyContent="space-between"
                                 alignItems="center"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedStrategy(sig.strategy);
+                                }}
                                 sx={{
                                   px: 1,
                                   py: 0.5,
                                   borderRadius: 1,
                                   bgcolor: catInfo.color + "10",
-                                  border: `1px solid ${catInfo.color}20`
+                                  border: `1px solid ${catInfo.color}20`,
+                                  cursor: "pointer",
+                                  "&:hover": { bgcolor: catInfo.color + "20" }
                                 }}
                               >
                                 <Typography variant="caption" sx={{ color: catInfo.color }}>
@@ -1153,14 +1525,7 @@ const UnderTheHood = () => {
                                       color: getSignalColor(sig.action)
                                     }}
                                   />
-                                  <Typography
-                                    variant="caption"
-                                    sx={{
-                                      fontFamily: "'JetBrains Mono', monospace",
-                                      color: "#94a3b8",
-                                      fontSize: "0.6rem"
-                                    }}
-                                  >
+                                  <Typography variant="caption" sx={{ fontFamily: "'JetBrains Mono', monospace", color: "#94a3b8", fontSize: "0.6rem" }}>
                                     {(sig.confidence * 100).toFixed(0)}%
                                   </Typography>
                                 </Stack>
@@ -1168,19 +1533,8 @@ const UnderTheHood = () => {
                             );
                           })}
                         </Stack>
-
-                        {opp.reasoning && (
-                          <Box sx={{ mt: 1.5, p: 1, borderRadius: 1, bgcolor: "rgba(255,255,255,0.02)" }}>
-                            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
-                              REASONING
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: "#94a3b8", fontStyle: "italic" }}>
-                              "{opp.reasoning.slice(0, 150)}..."
-                            </Typography>
-                          </Box>
-                        )}
                       </Box>
-                    )}
+                    </Collapse>
                   </Box>
                 ))}
 
@@ -1190,9 +1544,6 @@ const UnderTheHood = () => {
                     <Typography variant="body2" color="text.secondary">
                       Waiting for market scan...
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Click "Scan Now" on the scanner panel
-                    </Typography>
                   </Box>
                 )}
               </Stack>
@@ -1200,7 +1551,7 @@ const UnderTheHood = () => {
           </Grid>
         </Grid>
 
-        {/* Bottom: Real-time Indicator Feed */}
+        {/* Bottom Activity Stream */}
         <Box sx={{
           mt: 3,
           p: 2,
@@ -1226,26 +1577,23 @@ const UnderTheHood = () => {
                 }
               }} />
               <Typography variant="caption" color="text.secondary">
-                Last update: {botState?.last_scan ? new Date(botState.last_scan).toLocaleTimeString() : "Never"}
+                {botState?.last_scan ? new Date(botState.last_scan).toLocaleTimeString() : "Never"}
               </Typography>
             </Stack>
           </Stack>
 
           <Stack direction="row" spacing={2} sx={{ overflow: "auto", pb: 1 }}>
-            {/* Scrolling activity indicators with live values */}
             {[
               { label: "Market Feed", value: connected ? "STREAMING" : "OFFLINE", color: connected ? "#22c55e" : "#ef4444", icon: <ShowChart sx={{ fontSize: 14 }} /> },
-              { label: "Quote Cache", value: `${botState?.symbols_scanned || 0} symbols`, color: "#3b82f6", icon: <DataUsage sx={{ fontSize: 14 }} /> },
               { label: "Strategies", value: `${botState?.active_strategies?.length || 0} active`, color: "#8b5cf6", icon: <Hub sx={{ fontSize: 14 }} /> },
               { label: "Risk Mode", value: botState?.risk_posture || "MODERATE", color: "#f59e0b", icon: <Speed sx={{ fontSize: 14 }} /> },
               { label: "Engine", value: botState?.running ? "RUNNING" : "STOPPED", color: botState?.running ? "#22c55e" : "#ef4444", icon: <Memory sx={{ fontSize: 14 }} /> },
-              { label: "Latency", value: "~100ms", color: "#06b6d4", icon: <Timeline sx={{ fontSize: 14 }} /> },
-              { label: "Throughput", value: `${updateCount}/s`, color: "#ec4899", icon: <BarChart sx={{ fontSize: 14 }} /> }
+              { label: "Updates", value: `${updateCount}`, color: "#06b6d4", icon: <Timeline sx={{ fontSize: 14 }} /> }
             ].map((item) => (
               <Box
                 key={item.label}
                 sx={{
-                  minWidth: 130,
+                  minWidth: 120,
                   p: 1.5,
                   borderRadius: 2,
                   bgcolor: "rgba(255,255,255,0.02)",
@@ -1260,14 +1608,7 @@ const UnderTheHood = () => {
                   <Box sx={{ color: item.color }}>{item.icon}</Box>
                   <Typography variant="caption" color="text.secondary">{item.label}</Typography>
                 </Stack>
-                <Typography
-                  variant="body2"
-                  fontWeight="bold"
-                  sx={{
-                    color: item.color,
-                    fontFamily: "'JetBrains Mono', monospace"
-                  }}
-                >
+                <Typography variant="body2" fontWeight="bold" sx={{ color: item.color, fontFamily: "'JetBrains Mono', monospace" }}>
                   {item.value}
                 </Typography>
               </Box>
