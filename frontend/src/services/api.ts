@@ -301,4 +301,21 @@ export const fetchWatchlistSnapshots = async (symbols?: string[]) => {
   return data;
 };
 
+// ==================== Strategy Performance API ====================
+
+export const fetchStrategyPerformanceByPeriod = async () => {
+  const { data } = await api.get("/api/trades/strategy-performance");
+  return data;
+};
+
+export const fetchTradesByStrategy = async (strategyName: string, limit: number = 50) => {
+  const { data } = await api.get(`/api/trades/by-strategy/${encodeURIComponent(strategyName)}?limit=${limit}`);
+  return data;
+};
+
+export const fetchAvailableStrategies = async () => {
+  const { data } = await api.get("/api/trades/strategies");
+  return data;
+};
+
 export default api;
