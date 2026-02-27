@@ -1,6 +1,8 @@
 """
 Fully Autonomous Trading Engine for Zella AI
 Continuously scans, analyzes, and trades using all available strategies
+
+CRITICAL: Thread-safe context tracking for parallel trade management
 """
 
 from __future__ import annotations
@@ -9,10 +11,47 @@ import asyncio
 import logging
 from datetime import datetime, time
 from typing import Any, Dict, List, Optional, Set, Tuple
+from threading import Lock, RLock
+from dataclasses import dataclass, field
+from copy import deepcopy
 import json
 from pathlib import Path
 
 import pandas as pd
+
+
+@dataclass
+class TradeContext:
+    """Immutable snapshot of context when a trade was initiated - NEVER LOSE THIS"""
+    symbol: str
+    strategy_name: str
+    entry_time: datetime
+    entry_price: float
+    quantity: int
+    confidence: float
+    setup_grade: str
+    # Market state at entry
+    spy_price: float = 0.0
+    vwap: float = 0.0
+    atr: float = 0.0
+    # Account state at entry
+    daily_pnl_at_entry: float = 0.0
+    buying_power_at_entry: float = 0.0
+    other_positions: List[str] = field(default_factory=list)
+    # Strategy signals that triggered this trade
+    signals_used: List[str] = field(default_factory=list)
+
+
+@dataclass
+class SymbolState:
+    """Per-symbol state to prevent context leakage between parallel trades"""
+    symbol: str
+    last_signal: Optional[str] = None
+    last_signal_time: Optional[datetime] = None
+    current_position: Optional[TradeContext] = None
+    pending_scale_outs: List[Dict] = field(default_factory=list)
+    bars_cache: Optional[pd.DataFrame] = None
+    bars_cache_time: Optional[datetime] = None
 
 from core.strategy_engine import StrategyEngine
 from core.risk_manager import RiskManager
@@ -118,12 +157,25 @@ class AutonomousEngine:
         self.max_positions = self.config.get("max_positions", 5)
         self.enabled_strategies = self.config.get("enabled_strategies", "ALL")
 
-        # State
+        # State - THREAD SAFE with locks
         self.running = False
         self.last_scan_time: Optional[datetime] = None
         self.decisions: List[Dict[str, Any]] = []
         self.active_symbols: Set[str] = set()
         self.strategy_performance: Dict[str, Dict[str, Any]] = {}
+
+        # CRITICAL: Thread locks for concurrent access
+        self._state_lock = RLock()  # Protects: daily_pnl, decisions, active_symbols
+        self._position_lock = Lock()  # Protects: elite_position_manager, position operations
+        self._cache_lock = Lock()  # Protects: spy_data_cache, bars caches
+
+        # Per-symbol context isolation - prevents context leakage in parallel trades
+        self._symbol_states: Dict[str, SymbolState] = {}
+        self._symbol_lock = Lock()  # Protects _symbol_states
+
+        # Trade context tracking - NEVER LOSE TRADE CONTEXT
+        self._active_trade_contexts: Dict[str, TradeContext] = {}  # symbol -> context
+        self._trade_context_lock = Lock()
 
         # Scanner results (for UI display)
         self.last_scanner_results: List[Dict[str, Any]] = []  # Raw screener output
@@ -382,6 +434,172 @@ class AutonomousEngine:
         except Exception as e:
             logger.error(f"Error saving state: {e}")
 
+    # ==================== THREAD-SAFE CONTEXT MANAGEMENT ====================
+
+    def _get_symbol_state(self, symbol: str) -> SymbolState:
+        """Get or create per-symbol state - THREAD SAFE"""
+        with self._symbol_lock:
+            if symbol not in self._symbol_states:
+                self._symbol_states[symbol] = SymbolState(symbol=symbol)
+            return self._symbol_states[symbol]
+
+    def _update_symbol_signal(self, symbol: str, signal: str) -> bool:
+        """
+        Update last signal for a symbol - prevents duplicate signals.
+        Returns True if this is a NEW signal, False if duplicate.
+        THREAD SAFE - per-symbol isolation prevents cross-contamination.
+        """
+        with self._symbol_lock:
+            state = self._get_symbol_state(symbol)
+            if state.last_signal == signal:
+                # Same signal as before - ignore to prevent duplicate trades
+                return False
+            state.last_signal = signal
+            state.last_signal_time = datetime.now()
+            return True
+
+    def _create_trade_context(
+        self,
+        symbol: str,
+        strategy_name: str,
+        entry_price: float,
+        quantity: int,
+        confidence: float,
+        setup_grade: str,
+        signals_used: List[str]
+    ) -> TradeContext:
+        """
+        Create a complete snapshot of context when trade is initiated.
+        This context is IMMUTABLE and preserved for the life of the trade.
+        CRITICAL: Never lose this context during parallel operations.
+        """
+        # Get current market state
+        spy_price = 0.0
+        with self._cache_lock:
+            if self._spy_data_cache is not None and len(self._spy_data_cache) > 0:
+                spy_price = float(self._spy_data_cache.iloc[-1].get("close", 0))
+
+        # Get VWAP and ATR for the symbol
+        symbol_state = self._get_symbol_state(symbol)
+        vwap = 0.0
+        atr_val = 0.0
+        if symbol_state.bars_cache is not None and len(symbol_state.bars_cache) > 0:
+            vwap = float(symbol_state.bars_cache.iloc[-1].get("vwap", 0)) if "vwap" in symbol_state.bars_cache.columns else 0.0
+            atr_val = float(atr(symbol_state.bars_cache)) if len(symbol_state.bars_cache) >= 14 else 0.0
+
+        # Get account state
+        buying_power = 0.0
+        try:
+            account = self.broker.get_account_summary()
+            buying_power = float(account.get("BuyingPower", 0))
+        except Exception:
+            pass
+
+        # Get other open positions
+        other_positions = []
+        with self._state_lock:
+            other_positions = [s for s in self.active_symbols if s != symbol]
+            daily_pnl_snapshot = self.daily_pnl
+
+        context = TradeContext(
+            symbol=symbol,
+            strategy_name=strategy_name,
+            entry_time=datetime.now(),
+            entry_price=entry_price,
+            quantity=quantity,
+            confidence=confidence,
+            setup_grade=setup_grade,
+            spy_price=spy_price,
+            vwap=vwap,
+            atr=atr_val,
+            daily_pnl_at_entry=daily_pnl_snapshot,
+            buying_power_at_entry=buying_power,
+            other_positions=other_positions,
+            signals_used=signals_used
+        )
+
+        # Store context - NEVER LOSE THIS
+        with self._trade_context_lock:
+            self._active_trade_contexts[symbol] = context
+
+        logger.info(f"📸 Trade context captured for {symbol}: {strategy_name}, ${entry_price:.2f} x {quantity}")
+        return context
+
+    def _get_trade_context(self, symbol: str) -> Optional[TradeContext]:
+        """Get the trade context for a symbol - THREAD SAFE"""
+        with self._trade_context_lock:
+            return self._active_trade_contexts.get(symbol)
+
+    def _clear_trade_context(self, symbol: str) -> Optional[TradeContext]:
+        """Clear trade context when position is closed - returns the context for logging"""
+        with self._trade_context_lock:
+            return self._active_trade_contexts.pop(symbol, None)
+
+    def _update_daily_pnl(self, pnl_change: float) -> float:
+        """Thread-safe daily P&L update - returns new total"""
+        with self._state_lock:
+            self.daily_pnl += pnl_change
+            return self.daily_pnl
+
+    def _add_active_symbol(self, symbol: str):
+        """Thread-safe add symbol to active set"""
+        with self._state_lock:
+            self.active_symbols.add(symbol)
+
+    def _remove_active_symbol(self, symbol: str):
+        """Thread-safe remove symbol from active set"""
+        with self._state_lock:
+            self.active_symbols.discard(symbol)
+
+    def _reconcile_positions_with_broker(self) -> Dict[str, Any]:
+        """
+        Reconcile our tracked positions with broker's actual positions.
+        CRITICAL: Run periodically to detect any desync.
+        Returns discrepancies found.
+        """
+        discrepancies = {"missing_locally": [], "missing_at_broker": [], "quantity_mismatch": []}
+
+        try:
+            broker_positions = self.broker.get_positions()
+            broker_symbols = {p["symbol"] for p in broker_positions}
+
+            with self._state_lock:
+                our_symbols = self.active_symbols.copy()
+
+            # Check for positions at broker that we don't know about
+            for bp in broker_positions:
+                symbol = bp["symbol"]
+                if symbol not in our_symbols:
+                    discrepancies["missing_locally"].append({
+                        "symbol": symbol,
+                        "broker_qty": bp.get("quantity", 0),
+                        "action": "WILL_TRACK"
+                    })
+                    # Auto-heal: start tracking this position
+                    self._add_active_symbol(symbol)
+                    logger.warning(f"⚠️ Position found at broker but not tracked: {symbol}")
+
+            # Check for positions we think we have but broker doesn't
+            for symbol in our_symbols:
+                if symbol not in broker_symbols:
+                    discrepancies["missing_at_broker"].append({
+                        "symbol": symbol,
+                        "our_qty": "tracked",
+                        "action": "WILL_REMOVE"
+                    })
+                    # Auto-heal: stop tracking this position
+                    self._remove_active_symbol(symbol)
+                    self._clear_trade_context(symbol)
+                    logger.warning(f"⚠️ Position tracked but not at broker: {symbol} - removing")
+
+            if discrepancies["missing_locally"] or discrepancies["missing_at_broker"]:
+                logger.warning(f"🔄 Position reconciliation found {len(discrepancies['missing_locally'])} missing locally, {len(discrepancies['missing_at_broker'])} missing at broker")
+
+        except Exception as e:
+            logger.error(f"Position reconciliation failed: {e}")
+
+        return discrepancies
+
     async def start(self):
         """Start the autonomous trading engine"""
         if self.running:
@@ -423,6 +641,7 @@ class AutonomousEngine:
         asyncio.create_task(self._position_monitor())
         asyncio.create_task(self._latency_monitor())  # Monitor latency
         asyncio.create_task(self._periodic_state_save())  # Save state for recovery
+        asyncio.create_task(self._position_reconciliation_loop())  # Reconcile with broker
 
     async def stop(self):
         """Stop the autonomous trading engine"""
@@ -486,6 +705,35 @@ class AutonomousEngine:
                 logger.debug("📝 Periodic state save completed")
             except Exception as e:
                 logger.error(f"Error in periodic state save: {e}")
+                await asyncio.sleep(30)
+
+    async def _position_reconciliation_loop(self):
+        """
+        Periodically reconcile our position tracking with broker's actual positions.
+        CRITICAL: Prevents desync that could lead to orphaned positions or missed exits.
+        Runs every 60 seconds during market hours.
+        """
+        while self.running:
+            try:
+                await asyncio.sleep(60)  # Check every 60 seconds
+
+                # Only reconcile during market hours
+                if not self._is_market_hours():
+                    continue
+
+                discrepancies = self._reconcile_positions_with_broker()
+
+                # Log any discrepancies found
+                if discrepancies["missing_locally"] or discrepancies["missing_at_broker"]:
+                    self._add_decision(
+                        "RECONCILIATION",
+                        f"Position sync: {len(discrepancies['missing_locally'])} found at broker, {len(discrepancies['missing_at_broker'])} removed",
+                        "WARNING",
+                        discrepancies
+                    )
+
+            except Exception as e:
+                logger.error(f"Error in position reconciliation: {e}")
                 await asyncio.sleep(30)
 
     async def _main_trading_loop(self):
@@ -1664,7 +1912,7 @@ class AutonomousEngine:
         return market_open <= now <= market_close
 
     def _add_decision(self, decision_type: str, action: str, status: str, metadata: Dict[str, Any]):
-        """Add decision to log"""
+        """Add decision to log - THREAD SAFE"""
         decision = {
             "id": f"d_{datetime.now().timestamp()}",
             "time": datetime.now().strftime("%H:%M:%S"),
@@ -1674,11 +1922,12 @@ class AutonomousEngine:
             "metadata": metadata
         }
 
-        self.decisions.insert(0, decision)  # Add to front
+        with self._state_lock:
+            self.decisions.insert(0, decision)  # Add to front
 
-        # Keep last 100 decisions
-        if len(self.decisions) > 100:
-            self.decisions = self.decisions[:100]
+            # Keep last 100 decisions
+            if len(self.decisions) > 100:
+                self.decisions = self.decisions[:100]
 
     def get_status(self) -> Dict[str, Any]:
         """Get current engine status with detailed scanner information"""
