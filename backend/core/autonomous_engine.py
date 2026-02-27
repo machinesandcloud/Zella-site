@@ -619,6 +619,14 @@ class AutonomousEngine:
         self._save_state()
         logger.info("🤖 Autonomous Engine STARTED")
 
+        # Add startup decision so user can see the engine started in logs
+        self._add_decision(
+            "SYSTEM",
+            f"Autonomous Engine STARTED - Mode: {self.mode}, Risk: {self.risk_posture}",
+            "SUCCESS",
+            {"mode": self.mode, "risk_posture": self.risk_posture, "broker_connected": self.broker.is_connected()}
+        )
+
         # Run system integration validation on first start
         if not self._integration_validated:
             logger.info("🔍 Running system integration validation...")
@@ -766,13 +774,36 @@ class AutonomousEngine:
                 # 2. Analyze each opportunity with ALL strategies
                 analyzed = await self._analyze_opportunities(opportunities)
 
+                # Log scan results so user can see activity
+                self._add_decision(
+                    "SCAN",
+                    f"Scanned {self.symbols_scanned} symbols - Found {len(opportunities)} opportunities, {len(analyzed)} analyzed",
+                    "INFO",
+                    {
+                        "symbols_scanned": self.symbols_scanned,
+                        "opportunities": len(opportunities),
+                        "analyzed": len(analyzed),
+                        "market_open": is_market_open,
+                        "top_symbols": [o.get("symbol") for o in opportunities[:5]]
+                    }
+                )
+
                 # 3. Rank and select best opportunities
                 top_picks = self._rank_opportunities(analyzed)
 
                 # 4. Execute trades ONLY during market hours and in auto modes
                 # DAY TRADING RULE: No new positions after 3:30 PM ET
                 if is_market_open and self.mode in ["FULL_AUTO", "GOD_MODE"]:
-                    if is_past_new_trade_cutoff():
+                    # Check broker connection before trading
+                    if not self._can_execute_trades():
+                        self._add_decision(
+                            "SYSTEM",
+                            f"Broker not connected - scanning only ({len(opportunities)} opportunities found)",
+                            "WARNING",
+                            {"opportunities": len(opportunities), "analyzed": len(analyzed), "broker_connected": False}
+                        )
+                        logger.warning("⚠️ Broker not connected - cannot execute trades")
+                    elif is_past_new_trade_cutoff():
                         mins_left = minutes_until_close()
                         self._add_decision(
                             "CUTOFF",
@@ -793,7 +824,7 @@ class AutonomousEngine:
                         await self._execute_trades(top_picks)
                 elif not is_market_open and opportunities:
                     self._add_decision(
-                        "INFO",
+                        "SCAN",
                         f"Market closed - scan only mode ({len(opportunities)} opportunities)",
                         "INFO",
                         {"opportunities": len(opportunities), "analyzed": len(analyzed)}
@@ -2035,15 +2066,17 @@ class AutonomousEngine:
             logger.error(f"Error in learning cycle: {e}")
 
     def _should_trade_now(self) -> bool:
-        """Check if we should trade at this time"""
+        """Check if we should trade at this time - ALWAYS allow scanning for UI updates"""
         if not self.enabled or not self.running:
             return False
 
-        # Check if broker connected
-        if not self.broker.is_connected():
-            return False
-
+        # Always return True - we want to scan for UI updates even if broker is not connected
+        # The trading logic itself will check broker connection before executing trades
         return True
+
+    def _can_execute_trades(self) -> bool:
+        """Check if we can actually execute trades (broker must be connected)"""
+        return self.broker.is_connected()
 
     def _is_market_hours(self) -> bool:
         """Check if we're in regular market hours"""
@@ -2052,15 +2085,22 @@ class AutonomousEngine:
         market_close = time(16, 0)
         return market_open <= now <= market_close
 
-    def _add_decision(self, decision_type: str, action: str, status: str, metadata: Dict[str, Any]):
-        """Add decision to log - THREAD SAFE"""
+    def _add_decision(self, decision_type: str, message: str, category: str, details: Dict[str, Any]):
+        """Add decision to log - THREAD SAFE
+
+        Args:
+            decision_type: Type of decision (TRADE, SCAN, REJECTED, ERROR, etc.)
+            message: Human-readable message describing the decision
+            category: Status category (SUCCESS, INFO, WARNING, ERROR)
+            details: Additional details dictionary
+        """
         decision = {
             "id": f"d_{datetime.now().timestamp()}",
-            "time": datetime.now().strftime("%H:%M:%S"),
+            "timestamp": datetime.now().isoformat(),
             "type": decision_type,
-            "action": action,
-            "status": status,
-            "metadata": metadata
+            "message": message,
+            "category": category,
+            "details": details
         }
 
         with self._state_lock:
