@@ -54,18 +54,13 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         self.secret_key = secret_key
         self.cache_ttl = cache_ttl
 
-        # Load custom watchlist if exists, otherwise use default universe
-        self._default_universe = get_default_universe()
+        # Use provided universe or default
+        self._default_universe = universe if universe else get_default_universe()
         self._custom_symbols: List[str] = []
         self._load_custom_watchlist()
 
-        # Use provided universe, custom watchlist, or default
-        if universe:
-            self._universe = universe
-        elif self._custom_symbols:
-            self._universe = list(set(self._default_universe + self._custom_symbols))
-        else:
-            self._universe = self._default_universe
+        # Always merge custom symbols with default universe
+        self._universe = list(set(self._default_universe + self._custom_symbols))
 
         # Alpaca market data client
         self.data_client = StockHistoricalDataClient(

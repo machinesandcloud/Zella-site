@@ -268,4 +268,31 @@ export const triggerManualScan = async () => {
   return data;
 };
 
+// ==================== Watchlist API ====================
+
+export const fetchWatchlist = async () => {
+  const { data } = await api.get("/api/ai/watchlist");
+  return data;
+};
+
+export const addToWatchlist = async (symbols: string[]) => {
+  const { data } = await api.post("/api/ai/watchlist/add", { symbols });
+  return data;
+};
+
+export const removeFromWatchlist = async (symbols: string[]) => {
+  const { data } = await api.post("/api/ai/watchlist/remove", { symbols });
+  return data;
+};
+
+export const searchSymbols = async (query: string, limit: number = 15) => {
+  const { data } = await api.get(`/api/ai/symbols/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+  return data;
+};
+
+export const validateSymbol = async (symbol: string) => {
+  const { data } = await api.get(`/api/ai/symbols/validate?symbol=${encodeURIComponent(symbol)}`);
+  return data;
+};
+
 export default api;

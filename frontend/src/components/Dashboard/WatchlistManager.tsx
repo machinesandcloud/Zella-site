@@ -25,8 +25,13 @@ import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
-
-const API_URL = import.meta.env.VITE_API_URL || "";
+import {
+  fetchWatchlist as fetchWatchlistApi,
+  addToWatchlist,
+  removeFromWatchlist,
+  searchSymbols as searchSymbolsApi,
+  validateSymbol as validateSymbolApi
+} from "../../services/api";
 
 interface WatchlistInfo {
   total_symbols: number;
@@ -64,19 +69,11 @@ const WatchlistManager = () => {
 
   const fetchWatchlist = async () => {
     try {
-      const token = localStorage.getItem("zella_token");
-      const response = await fetch(`${API_URL}/api/ai/watchlist`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        }
-      });
-
-      if (!response.ok) throw new Error("Failed to fetch watchlist");
-      const data = await response.json();
+      const data = await fetchWatchlistApi();
       setWatchlist(data);
       setError(null);
     } catch (err) {
+      console.error("Failed to fetch watchlist:", err);
       setError("Failed to load watchlist");
     } finally {
       setLoading(false);
@@ -96,23 +93,11 @@ const WatchlistManager = () => {
 
     setSearchLoading(true);
     try {
-      const token = localStorage.getItem("zella_token");
-      const response = await fetch(
-        `${API_URL}/api/ai/symbols/search?q=${encodeURIComponent(query)}&limit=15`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json"
-          }
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setOptions(data.symbols || []);
-      }
+      const data = await searchSymbolsApi(query, 15);
+      setOptions(data.symbols || []);
     } catch (err) {
       console.error("Symbol search failed:", err);
+      setOptions([]);
     } finally {
       setSearchLoading(false);
     }
@@ -135,29 +120,15 @@ const WatchlistManager = () => {
     setValidationResult(null);
 
     try {
-      const token = localStorage.getItem("zella_token");
-      const response = await fetch(
-        `${API_URL}/api/ai/symbols/validate?symbol=${encodeURIComponent(symbol)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json"
-          }
-        }
-      );
-
-      if (response.ok) {
-        const result = await response.json();
-        setValidationResult(result);
-        return result.valid;
-      }
+      const result = await validateSymbolApi(symbol);
+      setValidationResult(result);
+      return result.valid;
     } catch (err) {
       console.error("Validation failed:", err);
+      return false;
     } finally {
       setValidating(false);
     }
-
-    return false;
   };
 
   const handleAddSymbol = async () => {
@@ -173,18 +144,7 @@ const WatchlistManager = () => {
     }
 
     try {
-      const token = localStorage.getItem("zella_token");
-      const response = await fetch(`${API_URL}/api/ai/watchlist/add`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ symbols: [symbolToAdd] })
-      });
-
-      if (!response.ok) throw new Error("Failed to add symbol");
-      const result = await response.json();
+      const result = await addToWatchlist([symbolToAdd]);
 
       if (result.added?.length > 0) {
         setSuccess(`Added: ${result.added.join(", ")}`);
@@ -199,6 +159,7 @@ const WatchlistManager = () => {
       setOptions([]);
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
+      console.error("Failed to add symbol:", err);
       setError("Failed to add symbol");
       setTimeout(() => setError(null), 3000);
     }
@@ -206,18 +167,7 @@ const WatchlistManager = () => {
 
   const handleRemoveSymbol = async (symbol: string) => {
     try {
-      const token = localStorage.getItem("zella_token");
-      const response = await fetch(`${API_URL}/api/ai/watchlist/remove`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ symbols: [symbol] })
-      });
-
-      if (!response.ok) throw new Error("Failed to remove symbol");
-      const result = await response.json();
+      const result = await removeFromWatchlist([symbol]);
 
       if (result.removed?.length > 0) {
         setSuccess(`Removed: ${symbol}`);
@@ -231,6 +181,7 @@ const WatchlistManager = () => {
         setError(null);
       }, 3000);
     } catch (err) {
+      console.error("Failed to remove symbol:", err);
       setError("Failed to remove symbol");
       setTimeout(() => setError(null), 3000);
     }

@@ -20,17 +20,13 @@ WATCHLIST_FILE = Path("data/custom_watchlist.json")
 
 class FreeMarketDataProvider(MarketDataProvider):
     def __init__(self, universe: Optional[List[str]] = None) -> None:
-        self._default_universe = get_default_universe()
+        # Use provided universe or default
+        self._default_universe = universe if universe else get_default_universe()
         self._custom_symbols: List[str] = []
         self._load_custom_watchlist()
 
-        # Use provided universe or build from default + custom
-        if universe:
-            self._universe = universe
-        elif self._custom_symbols:
-            self._universe = list(set(self._default_universe + self._custom_symbols))
-        else:
-            self._universe = self._default_universe
+        # Always merge custom symbols with default universe
+        self._universe = list(set(self._default_universe + self._custom_symbols))
 
         self._client = httpx.Client(timeout=10.0, headers={"User-Agent": "ZellaAI/1.0"})
 
