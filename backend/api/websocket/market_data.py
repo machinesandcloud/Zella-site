@@ -2,8 +2,10 @@ import asyncio
 from datetime import datetime
 from typing import Dict, List, Set, Any, Optional
 import logging
+import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 from market.fake_stream import DEFAULT_SYMBOLS, FakeMarketDataStream
 
@@ -12,11 +14,48 @@ logger = logging.getLogger("websocket_market_data")
 
 FAKE_STREAM = FakeMarketDataStream(DEFAULT_SYMBOLS)
 
+# Heartbeat interval in seconds - must be less than Render's idle timeout (~60s)
+HEARTBEAT_INTERVAL = 25
+
+
+async def send_with_heartbeat(websocket: WebSocket, message: dict) -> bool:
+    """
+    Send a message via WebSocket with error handling.
+    Returns True if successful, False if connection is dead.
+    """
+    try:
+        if websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.send_json(message)
+            return True
+        return False
+    except Exception as e:
+        logger.debug(f"WebSocket send failed: {e}")
+        return False
+
+
+async def heartbeat_ping(websocket: WebSocket) -> bool:
+    """
+    Send a heartbeat ping to keep the connection alive.
+    Returns True if connection is healthy.
+    """
+    try:
+        if websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.send_json({
+                "type": "heartbeat",
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            return True
+        return False
+    except Exception:
+        return False
+
+
 # Connection manager for broadcasting updates
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, Set[WebSocket]] = {}
         self.symbol_subscriptions: Dict[WebSocket, Set[str]] = {}
+        self._heartbeat_tasks: Dict[WebSocket, asyncio.Task] = {}
 
     async def connect(self, websocket: WebSocket, channel: str):
         await websocket.accept()
@@ -25,11 +64,33 @@ class ConnectionManager:
         self.active_connections[channel].add(websocket)
         self.symbol_subscriptions[websocket] = set()
 
+        # Start heartbeat task for this connection
+        task = asyncio.create_task(self._heartbeat_loop(websocket, channel))
+        self._heartbeat_tasks[websocket] = task
+
+    async def _heartbeat_loop(self, websocket: WebSocket, channel: str):
+        """Send periodic heartbeats to keep connection alive."""
+        try:
+            while websocket in self.active_connections.get(channel, set()):
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                if not await heartbeat_ping(websocket):
+                    logger.debug(f"Heartbeat failed for {channel}, removing connection")
+                    self.disconnect(websocket, channel)
+                    break
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"Heartbeat loop error: {e}")
+
     def disconnect(self, websocket: WebSocket, channel: str):
         if channel in self.active_connections:
             self.active_connections[channel].discard(websocket)
         if websocket in self.symbol_subscriptions:
             del self.symbol_subscriptions[websocket]
+        # Cancel heartbeat task
+        if websocket in self._heartbeat_tasks:
+            self._heartbeat_tasks[websocket].cancel()
+            del self._heartbeat_tasks[websocket]
 
     def subscribe_symbols(self, websocket: WebSocket, symbols: List[str]):
         if websocket in self.symbol_subscriptions:
@@ -37,12 +98,20 @@ class ConnectionManager:
 
     async def broadcast(self, channel: str, message: dict):
         if channel in self.active_connections:
+            dead_connections = []
             for connection in list(self.active_connections[channel]):
                 try:
-                    await connection.send_json(message)
+                    if connection.client_state == WebSocketState.CONNECTED:
+                        await connection.send_json(message)
+                    else:
+                        dead_connections.append(connection)
                 except Exception as e:
                     logger.debug(f"Removing disconnected client from {channel}: {e}")
-                    self.active_connections[channel].discard(connection)
+                    dead_connections.append(connection)
+
+            # Clean up dead connections
+            for conn in dead_connections:
+                self.disconnect(conn, channel)
 
 
 manager = ConnectionManager()

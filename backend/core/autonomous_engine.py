@@ -58,6 +58,26 @@ from utils.indicators import (
     is_power_hour,
     power_hour_multiplier,
 )
+from utils.market_hours import (
+    is_past_new_trade_cutoff,
+    is_eod_liquidation_time,
+    minutes_until_close,
+    is_opening_range,
+    minutes_since_open,
+)
+from core.pro_trade_filters import ProTradeValidator
+from core.elite_trade_system import (
+    EliteTradingSystem,
+    SetupGrade,
+    TradingDisciplineEnforcer,
+    PositionManager as ElitePositionManager,
+)
+from core.performance_engine import (
+    PerformanceEngine,
+    FastSignalProcessor,
+    SystemIntegrationValidator,
+    LATENCY,
+)
 
 logger = logging.getLogger("autonomous_engine")
 
@@ -111,6 +131,37 @@ class AutonomousEngine:
         self.all_evaluations: List[Dict[str, Any]] = []  # ALL stocks with pass/fail details
         self.filter_summary: Dict[str, int] = {}  # Summary of filter pass/fail counts
 
+        # Day trading safeguards
+        self.eod_liquidation_done_today: bool = False  # Track if EOD liquidation ran today
+        self.last_liquidation_date: Optional[str] = None  # Date string of last liquidation
+        self.min_confidence_threshold: float = 0.65  # Minimum confidence to enter trades
+        self.daily_pnl: float = 0.0  # Track daily P&L
+        self.daily_pnl_limit: float = -500.0  # Stop trading if down this much
+
+        # Pro-level trade validator (institutional-grade filters)
+        self.pro_validator = ProTradeValidator(
+            max_spread_percent=0.15,  # Max 0.15% spread
+            max_sector_positions=2,   # Max 2 positions per sector
+            profit_protection_threshold=300.0,  # Start protecting at +$300
+            drawdown_limit_percent=30.0  # Halt if give back 30% of peak
+        )
+
+        # Elite trading system (institutional-grade analysis)
+        self.elite_system = EliteTradingSystem()
+        self.elite_position_manager = ElitePositionManager()
+        self.discipline = TradingDisciplineEnforcer(
+            max_consecutive_losses=3,
+            loss_cooldown_minutes=5,
+            max_daily_winners=5,  # Quit while ahead
+            daily_loss_limit=500.0,
+            profit_protection_threshold=300.0,
+            max_drawdown_pct=30.0
+        )
+
+        # Track SPY data for relative strength
+        self._spy_data_cache: Optional[pd.DataFrame] = None
+        self._spy_cache_time: Optional[datetime] = None
+
         # ML Model for screening
         self.ml_model = MLSignalModel()
         self.ml_model.load()
@@ -126,11 +177,23 @@ class AutonomousEngine:
         # Initialize all available strategies
         self.all_strategies = self._initialize_strategies()
 
+        # High-performance engine for sub-10ms execution
+        # Default watchlist - will be updated dynamically from screener
+        default_symbols = [
+            "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "AMD", "TSLA",
+            "SPY", "QQQ", "COIN", "MARA", "RIOT", "SMCI", "ARM", "AVGO"
+        ]
+        self.perf_engine = PerformanceEngine(market_data_provider, default_symbols)
+        self.fast_signal_processor = FastSignalProcessor(self.perf_engine)
+        self.integration_validator = SystemIntegrationValidator()
+        self._integration_validated = False
+
         # Persistent state file
         self.state_file = Path("data/autonomous_state.json")
         self._load_state()
 
         logger.info(f"Autonomous Engine initialized - Mode: {self.mode}, Risk: {self.risk_posture}")
+        logger.info(f"🚀 High-Performance Engine ready (target: <10ms latency)")
 
     def _initialize_strategies(self) -> Dict[str, Any]:
         """Initialize all 37+ trading strategies including Warrior Trading patterns"""
@@ -225,37 +288,83 @@ class AutonomousEngine:
         self._save_state()
         logger.info("🤖 Autonomous Engine STARTED")
 
+        # Run system integration validation on first start
+        if not self._integration_validated:
+            logger.info("🔍 Running system integration validation...")
+            validation_passed = self.integration_validator.validate_all(
+                performance_engine=self.perf_engine,
+                elite_system=self.elite_system,
+                pro_validator=self.pro_validator,
+                broker=self.broker
+            )
+            self._integration_validated = True
+            if validation_passed:
+                logger.info("✅ All systems validated and ready for trading")
+            else:
+                logger.warning("⚠️ Some integration tests failed - trading with caution")
+
+        # Reset daily tracking
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self.last_liquidation_date != today:
+            self.eod_liquidation_done_today = False
+            self.daily_pnl = 0.0
+            self.discipline.reset_daily()  # Reset discipline counters too
+            logger.info("📅 New trading day - daily counters reset")
+
         # Start background tasks
         asyncio.create_task(self._main_trading_loop())
+        asyncio.create_task(self._eod_liquidation_monitor())  # Critical: close all positions before market close
         asyncio.create_task(self._connection_keepalive())
         asyncio.create_task(self._position_monitor())
+        asyncio.create_task(self._latency_monitor())  # Monitor latency
 
     async def stop(self):
         """Stop the autonomous trading engine"""
         self.running = False
         self.enabled = False
         self._save_state()
+
+        # Stop performance engine background processes
+        if hasattr(self, 'perf_engine'):
+            self.perf_engine.stop()
+
         logger.info("🛑 Autonomous Engine STOPPED")
 
     async def _connection_keepalive(self):
-        """Maintain persistent connection to broker"""
+        """
+        Maintain persistent connection to broker.
+        Checks every 30 seconds to stay within Render's idle timeout (~60s).
+        Implements exponential backoff on reconnection failures.
+        """
+        reconnect_attempts = 0
+        max_backoff = 60  # Max wait time between reconnect attempts
+
         while self.running:
             try:
                 if not self.broker.is_connected():
-                    logger.warning("Connection lost - reconnecting...")
+                    reconnect_attempts += 1
+                    backoff_time = min(5 * (2 ** (reconnect_attempts - 1)), max_backoff)
+
+                    logger.warning(f"Connection lost - reconnecting (attempt {reconnect_attempts})...")
+
                     if self.broker.connect():
                         logger.info("✓ Reconnected successfully")
-                        self._add_decision("SYSTEM", "Reconnected to broker", "INFO", {})
+                        self._add_decision("SYSTEM", "Reconnected to broker", "INFO", {"attempts": reconnect_attempts})
+                        reconnect_attempts = 0  # Reset on success
                     else:
-                        logger.error("✗ Reconnection failed - retrying in 30s")
-                        self._add_decision("SYSTEM", "Reconnection failed", "ERROR", {})
+                        logger.error(f"✗ Reconnection failed - retrying in {backoff_time}s")
+                        self._add_decision("SYSTEM", "Reconnection failed", "ERROR", {"next_retry_seconds": backoff_time})
+                        await asyncio.sleep(backoff_time)
+                        continue  # Skip the normal sleep, go straight to retry
+                else:
+                    reconnect_attempts = 0  # Reset counter when connected
 
-                # Send keepalive ping every 2 minutes
-                await asyncio.sleep(120)
+                # Check connection every 30 seconds to stay within Render's idle timeout
+                await asyncio.sleep(30)
 
             except Exception as e:
                 logger.error(f"Error in keepalive: {e}")
-                await asyncio.sleep(30)
+                await asyncio.sleep(10)  # Shorter sleep on error
 
     async def _main_trading_loop(self):
         """Main autonomous trading loop - scans continuously for real-time UI updates"""
@@ -283,8 +392,27 @@ class AutonomousEngine:
                 top_picks = self._rank_opportunities(analyzed)
 
                 # 4. Execute trades ONLY during market hours and in auto modes
+                # DAY TRADING RULE: No new positions after 3:30 PM ET
                 if is_market_open and self.mode in ["FULL_AUTO", "GOD_MODE"]:
-                    await self._execute_trades(top_picks)
+                    if is_past_new_trade_cutoff():
+                        mins_left = minutes_until_close()
+                        self._add_decision(
+                            "CUTOFF",
+                            f"Past 3:30 PM ET - No new trades ({mins_left} mins to close)",
+                            "INFO",
+                            {"minutes_to_close": mins_left}
+                        )
+                        logger.info(f"⏰ Past trade cutoff (3:30 PM) - {mins_left} mins until close, no new trades")
+                    elif self.daily_pnl <= self.daily_pnl_limit:
+                        self._add_decision(
+                            "DAILY_LIMIT",
+                            f"Daily loss limit hit (${self.daily_pnl:.2f}) - Trading halted",
+                            "WARNING",
+                            {"daily_pnl": self.daily_pnl, "limit": self.daily_pnl_limit}
+                        )
+                        logger.warning(f"🛑 Daily loss limit reached: ${self.daily_pnl:.2f}")
+                    else:
+                        await self._execute_trades(top_picks)
                 elif not is_market_open and opportunities:
                     self._add_decision(
                         "INFO",
@@ -303,12 +431,13 @@ class AutonomousEngine:
 
     async def _position_monitor(self):
         """
-        Monitor and manage existing positions using ATR-based stops
+        Monitor and manage existing positions using elite scale-out system.
 
-        Warrior Trading approach:
-        - Use ATR for dynamic stop losses (volatility-adjusted)
-        - Trail stops as position moves in profit
-        - Take profit at 2:1 or 3:1 risk/reward
+        Elite Trading approach:
+        - Scale out at 1R (50%), 2R (25%), 3R (25%)
+        - Move stop to breakeven after 1R
+        - Trail stop using ATR after 2R
+        - Record wins/losses for discipline tracking
         """
         # Track ATR values for positions
         position_atr: Dict[str, float] = {}
@@ -322,6 +451,7 @@ class AutonomousEngine:
                     current_price = position.get("currentPrice", 0)
                     entry_price = position.get("avgPrice", 0)
                     pnl_percent = position.get("unrealizedPnLPercent", 0)
+                    unrealized_pnl = position.get("unrealizedPnL", 0)
                     quantity = position.get("quantity", 0)
 
                     if not symbol or current_price <= 0:
@@ -343,13 +473,55 @@ class AutonomousEngine:
 
                     current_atr = position_atr.get(symbol, current_price * 0.02)
 
-                    # ATR-based stop loss distance (2x ATR)
-                    atr_stop_distance = current_atr * 2.0
-                    atr_stop_percent = (atr_stop_distance / entry_price) * 100 if entry_price > 0 else 2.0
+                    # === ELITE SCALE-OUT SYSTEM ===
+                    # Check if we have a scale-out plan for this position
+                    if symbol in self.elite_position_manager.positions:
+                        scale_actions = self.elite_position_manager.check_scale_levels(
+                            symbol, current_price, entry_price
+                        )
 
-                    # ATR-based take profit (3x ATR for 1.5:1 risk/reward)
-                    atr_profit_distance = current_atr * 3.0
-                    atr_profit_percent = (atr_profit_distance / entry_price) * 100 if entry_price > 0 else 6.0
+                        for action in scale_actions:
+                            if action["action"] == "SCALE_OUT_50_PCT":
+                                scale_qty = action["quantity"]
+                                logger.info(f"📈 SCALING OUT 50%: {symbol} - Selling {scale_qty} shares @ ${current_price:.2f} (1R hit)")
+                                self.broker.place_market_order(symbol, scale_qty, "SELL")
+                                self._add_decision("SCALE_OUT", f"50% scale-out {symbol} @ 1R", "SUCCESS", action)
+
+                            elif action["action"] == "SCALE_OUT_25_PCT":
+                                scale_qty = action["quantity"]
+                                logger.info(f"📈 SCALING OUT 25%: {symbol} - Selling {scale_qty} shares @ ${current_price:.2f} (2R hit)")
+                                self.broker.place_market_order(symbol, scale_qty, "SELL")
+                                self._add_decision("SCALE_OUT", f"25% scale-out {symbol} @ 2R", "SUCCESS", action)
+
+                            elif action["action"] == "CLOSE_REMAINING":
+                                scale_qty = action["quantity"]
+                                logger.info(f"🏆 CLOSING RUNNER: {symbol} - Selling {scale_qty} shares @ ${current_price:.2f} (3R hit)")
+                                self.broker.place_market_order(symbol, scale_qty, "SELL")
+                                self._add_decision("CLOSE_RUNNER", f"Runner closed {symbol} @ 3R", "SUCCESS", action)
+                                # Record WIN in discipline tracker
+                                self.discipline.record_trade(unrealized_pnl)
+
+                            elif action["action"] == "MOVE_STOP_TO_BREAKEVEN":
+                                logger.info(f"🛡️ BREAKEVEN STOP: {symbol} - Stop moved to ${entry_price:.2f}")
+                                self._add_decision("BREAKEVEN", f"Stop moved to breakeven {symbol}", "INFO", action)
+
+                            elif action["action"] == "ACTIVATE_TRAILING_STOP":
+                                logger.info(f"📊 TRAILING ACTIVATED: {symbol}")
+
+                        # Update trailing stop if active
+                        new_stop = self.elite_position_manager.update_trailing_stop(
+                            symbol, current_price, current_atr, trail_multiplier=1.0
+                        )
+                        if new_stop:
+                            logger.info(f"📈 TRAILING STOP RAISED: {symbol} new stop ${new_stop:.2f}")
+
+                    # TIGHTENED: ATR-based stop loss distance (1.5x ATR - tighter stops)
+                    atr_stop_distance = current_atr * 1.5
+                    atr_stop_percent = (atr_stop_distance / entry_price) * 100 if entry_price > 0 else 1.5
+
+                    # ATR-based take profit (3.75x ATR for 2.5:1 risk/reward)
+                    atr_profit_distance = current_atr * 3.75
+                    atr_profit_percent = (atr_profit_distance / entry_price) * 100 if entry_price > 0 else 5.0
 
                     # Adjust targets based on risk posture
                     if self.risk_posture == "DEFENSIVE":
@@ -362,14 +534,22 @@ class AutonomousEngine:
                         profit_target = atr_profit_percent
                         stop_target = atr_stop_percent
 
-                    # Dynamic trailing stop when in profit
-                    if pnl_percent > profit_target / 2:  # Half way to target
-                        # Trail stop to lock in some profit
-                        trail_percent = max(1.0, atr_stop_percent * 0.7)  # Tighten to 70% of ATR
-                        if pnl_percent > profit_target:
-                            # Full target hit - trail very tight
-                            trail_percent = max(0.5, atr_stop_percent * 0.5)
-                        logger.info(f"Trailing stop for {symbol}: {trail_percent:.1f}% (ATR-based)")
+                    # Check if position has scale-out plan with breakeven activated
+                    has_breakeven = False
+                    if symbol in self.elite_position_manager.positions:
+                        plan = self.elite_position_manager.positions[symbol]
+                        has_breakeven = plan.breakeven_activated
+                        # Use the dynamic stop from scale-out plan
+                        if has_breakeven:
+                            stop_price = plan.current_stop
+                            if current_price < stop_price:
+                                logger.warning(f"🛑 STOP HIT: {symbol} @ ${current_price:.2f} (stop was ${stop_price:.2f})")
+                                await self._close_position(symbol, f"Stop loss hit @ ${stop_price:.2f}")
+                                # Record trade result
+                                self.discipline.record_trade(unrealized_pnl)
+                                if symbol in position_atr:
+                                    del position_atr[symbol]
+                                continue
 
                     # Take profit at ATR-based target
                     if pnl_percent >= profit_target:
@@ -391,6 +571,106 @@ class AutonomousEngine:
                 logger.error(f"Error in position monitor: {e}")
                 await asyncio.sleep(30)
 
+    async def _eod_liquidation_monitor(self):
+        """
+        CRITICAL DAY TRADING RULE: Close ALL positions before market close.
+
+        This monitor runs continuously and will:
+        - At 3:50 PM ET: Force close ALL open positions
+        - Log all liquidations for audit trail
+        - Prevent overnight risk exposure
+
+        A real day trader NEVER holds overnight positions.
+        """
+        logger.info("📅 EOD Liquidation Monitor STARTED - Will close all positions at 3:50 PM ET")
+
+        while self.running:
+            try:
+                today = datetime.now().strftime("%Y-%m-%d")
+
+                # Reset flag for new trading day
+                if self.last_liquidation_date != today:
+                    self.eod_liquidation_done_today = False
+
+                # Check if it's liquidation time (3:50 PM ET)
+                if is_eod_liquidation_time() and not self.eod_liquidation_done_today:
+                    logger.warning("⚠️ EOD LIQUIDATION TIME (3:50 PM ET) - Closing ALL positions!")
+                    self._add_decision(
+                        "EOD_LIQUIDATION",
+                        "Mandatory end-of-day liquidation - Day traders do NOT hold overnight",
+                        "CRITICAL",
+                        {"time": datetime.now().isoformat()}
+                    )
+
+                    await self._liquidate_all_positions()
+
+                    self.eod_liquidation_done_today = True
+                    self.last_liquidation_date = today
+                    logger.info("✓ EOD Liquidation complete - All positions closed")
+
+                # Check every 30 seconds
+                await asyncio.sleep(30)
+
+            except Exception as e:
+                logger.error(f"Error in EOD liquidation monitor: {e}")
+                await asyncio.sleep(30)
+
+    async def _liquidate_all_positions(self):
+        """
+        Emergency liquidation of all open positions.
+        Used for end-of-day close and emergency stops.
+        """
+        try:
+            positions = self.broker.get_positions()
+
+            if not positions:
+                logger.info("No positions to liquidate")
+                return
+
+            logger.warning(f"🔴 LIQUIDATING {len(positions)} POSITIONS")
+
+            for position in positions:
+                symbol = position.get("symbol")
+                quantity = position.get("quantity", 0)
+                current_price = position.get("currentPrice", 0)
+                pnl = position.get("unrealizedPnL", 0)
+
+                if symbol and quantity != 0:
+                    try:
+                        side = "SELL" if quantity > 0 else "BUY"
+                        abs_qty = abs(quantity)
+
+                        logger.warning(f"Liquidating {symbol}: {side} {abs_qty} shares @ ~${current_price:.2f} (P&L: ${pnl:.2f})")
+
+                        if hasattr(self.broker, 'place_market_order'):
+                            self.broker.place_market_order(symbol, abs_qty, side)
+                        else:
+                            self.strategy_engine.execute_order(symbol, side, abs_qty, "MARKET")
+
+                        self._add_decision(
+                            "LIQUIDATION",
+                            f"EOD liquidation: {side} {abs_qty} {symbol}",
+                            "EXECUTED",
+                            {"symbol": symbol, "quantity": abs_qty, "side": side, "pnl": pnl}
+                        )
+
+                        # Track daily P&L
+                        self.daily_pnl += pnl
+
+                    except Exception as e:
+                        logger.error(f"Failed to liquidate {symbol}: {e}")
+                        self._add_decision(
+                            "LIQUIDATION_FAILED",
+                            f"Failed to close {symbol}: {str(e)}",
+                            "ERROR",
+                            {"symbol": symbol, "error": str(e)}
+                        )
+
+            logger.info(f"📊 Daily P&L after liquidation: ${self.daily_pnl:.2f}")
+
+        except Exception as e:
+            logger.error(f"Error in liquidate_all_positions: {e}")
+
     async def _scan_market(self) -> List[Dict[str, Any]]:
         """
         Scan market for trading opportunities using Warrior Trading criteria
@@ -400,7 +680,11 @@ class AutonomousEngine:
         - News catalyst integration
         - Float filtering
         - Pattern detection (bull flag, flat top)
+        - HIGH-PERFORMANCE: Uses cached data and parallel processing
         """
+        import time as time_module
+        scan_start = time_module.perf_counter()
+
         try:
             universe = self.market_data.get_universe()
             logger.info(f"Scanning {len(universe)} symbols...")
@@ -417,18 +701,35 @@ class AutonomousEngine:
             market_data: Dict[str, pd.DataFrame] = {}
 
             # Scan ALL symbols - day traders need full market visibility
-            # Previous limit of 100-150 was missing 70% of opportunities
+            # HIGH-PERFORMANCE: Use parallel processing for data fetching
             scan_limit = len(universe)  # Scan entire universe
 
-            for symbol in universe[:scan_limit]:
+            # Define fetch function for parallel processing
+            def fetch_symbol_data(symbol: str) -> Optional[pd.DataFrame]:
                 try:
+                    # Try cache first from performance engine
+                    cached_indicators = self.perf_engine.get_indicators_fast(symbol)
+                    if cached_indicators:
+                        # Add symbol to pre-computer watchlist
+                        self.perf_engine.indicator_computer.add_symbol(symbol)
+
                     bars = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
                     if bars and len(bars) > 0:
-                        df = pd.DataFrame(bars)
-                        market_data[symbol] = df
-                except Exception as e:
-                    logger.debug(f"Could not get data for {symbol}: {e}")
-                    continue
+                        return pd.DataFrame(bars)
+                    return None
+                except Exception:
+                    return None
+
+            # Fetch data in parallel using the performance engine's parallel processor
+            with LATENCY.timed("parallel_data_fetch"):
+                results = self.perf_engine.parallel_processor.process_symbols_sync(
+                    universe[:scan_limit], fetch_symbol_data
+                )
+
+            # Collect valid results
+            for symbol, df in results.items():
+                if df is not None:
+                    market_data[symbol] = df
 
             # Fetch news catalysts for scanned symbols (async would be better)
             try:
@@ -572,7 +873,13 @@ class AutonomousEngine:
             logger.info(f"Found {len(catalysts)} news catalysts: {list(catalysts.keys())}")
 
     async def _analyze_opportunities(self, opportunities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Analyze each opportunity with ALL available strategies"""
+        """
+        Analyze each opportunity with ALL available strategies.
+
+        HIGH-PERFORMANCE: Uses fast signal processor for sub-10ms processing.
+        """
+        import time as time_module
+        analyze_start = time_module.perf_counter()
         analyzed = []
 
         for opp in opportunities:
@@ -581,12 +888,17 @@ class AutonomousEngine:
                 continue
 
             try:
-                # Get data for this symbol
-                bars = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
-                if not bars:
-                    continue
+                with LATENCY.timed(f"analyze_{symbol}"):
+                    # HIGH-PERFORMANCE: Try pre-computed indicators first
+                    cached_indicators = self.perf_engine.get_indicators_fast(symbol)
 
-                df = pd.DataFrame(bars)
+                    # Get data for this symbol
+                    bars = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
+                    if not bars:
+                        continue
+
+                    df = pd.DataFrame(bars)
+                    current_price = df['close'].iloc[-1] if len(df) > 0 else 0
 
                 # Test ALL strategies
                 strategy_signals = []
@@ -666,6 +978,11 @@ class AutonomousEngine:
             for a in analyzed[:15]
         ]
 
+        # Record total analysis time
+        analyze_elapsed_ms = (time_module.perf_counter() - analyze_start) * 1000
+        LATENCY.record("analyze_opportunities_total", analyze_elapsed_ms)
+        logger.debug(f"Analysis completed in {analyze_elapsed_ms:.1f}ms for {len(opportunities)} opportunities")
+
         return analyzed
 
     def _rank_opportunities(self, analyzed: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -715,13 +1032,21 @@ class AutonomousEngine:
             # Apply power hour boost to confidence
             adjusted_confidence = confidence * time_mult
 
-            # Lower thresholds during power hour (more aggressive)
+            # TIGHTENED THRESHOLDS - Reduce losses by being more selective
+            # Day trading requires HIGH conviction entries only
             if in_power_hour:
-                min_confidence = 0.55 if self.risk_posture == "AGGRESSIVE" else 0.65 if self.risk_posture == "BALANCED" else 0.75
-                min_strategies = 1 if self.risk_posture == "AGGRESSIVE" else 2 if self.risk_posture == "BALANCED" else 3
+                # Still slightly lower during power hour but not reckless
+                min_confidence = 0.65 if self.risk_posture == "AGGRESSIVE" else 0.72 if self.risk_posture == "BALANCED" else 0.80
+                min_strategies = 2 if self.risk_posture == "AGGRESSIVE" else 2 if self.risk_posture == "BALANCED" else 3
             else:
-                min_confidence = 0.6 if self.risk_posture == "AGGRESSIVE" else 0.7 if self.risk_posture == "BALANCED" else 0.8
+                # Normal hours: Higher standards
+                min_confidence = 0.70 if self.risk_posture == "AGGRESSIVE" else 0.75 if self.risk_posture == "BALANCED" else 0.85
                 min_strategies = 2 if self.risk_posture == "AGGRESSIVE" else 3 if self.risk_posture == "BALANCED" else 4
+
+            # Global minimum - never trade below this regardless of settings
+            if adjusted_confidence < self.min_confidence_threshold:
+                logger.debug(f"Skipping {symbol}: confidence {adjusted_confidence:.2f} below threshold {self.min_confidence_threshold}")
+                continue
 
             if adjusted_confidence < min_confidence:
                 continue
@@ -733,6 +1058,135 @@ class AutonomousEngine:
                 price = opp.get("last_price", 0)
                 if price <= 0:
                     continue
+
+                # === PRO-LEVEL VALIDATION ===
+                # These filters separate profitable traders from retail losers
+                bid = opp.get("bid", price * 0.999)
+                ask = opp.get("ask", price * 1.001)
+                current_volume = opp.get("volume", 0)
+                avg_volume = opp.get("avg_volume", current_volume)
+                atr_percent = opp.get("atr_percent", 2.0)
+
+                # Get current positions for correlation check
+                current_pos_list = self.broker.get_positions()
+
+                # Run pro validation
+                validation = self.pro_validator.validate_trade(
+                    symbol=symbol,
+                    bid=bid,
+                    ask=ask,
+                    price=price,
+                    current_volume=current_volume,
+                    avg_volume=avg_volume,
+                    atr_percent=atr_percent,
+                    current_positions=current_pos_list,
+                    daily_pnl=self.daily_pnl,
+                    vix_level=0,  # TODO: Add VIX fetch
+                    minutes_since_open=minutes_since_open()
+                )
+
+                if not validation["approved"]:
+                    for rejection in validation["rejections"]:
+                        logger.info(f"⛔ {symbol} REJECTED: {rejection}")
+                    self._add_decision(
+                        "REJECTED",
+                        f"{symbol} failed pro validation",
+                        "INFO",
+                        {"rejections": validation["rejections"], "symbol": symbol}
+                    )
+                    continue
+
+                # === ELITE SYSTEM GRADING ===
+                # Check discipline (revenge trade prevention, max winners, etc.)
+                can_trade, halt_reason = self.discipline.can_trade()
+                if not can_trade:
+                    logger.warning(f"🛑 Trading halted: {halt_reason}")
+                    self._add_decision("HALTED", halt_reason, "WARNING", {})
+                    break  # Stop processing all opportunities
+
+                # Get multi-timeframe data if available
+                try:
+                    bars_5m = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
+                    bars_15m = self.market_data.get_historical_bars(symbol, "2 D", "15 mins")
+                    bars_1h = self.market_data.get_historical_bars(symbol, "5 D", "1 hour")
+
+                    # Get SPY for relative strength
+                    if self._spy_data_cache is None or (datetime.now() - self._spy_cache_time).seconds > 300:
+                        spy_bars = self.market_data.get_historical_bars("SPY", "1 D", "5 mins")
+                        if spy_bars:
+                            self._spy_data_cache = pd.DataFrame(spy_bars)
+                            self._spy_cache_time = datetime.now()
+
+                    if bars_5m and bars_15m and bars_1h and self._spy_data_cache is not None:
+                        df_5m = pd.DataFrame(bars_5m)
+                        df_15m = pd.DataFrame(bars_15m)
+                        df_1h = pd.DataFrame(bars_1h)
+
+                        # Calculate risk/reward
+                        atr_temp = opp.get("atr", price * 0.02)
+                        risk = atr_temp * 1.5
+                        reward = atr_temp * 3.75
+                        rr_ratio = reward / risk if risk > 0 else 2.0
+
+                        elite_analysis = self.elite_system.full_analysis(
+                            symbol=symbol,
+                            data_5m=df_5m,
+                            data_15m=df_15m,
+                            data_1h=df_1h,
+                            spy_data=self._spy_data_cache,
+                            current_price=price,
+                            open_price=opp.get("open", price),
+                            volume=current_volume,
+                            avg_volume=avg_volume,
+                            confidence=adjusted_confidence,
+                            risk_reward_ratio=rr_ratio
+                        )
+
+                        setup_grade = elite_analysis.get("grade", "B")
+                        elite_size_mult = elite_analysis.get("position_size_multiplier", 1.0)
+
+                        # Only trade A+, A, or B setups
+                        if setup_grade == "F":
+                            logger.info(f"⛔ {symbol} GRADE F - Setup rejected")
+                            self._add_decision(
+                                "REJECTED",
+                                f"{symbol} failed elite grading (F)",
+                                "INFO",
+                                {"grade": setup_grade, "factors": elite_analysis.get("grade_details", {}).get("factors", [])}
+                            )
+                            continue
+                        elif setup_grade == "C":
+                            logger.info(f"⚠️ {symbol} GRADE C - Skipping marginal setup")
+                            continue
+
+                        logger.info(f"📊 {symbol} GRADE {setup_grade} - Elite analysis passed")
+
+                        # Log key analysis points
+                        analysis = elite_analysis.get("analysis", {})
+                        mtf = analysis.get("multi_timeframe", {})
+                        rs = analysis.get("relative_strength", {})
+                        sr = analysis.get("support_resistance", {})
+
+                        logger.info(f"   MTF: {mtf.get('trade_direction', 'N/A')} (alignment: {mtf.get('alignment_score', 0):.2f})")
+                        logger.info(f"   RS: {rs.get('rs_ratio', 1):.2f}x SPY {'(LEADER)' if rs.get('is_leader') else '(LAGGARD)' if rs.get('is_laggard') else ''}")
+                        logger.info(f"   S/R: Support ${sr.get('nearest_support', 0):.2f} | Resistance ${sr.get('nearest_resistance', 0):.2f}")
+                    else:
+                        elite_size_mult = 1.0
+                        setup_grade = "B"  # Default if can't get data
+
+                except Exception as e:
+                    logger.debug(f"Elite analysis skipped for {symbol}: {e}")
+                    elite_size_mult = 1.0
+                    setup_grade = "B"
+
+                # Apply volatility adjustments from pro validator
+                vol_adjustments = validation.get("adjustments", {})
+                position_size_mult = vol_adjustments.get("position_size_multiplier", 1.0)
+                stop_mult = vol_adjustments.get("stop_loss_multiplier", 1.0)
+
+                if validation.get("warnings"):
+                    for warning in validation["warnings"]:
+                        logger.warning(f"⚠️ {symbol}: {warning}")
 
                 # Get ATR for position sizing (Warrior Trading method)
                 atr_value = opp.get("atr", 0)
@@ -751,9 +1205,16 @@ class AutonomousEngine:
                         atr_value = price * 0.02
 
                 # ATR-based position sizing (Warrior Trading formula)
-                # Risk 1-2% of account, stop at 2x ATR
-                risk_percent = 0.01 if self.risk_posture == "DEFENSIVE" else 0.015 if self.risk_posture == "BALANCED" else 0.02
-                atr_multiplier = 2.0  # 2x ATR stop loss
+                # TIGHTENED: Risk 0.5-1.5% of account, stop at 1.5x ATR
+                # Smaller losses = more chances to be profitable
+                base_risk_percent = 0.005 if self.risk_posture == "DEFENSIVE" else 0.01 if self.risk_posture == "BALANCED" else 0.015
+                base_atr_multiplier = 1.5  # 1.5x ATR stop loss (tighter than before)
+
+                # Apply volatility regime adjustments from pro validator
+                # AND elite system grade multiplier (A=100%, B=75%, etc.)
+                combined_size_mult = position_size_mult * elite_size_mult
+                risk_percent = base_risk_percent * combined_size_mult
+                atr_multiplier = base_atr_multiplier * stop_mult
 
                 quantity = calculate_position_size_atr(
                     account_value=account_value,
@@ -774,17 +1235,39 @@ class AutonomousEngine:
                         continue
 
                 # Calculate ATR-based stop loss and take profit prices
+                # Using 2.5:1 risk/reward ratio for better profitability
                 stop_loss_price = price - (atr_value * atr_multiplier)
-                take_profit_price = price + (atr_value * atr_multiplier * 2)  # 2:1 risk/reward
+                take_profit_price = price + (atr_value * atr_multiplier * 2.5)  # 2.5:1 risk/reward
+
+                # Calculate scale-out levels (Pro exit strategy)
+                # 1R = risk distance, 2R = 2x risk, 3R = 3x risk
+                risk_distance = atr_value * atr_multiplier
+                take_profit_1r = price + risk_distance  # 50% exit
+                take_profit_2r = price + (risk_distance * 2)  # 25% exit
+                take_profit_3r = price + (risk_distance * 2.5)  # Final 25%
 
                 # Execute trade
+                vol_regime = vol_adjustments.get("volatility_regime", "NORMAL")
                 power_hour_tag = " [POWER HOUR]" if in_power_hour else ""
-                logger.info(f"🚀 EXECUTING{power_hour_tag}: {action} {quantity} {symbol} @ ${price:.2f}")
-                logger.info(f"   ATR: ${atr_value:.2f} | Stop: ${stop_loss_price:.2f} | Target: ${take_profit_price:.2f}")
-                logger.info(f"   Strategies: {', '.join(strategies)}")
-                logger.info(f"   Confidence: {adjusted_confidence:.2%} (raw: {confidence:.2%})")
+                vol_tag = f" [{vol_regime}]" if vol_regime != "NORMAL" else ""
+                grade_tag = f" [GRADE {setup_grade}]"
 
-                order = self.broker.place_market_order(symbol, quantity, action)
+                logger.info(f"🚀 EXECUTING{power_hour_tag}{vol_tag}{grade_tag}: {action} {quantity} {symbol} @ ${price:.2f}")
+                logger.info(f"   ATR: ${atr_value:.2f} | Stop: ${stop_loss_price:.2f}")
+                logger.info(f"   Scale-out: 50% @ ${take_profit_1r:.2f} (1R) | 25% @ ${take_profit_2r:.2f} (2R) | 25% @ ${take_profit_3r:.2f} (3R)")
+                logger.info(f"   Strategies: {', '.join(strategies)}")
+                logger.info(f"   Confidence: {adjusted_confidence:.2%} | Size mult: {combined_size_mult:.0%}")
+
+                # HIGH-PERFORMANCE: Execute with latency monitoring
+                import time as time_module
+                exec_start = time_module.perf_counter()
+
+                with LATENCY.timed(f"order_execution_{symbol}"):
+                    order = self.broker.place_market_order(symbol, quantity, action)
+
+                exec_elapsed_ms = (time_module.perf_counter() - exec_start) * 1000
+                if exec_elapsed_ms > 10:
+                    logger.warning(f"⚠️ Order execution took {exec_elapsed_ms:.1f}ms (target: <10ms)")
 
                 # Validate order result
                 if not order or order.get("error"):
@@ -795,9 +1278,20 @@ class AutonomousEngine:
 
                 order_id = order.get("orderId") or order.get("order_id") or order.get("id")
 
+                # Create scale-out plan for this position
+                self.elite_position_manager.create_scale_plan(
+                    symbol=symbol,
+                    entry_price=price,
+                    quantity=quantity,
+                    stop_loss=stop_loss_price,
+                    take_profit_1r=take_profit_1r,
+                    take_profit_2r=take_profit_2r,
+                    take_profit_3r=take_profit_3r
+                )
+
                 self._add_decision(
                     "TRADE",
-                    f"{action} {quantity} {symbol} @ ${price:.2f}",
+                    f"{action} {quantity} {symbol} @ ${price:.2f} [GRADE {setup_grade}]",
                     "SUCCESS",
                     {
                         "strategies": strategies,
@@ -805,11 +1299,16 @@ class AutonomousEngine:
                         "raw_confidence": confidence,
                         "num_strategies": num_strategies,
                         "order_id": order_id,
+                        "setup_grade": setup_grade,
                         "atr": atr_value,
                         "stop_loss": stop_loss_price,
-                        "take_profit": take_profit_price,
+                        "scale_out": {
+                            "1R": {"price": take_profit_1r, "quantity": int(quantity * 0.50)},
+                            "2R": {"price": take_profit_2r, "quantity": int(quantity * 0.25)},
+                            "3R": {"price": take_profit_3r, "quantity": quantity - int(quantity * 0.75)}
+                        },
                         "power_hour": in_power_hour,
-                        "position_sizing": "ATR-based"
+                        "position_sizing": f"ATR-based ({combined_size_mult:.0%})"
                     }
                 )
 
@@ -829,7 +1328,7 @@ class AutonomousEngine:
                 self._add_decision("ERROR", f"Failed to execute {symbol}: {str(e)}", "ERROR", {})
 
     async def _close_position(self, symbol: str, reason: str):
-        """Close a position"""
+        """Close a position and track P&L for daily limits"""
         try:
             positions = self.broker.get_positions()
             position = next((p for p in positions if p.get("symbol") == symbol), None)
@@ -839,8 +1338,9 @@ class AutonomousEngine:
 
             quantity = position.get("quantity", 0)
             current_price = position.get("currentPrice", 0)
+            unrealized_pnl = position.get("unrealizedPnL", 0)
 
-            logger.info(f"Closing {symbol}: {reason}")
+            logger.info(f"Closing {symbol}: {reason} (P&L: ${unrealized_pnl:.2f})")
 
             order = self.broker.place_market_order(symbol, abs(quantity), "SELL" if quantity > 0 else "BUY")
 
@@ -853,6 +1353,13 @@ class AutonomousEngine:
 
             order_id = order.get("orderId") or order.get("order_id") or order.get("id")
 
+            # Track daily P&L
+            self.daily_pnl += unrealized_pnl
+            logger.info(f"📊 Daily P&L updated: ${self.daily_pnl:.2f} (this trade: ${unrealized_pnl:.2f})")
+
+            # Record trade result in risk manager
+            self.risk_manager.record_trade_result(unrealized_pnl)
+
             self._add_decision(
                 "CLOSE",
                 f"Closed {symbol}: {reason}",
@@ -860,7 +1367,9 @@ class AutonomousEngine:
                 {
                     "quantity": quantity,
                     "price": current_price,
-                    "order_id": order_id
+                    "order_id": order_id,
+                    "pnl": unrealized_pnl,
+                    "daily_pnl": self.daily_pnl
                 }
             )
 
@@ -942,6 +1451,9 @@ class AutonomousEngine:
             "filter_summary": self.filter_summary,
             # Active strategies list
             "active_strategies": list(self.all_strategies.keys()),
+            # HIGH-PERFORMANCE: Latency metrics
+            "performance": self.get_latency_report() if hasattr(self, 'perf_engine') else {},
+            "integration_validated": self._integration_validated if hasattr(self, '_integration_validated') else False,
         }
 
     def update_config(self, config: Dict[str, Any]):
@@ -959,3 +1471,54 @@ class AutonomousEngine:
 
         self._save_state()
         logger.info(f"Config updated: {config}")
+
+    async def _latency_monitor(self):
+        """
+        Background task to monitor and report system latency.
+
+        Logs latency metrics every 60 seconds and alerts if target exceeded.
+        Target: <10ms for all critical operations.
+        """
+        while self.running:
+            try:
+                await asyncio.sleep(60)  # Check every 60 seconds
+
+                # Get latency report
+                report = LATENCY.get_report()
+
+                if not report:
+                    continue
+
+                # Check for high latency components
+                high_latency_components = []
+                for component, metrics in report.items():
+                    p99 = metrics.get("p99_ms", 0)
+                    if p99 > 10:  # Target is <10ms
+                        high_latency_components.append(f"{component}: p99={p99:.1f}ms")
+
+                if high_latency_components:
+                    logger.warning(f"⚠️ HIGH LATENCY DETECTED: {', '.join(high_latency_components)}")
+                else:
+                    # Log summary of healthy latency
+                    total_samples = sum(m.get("samples", 0) for m in report.values())
+                    if total_samples > 0:
+                        avg_p99 = sum(m.get("p99_ms", 0) for m in report.values()) / len(report)
+                        logger.info(f"📊 Latency OK - avg p99: {avg_p99:.1f}ms across {len(report)} components")
+
+                # Get cache hit rate from performance engine
+                if hasattr(self, 'perf_engine'):
+                    cache_hit_rate = self.perf_engine.cache.hit_rate
+                    if cache_hit_rate < 0.5:
+                        logger.warning(f"⚠️ Low cache hit rate: {cache_hit_rate:.1%}")
+                    else:
+                        logger.debug(f"Cache hit rate: {cache_hit_rate:.1%}")
+
+            except Exception as e:
+                logger.error(f"Error in latency monitor: {e}")
+                await asyncio.sleep(30)
+
+    def get_latency_report(self) -> Dict[str, Any]:
+        """Get comprehensive latency and performance metrics."""
+        if hasattr(self, 'perf_engine'):
+            return self.perf_engine.get_latency_report()
+        return {"latency": LATENCY.get_report()}

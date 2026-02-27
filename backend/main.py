@@ -36,10 +36,57 @@ from utils.logger import setup_logging
 app = FastAPI(title="Zella AI Trading API", version="0.1.1")
 
 
-@app.get("/")
-async def root():
-    """Root endpoint for health checks."""
-    return {"status": "ok", "service": "zella-ai-backend"}
+@app.get("/health")
+async def health_check():
+    """
+    Robust health check endpoint for Render.
+    Returns detailed status of all critical components.
+    """
+    health_status = {
+        "status": "healthy",
+        "service": "zella-ai-backend",
+        "components": {}
+    }
+
+    # Check autonomous engine
+    if hasattr(app.state, "autonomous_engine") and app.state.autonomous_engine:
+        engine = app.state.autonomous_engine
+        health_status["components"]["autonomous_engine"] = {
+            "running": engine.running,
+            "enabled": engine.enabled,
+            "mode": engine.mode
+        }
+        # Include performance engine status
+        if hasattr(engine, 'perf_engine'):
+            health_status["components"]["performance_engine"] = {
+                "cache_hit_rate": round(engine.perf_engine.cache.hit_rate, 3),
+                "symbols_tracked": len(engine.perf_engine.symbols),
+                "staged_orders": len(engine.perf_engine.order_prestager.get_all_staged()),
+                "integration_validated": getattr(engine, '_integration_validated', False)
+            }
+    else:
+        health_status["components"]["autonomous_engine"] = {"status": "not_initialized"}
+
+    # Check broker connection
+    broker_status = "disconnected"
+    if hasattr(app.state, "alpaca_client") and app.state.alpaca_client:
+        if app.state.alpaca_client.is_connected():
+            broker_status = "alpaca_connected"
+    elif hasattr(app.state, "ibkr_client") and app.state.ibkr_client:
+        if app.state.ibkr_client.is_connected():
+            broker_status = "ibkr_connected"
+        elif hasattr(app.state.ibkr_client, '__class__') and 'Mock' in app.state.ibkr_client.__class__.__name__:
+            broker_status = "mock_connected"
+
+    health_status["components"]["broker"] = broker_status
+
+    # Check market data provider
+    if hasattr(app.state, "market_data_provider") and app.state.market_data_provider:
+        health_status["components"]["market_data"] = "initialized"
+    else:
+        health_status["components"]["market_data"] = "not_initialized"
+
+    return health_status
 
 allowed_origins = [
     origin.strip()
@@ -71,15 +118,45 @@ logger = logging.getLogger("zella")
 
 
 async def keep_ibkr_session_alive():
-    """Background task to keep IBKR Web API session alive by calling /tickle every 5 minutes."""
+    """Background task to keep IBKR Web API session alive - pings every 30 seconds to prevent Render idle timeout."""
     while True:
         try:
-            await asyncio.sleep(300)  # 5 minutes
+            await asyncio.sleep(30)  # 30 seconds - Render kills idle connections after ~60s
             if hasattr(app.state, "ibkr_webapi_client") and app.state.ibkr_webapi_client:
                 result = app.state.ibkr_webapi_client.tickle()
-                logger.info(f"IBKR session tickle: {result}")
+                logger.debug(f"IBKR session tickle: {result}")  # Debug level to reduce log spam
         except Exception as e:
             logger.error(f"Error in IBKR session keepalive: {e}")
+            # Don't crash the loop - keep trying
+            await asyncio.sleep(5)
+
+
+async def server_self_ping():
+    """
+    Background task that keeps the server alive by performing periodic internal health checks.
+    This prevents Render from marking the service as idle even when no external requests come in.
+    Critical for 24/7 trading bot operation.
+    """
+    import aiohttp
+
+    while True:
+        try:
+            await asyncio.sleep(30)  # Ping every 30 seconds
+
+            # Internal health check - lightweight verification the server is responsive
+            async with aiohttp.ClientSession() as session:
+                # Use environment variable for the server URL, fallback to localhost
+                import os
+                server_url = os.environ.get("RENDER_EXTERNAL_URL", "http://localhost:10000")
+                async with session.get(f"{server_url}/health", timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        logger.debug("Server self-ping successful")
+                    else:
+                        logger.warning(f"Server self-ping returned status {response.status}")
+        except Exception as e:
+            logger.debug(f"Server self-ping failed (may be normal during startup): {e}")
+            # Don't crash - just continue trying
+            await asyncio.sleep(5)
 
 
 @app.middleware("http")
@@ -242,6 +319,10 @@ def on_startup() -> None:
         logger.error(f"✗ Failed to initialize Autonomous Engine: {e}")
         app.state.autonomous_engine = None
 
+    # Start server self-ping to prevent Render idle timeout (critical for 24/7 operation)
+    asyncio.create_task(server_self_ping())
+    logger.info("✓ Started server self-ping keepalive task (30s interval)")
+
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
@@ -278,8 +359,9 @@ app.include_router(ws_router)
 
 
 @app.get("/")
-def root() -> dict:
-    return {"name": "Zella AI Trading", "status": "ok"}
+async def root() -> dict:
+    """Root endpoint - basic status check."""
+    return {"name": "Zella AI Trading", "status": "ok", "health_endpoint": "/health"}
 
 
 @app.get("/metrics")

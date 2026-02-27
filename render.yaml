@@ -2,11 +2,12 @@ services:
   - type: web
     name: zella-ai-backend
     env: python
-    plan: free
+    plan: starter  # Paid plan - no sleep/spindown
     region: oregon
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2 --timeout-keep-alive 75 --ws-ping-interval 20 --ws-ping-timeout 20
+    healthCheckPath: /health
     envVars:
       - key: USE_MOCK_IBKR
         value: "true"
@@ -51,5 +52,5 @@ services:
 
 databases:
   - name: zella-ai-db
-    plan: free
+    plan: starter  # Paid plan - persistent storage, no data loss
     region: oregon

@@ -94,6 +94,57 @@ class AlpacaClient:
         """Check if connected to Alpaca."""
         return self._connected
 
+    def verify_connection(self) -> bool:
+        """
+        Verify the connection is actually alive by making a lightweight API call.
+        This is more reliable than just checking the _connected flag.
+
+        Returns:
+            True if connection is verified, False otherwise
+        """
+        try:
+            # Lightweight call to verify API is reachable
+            self.trading_client.get_account()
+            self._connected = True
+            return True
+        except Exception as e:
+            logger.warning(f"Connection verification failed: {e}")
+            self._connected = False
+            return False
+
+    def ensure_connected(self, max_retries: int = 3) -> bool:
+        """
+        Ensure connection is active, reconnecting if necessary.
+        Uses exponential backoff for retries.
+
+        Args:
+            max_retries: Maximum number of reconnection attempts
+
+        Returns:
+            True if connected (possibly after reconnection), False otherwise
+        """
+        if self._connected and self.verify_connection():
+            return True
+
+        logger.info("Connection lost or stale - attempting reconnection...")
+
+        for attempt in range(1, max_retries + 1):
+            backoff = min(2 ** attempt, 30)  # Exponential backoff, max 30s
+
+            logger.info(f"Reconnection attempt {attempt}/{max_retries}...")
+
+            if self.connect():
+                logger.info(f"✓ Reconnected successfully on attempt {attempt}")
+                return True
+
+            if attempt < max_retries:
+                logger.warning(f"Reconnection failed - retrying in {backoff}s")
+                import time
+                time.sleep(backoff)
+
+        logger.error(f"✗ Failed to reconnect after {max_retries} attempts")
+        return False
+
     def disconnect(self) -> None:
         """Disconnect from Alpaca (no-op, but kept for API compatibility)."""
         self._connected = False
