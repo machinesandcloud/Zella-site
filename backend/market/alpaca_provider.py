@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
+from functools import lru_cache
 import logging
 import threading
 import time
+import hashlib
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest, StockSnapshotRequest, StockLatestTradeRequest
@@ -22,6 +24,12 @@ logger = logging.getLogger("alpaca_provider")
 # Persistent watchlist file
 WATCHLIST_FILE = Path("data/custom_watchlist.json")
 
+# Rate limiting configuration
+RATE_LIMIT_REQUESTS_PER_MINUTE = 150  # Alpaca free tier is 200/min, leave buffer
+MIN_REQUEST_INTERVAL = 60.0 / RATE_LIMIT_REQUESTS_PER_MINUTE  # ~0.4 seconds between requests
+MAX_BACKOFF_SECONDS = 60
+INITIAL_BACKOFF_SECONDS = 2
+
 
 class AlpacaMarketDataProvider(MarketDataProvider):
     """
@@ -31,7 +39,8 @@ class AlpacaMarketDataProvider(MarketDataProvider):
     - Day trading universe (90+ high volume stocks)
     - Real-time and historical data via Alpaca
     - Batch quote fetching for efficiency
-    - Caching to avoid rate limits
+    - Aggressive caching to avoid rate limits
+    - Exponential backoff on 429 errors
     """
 
     def __init__(
@@ -39,7 +48,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         api_key: str,
         secret_key: str,
         universe: Optional[List[str]] = None,
-        cache_ttl: float = 0.5  # Cache TTL in seconds (500ms for day trading)
+        cache_ttl: float = 5.0  # Cache TTL in seconds (5s - good balance for day trading)
     ) -> None:
         """
         Initialize Alpaca market data provider.
@@ -73,31 +82,93 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         self._cache_timestamp: float = 0
         self._cache_lock = threading.Lock()
 
+        # Historical bars cache: key = (symbol, duration, bar_size), value = (timestamp, data)
+        self._bars_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+        self._bars_cache_ttl = 60.0  # Cache historical bars for 60 seconds
+        self._bars_cache_lock = threading.Lock()
+
+        # Rate limiting state
+        self._last_request_time: float = 0
+        self._request_lock = threading.Lock()
+        self._backoff_until: float = 0
+        self._current_backoff: float = INITIAL_BACKOFF_SECONDS
+
         # Start background refresh thread
         self._refresh_thread = threading.Thread(target=self._background_refresh, daemon=True)
         self._refresh_thread.start()
 
-        logger.info(f"Alpaca Market Data Provider initialized with {len(self._universe)} symbols")
+        logger.info(f"Alpaca Market Data Provider initialized with {len(self._universe)} symbols (cache_ttl={cache_ttl}s)")
+
+    def _wait_for_rate_limit(self) -> None:
+        """Wait if we need to respect rate limits or backoff"""
+        with self._request_lock:
+            now = time.time()
+
+            # Check if we're in backoff period (from 429 error)
+            if now < self._backoff_until:
+                wait_time = self._backoff_until - now
+                logger.debug(f"Rate limit backoff: waiting {wait_time:.1f}s")
+                time.sleep(wait_time)
+                now = time.time()
+
+            # Ensure minimum interval between requests
+            elapsed = now - self._last_request_time
+            if elapsed < MIN_REQUEST_INTERVAL:
+                time.sleep(MIN_REQUEST_INTERVAL - elapsed)
+
+            self._last_request_time = time.time()
+
+    def _handle_rate_limit_error(self, error: Exception) -> None:
+        """Handle 429 rate limit errors with exponential backoff"""
+        error_str = str(error).lower()
+        if "429" in error_str or "too many requests" in error_str or "rate limit" in error_str:
+            with self._request_lock:
+                self._backoff_until = time.time() + self._current_backoff
+                logger.warning(f"Rate limited! Backing off for {self._current_backoff}s")
+                # Exponential backoff, max 60 seconds
+                self._current_backoff = min(self._current_backoff * 2, MAX_BACKOFF_SECONDS)
+        else:
+            # Reset backoff on successful request or non-rate-limit error
+            self._current_backoff = INITIAL_BACKOFF_SECONDS
+
+    def _reset_backoff(self) -> None:
+        """Reset backoff after successful request"""
+        with self._request_lock:
+            self._current_backoff = INITIAL_BACKOFF_SECONDS
 
     def _background_refresh(self) -> None:
-        """Background thread to continuously refresh quotes"""
+        """Background thread to continuously refresh quotes with rate limiting"""
         while True:
             try:
+                # Check if we should skip due to backoff
+                if time.time() < self._backoff_until:
+                    wait_time = self._backoff_until - time.time()
+                    logger.debug(f"Background refresh delayed {wait_time:.1f}s due to rate limit")
+                    time.sleep(max(wait_time, self.cache_ttl))
+                    continue
+
                 self._refresh_all_quotes()
+                self._reset_backoff()  # Successful refresh, reset backoff
             except Exception as e:
+                self._handle_rate_limit_error(e)
                 logger.debug(f"Background refresh error: {e}")
+
+            # Wait before next refresh cycle
             time.sleep(self.cache_ttl)
 
     def _refresh_all_quotes(self) -> None:
         """Fetch snapshots for all universe symbols in batches using Snapshot API"""
         try:
-            # Batch symbols (Alpaca allows up to 100 per request)
-            batch_size = 50
+            # Batch symbols (Alpaca allows up to 100 per request, use 75 to be safe)
+            batch_size = 75
             all_quotes = {}
 
             for i in range(0, len(self._universe), batch_size):
                 batch = self._universe[i:i + batch_size]
                 try:
+                    # Wait for rate limit before each batch
+                    self._wait_for_rate_limit()
+
                     # Use Snapshot API - provides quote, trade, daily bar, and previous day bar
                     request = StockSnapshotRequest(symbol_or_symbols=batch)
                     snapshots = self.data_client.get_stock_snapshot(request)
@@ -153,21 +224,60 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                             all_quotes[symbol] = quote_data
 
                 except Exception as e:
+                    error_str = str(e).lower()
+                    if "429" in error_str or "too many requests" in error_str:
+                        self._handle_rate_limit_error(e)
+                        logger.warning(f"Rate limit hit during batch {i}-{i+batch_size}, backing off")
+                        break  # Stop this refresh cycle, let backoff handle it
                     logger.debug(f"Error fetching snapshot batch {i}-{i+batch_size}: {e}")
 
-            # Update cache atomically
-            with self._cache_lock:
-                self._quote_cache = all_quotes
-                self._cache_timestamp = time.time()
+            # Update cache atomically (even partial results are useful)
+            if all_quotes:
+                with self._cache_lock:
+                    # Merge with existing cache instead of replacing
+                    self._quote_cache.update(all_quotes)
+                    self._cache_timestamp = time.time()
 
-            logger.debug(f"Refreshed {len(all_quotes)} snapshots")
+                logger.debug(f"Refreshed {len(all_quotes)} snapshots")
 
         except Exception as e:
+            self._handle_rate_limit_error(e)
             logger.error(f"Error refreshing snapshots: {e}")
 
     def get_universe(self) -> List[str]:
         """Get the trading universe (90+ day trading stocks)"""
         return self._universe
+
+    def _get_bars_cache_key(self, symbol: str, duration: str, bar_size: str) -> str:
+        """Generate cache key for historical bars"""
+        return f"{symbol}:{duration}:{bar_size}"
+
+    def _get_cached_bars(self, cache_key: str) -> Optional[List[Dict[str, Any]]]:
+        """Get cached bars if still valid"""
+        with self._bars_cache_lock:
+            if cache_key in self._bars_cache:
+                timestamp, data = self._bars_cache[cache_key]
+                if time.time() - timestamp < self._bars_cache_ttl:
+                    logger.debug(f"Bars cache hit for {cache_key}")
+                    return data
+                else:
+                    # Expired, remove from cache
+                    del self._bars_cache[cache_key]
+        return None
+
+    def _set_cached_bars(self, cache_key: str, data: List[Dict[str, Any]]) -> None:
+        """Cache historical bars"""
+        with self._bars_cache_lock:
+            self._bars_cache[cache_key] = (time.time(), data)
+            # Limit cache size to prevent memory issues
+            if len(self._bars_cache) > 500:
+                # Remove oldest entries
+                sorted_keys = sorted(
+                    self._bars_cache.keys(),
+                    key=lambda k: self._bars_cache[k][0]
+                )
+                for key in sorted_keys[:100]:
+                    del self._bars_cache[key]
 
     def get_historical_bars(
         self,
@@ -176,7 +286,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         bar_size: str
     ) -> List[Dict[str, Any]]:
         """
-        Get historical bars from Alpaca.
+        Get historical bars from Alpaca with caching.
 
         Args:
             symbol: Stock symbol
@@ -186,7 +296,16 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         Returns:
             List of bar dictionaries with OHLCV data
         """
+        # Check cache first
+        cache_key = self._get_bars_cache_key(symbol, duration, bar_size)
+        cached = self._get_cached_bars(cache_key)
+        if cached is not None:
+            return cached
+
         try:
+            # Wait for rate limit
+            self._wait_for_rate_limit()
+
             # Map duration to start date
             duration_map = {
                 "1 D": timedelta(days=1),
@@ -244,16 +363,22 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                     "volume": int(bar.volume)
                 })
 
+            # Cache the results
+            if bars:
+                self._set_cached_bars(cache_key, bars)
+                self._reset_backoff()  # Successful request
+
             logger.debug(f"Retrieved {len(bars)} bars for {symbol}")
             return bars
 
         except Exception as e:
+            self._handle_rate_limit_error(e)
             logger.error(f"Error fetching bars for {symbol}: {e}")
             return []
 
     def get_latest_bar(self, symbol: str) -> Dict[str, Any]:
         """
-        Get latest bar for a symbol.
+        Get latest bar for a symbol (uses cache first).
 
         Args:
             symbol: Stock symbol
@@ -261,7 +386,23 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         Returns:
             Latest bar dict or empty dict if error
         """
+        # Try cache first (much faster, no API call)
+        with self._cache_lock:
+            cached = self._quote_cache.get(symbol)
+            if cached and cached.get("price"):
+                return {
+                    "date": cached.get("trade_timestamp") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "open": cached.get("open", cached.get("price", 0)),
+                    "high": cached.get("high", cached.get("price", 0)),
+                    "low": cached.get("low", cached.get("price", 0)),
+                    "close": cached.get("price", 0),
+                    "volume": cached.get("volume", 0)
+                }
+
+        # Fallback to API call only if not in cache
         try:
+            self._wait_for_rate_limit()
+
             request = StockLatestQuoteRequest(
                 symbol_or_symbols=symbol
             )
@@ -272,6 +413,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                 return {}
 
             q = quote[symbol]
+            self._reset_backoff()
 
             return {
                 "date": q.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
@@ -283,6 +425,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
             }
 
         except Exception as e:
+            self._handle_rate_limit_error(e)
             logger.error(f"Error fetching latest quote for {symbol}: {e}")
             return {}
 
@@ -323,13 +466,16 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                     "timestamp": cached.get("trade_timestamp") or cached.get("quote_timestamp") or datetime.now().isoformat()
                 }
 
-        # If not in cache, try direct fetch (rare case)
+        # If not in cache, try direct fetch (rare case) - with rate limiting
         try:
+            self._wait_for_rate_limit()
+
             request = StockLatestTradeRequest(symbol_or_symbols=symbol)
             trades = self.data_client.get_stock_latest_trade(request)
 
             if symbol in trades:
                 t = trades[symbol]
+                self._reset_backoff()
                 return {
                     "symbol": symbol,
                     "price": float(t.price) if t.price else 0,
@@ -341,6 +487,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                     "timestamp": t.timestamp.isoformat() if t.timestamp else datetime.now().isoformat()
                 }
         except Exception as e:
+            self._handle_rate_limit_error(e)
             logger.debug(f"Error fetching snapshot for {symbol}: {e}")
 
         return {}
