@@ -651,6 +651,72 @@ class PositionManager:
 
         return None
 
+    def restore_scale_plan(self, symbol: str, plan_data: Dict[str, Any]) -> None:
+        """
+        Restore a scale-out plan from saved state.
+        Used for recovery from disconnections/restarts.
+        """
+        try:
+            # Recreate scale levels from saved data
+            entry_price = plan_data.get("entry_price", 0)
+            quantity = plan_data.get("quantity", 0)
+            stop_loss = plan_data.get("stop_loss", 0)
+            take_profit_1r = plan_data.get("take_profit_1r", 0)
+            take_profit_2r = plan_data.get("take_profit_2r", 0)
+            take_profit_3r = plan_data.get("take_profit_3r", 0)
+
+            # Check which levels were already executed
+            scaled_1r = plan_data.get("scaled_1r", False)
+            scaled_2r = plan_data.get("scaled_2r", False)
+
+            scale_levels = [
+                {
+                    "level": "1R",
+                    "price": take_profit_1r,
+                    "quantity": int(quantity * 0.50),
+                    "executed": scaled_1r,
+                    "action": "SCALE_OUT_50_PCT"
+                },
+                {
+                    "level": "2R",
+                    "price": take_profit_2r,
+                    "quantity": int(quantity * 0.25),
+                    "executed": scaled_2r,
+                    "action": "SCALE_OUT_25_PCT"
+                },
+                {
+                    "level": "3R",
+                    "price": take_profit_3r,
+                    "quantity": quantity - int(quantity * 0.75),
+                    "executed": False,
+                    "action": "CLOSE_REMAINING"
+                }
+            ]
+
+            # Calculate remaining quantity
+            remaining = quantity
+            if scaled_1r:
+                remaining -= int(quantity * 0.50)
+            if scaled_2r:
+                remaining -= int(quantity * 0.25)
+
+            plan = PositionScaleOut(
+                symbol=symbol,
+                total_quantity=quantity,
+                remaining_quantity=remaining,
+                scale_levels=scale_levels,
+                current_stop=plan_data.get("current_stop", stop_loss),
+                original_stop=stop_loss,
+                breakeven_activated=plan_data.get("breakeven_activated", False),
+                trailing_activated=plan_data.get("trailing_activated", False)
+            )
+
+            self.positions[symbol] = plan
+            logger.info(f"Restored scale-out plan for {symbol}: remaining={remaining}, breakeven={plan.breakeven_activated}")
+
+        except Exception as e:
+            logger.error(f"Failed to restore scale plan for {symbol}: {e}")
+
 
 class TradingDisciplineEnforcer:
     """

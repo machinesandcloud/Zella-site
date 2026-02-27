@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from pydantic import BaseModel
 
 from core.auto_trader import AutoTrader
 from core.autonomous_engine import AutonomousEngine
@@ -10,6 +11,15 @@ from utils.market_hours import market_session
 from models import User
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+
+
+class WatchlistRequest(BaseModel):
+    symbols: List[str]
+
+
+def get_market_data_provider():
+    from main import app
+    return getattr(app.state, "market_data", None)
 
 
 def get_auto_trader() -> AutoTrader:
@@ -231,3 +241,74 @@ async def trigger_manual_scan(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
+
+
+# ==================== Watchlist Management Endpoints ====================
+
+@router.get("/watchlist")
+def get_watchlist(
+    market_data=Depends(get_market_data_provider),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Get current watchlist/universe being analyzed"""
+    if not market_data:
+        raise HTTPException(status_code=503, detail="Market data provider not initialized")
+
+    if hasattr(market_data, 'get_watchlist_info'):
+        return market_data.get_watchlist_info()
+    else:
+        # Fallback for providers without watchlist management
+        return {
+            "total_symbols": len(market_data.get_universe()),
+            "universe": market_data.get_universe(),
+            "custom_symbols": [],
+            "custom_count": 0
+        }
+
+
+@router.post("/watchlist/add")
+def add_to_watchlist(
+    request: WatchlistRequest,
+    market_data=Depends(get_market_data_provider),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Add symbols to the watchlist"""
+    if not market_data:
+        raise HTTPException(status_code=503, detail="Market data provider not initialized")
+
+    if not hasattr(market_data, 'add_to_watchlist'):
+        raise HTTPException(status_code=501, detail="Watchlist management not supported")
+
+    return market_data.add_to_watchlist(request.symbols)
+
+
+@router.post("/watchlist/remove")
+def remove_from_watchlist(
+    request: WatchlistRequest,
+    market_data=Depends(get_market_data_provider),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Remove symbols from the watchlist"""
+    if not market_data:
+        raise HTTPException(status_code=503, detail="Market data provider not initialized")
+
+    if not hasattr(market_data, 'remove_from_watchlist'):
+        raise HTTPException(status_code=501, detail="Watchlist management not supported")
+
+    return market_data.remove_from_watchlist(request.symbols)
+
+
+@router.post("/watchlist/set")
+def set_watchlist(
+    request: WatchlistRequest,
+    market_data=Depends(get_market_data_provider),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Set the entire custom watchlist (replaces existing)"""
+    if not market_data:
+        raise HTTPException(status_code=503, detail="Market data provider not initialized")
+
+    if not hasattr(market_data, 'set_watchlist'):
+        raise HTTPException(status_code=501, detail="Watchlist management not supported")
+
+    return market_data.set_watchlist(request.symbols)

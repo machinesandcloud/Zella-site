@@ -254,32 +254,131 @@ class AutonomousEngine:
         return strategies
 
     def _load_state(self):
-        """Load persistent state from disk"""
+        """Load persistent state from disk - ensures context is preserved across restarts/disconnections"""
         try:
             if self.state_file.exists():
                 with open(self.state_file, 'r') as f:
                     state = json.load(f)
+
+                    # Core configuration
                     self.enabled = state.get("enabled", self.enabled)
                     self.mode = state.get("mode", self.mode)
                     self.risk_posture = state.get("risk_posture", self.risk_posture)
                     self.strategy_performance = state.get("strategy_performance", {})
-                    logger.info(f"Loaded state - Enabled: {self.enabled}, Mode: {self.mode}")
+
+                    # Day trading state (critical for continuity)
+                    self.daily_pnl = state.get("daily_pnl", 0.0)
+                    self.eod_liquidation_done_today = state.get("eod_liquidation_done_today", False)
+                    self.last_liquidation_date = state.get("last_liquidation_date", None)
+
+                    # Decision history (for context continuity)
+                    self.decisions = state.get("decisions", [])
+
+                    # Active positions being tracked
+                    active_symbols = state.get("active_symbols", [])
+                    self.active_symbols = set(active_symbols)
+
+                    # Scale-out plans (critical for position management)
+                    scale_out_plans = state.get("scale_out_plans", {})
+                    if scale_out_plans and hasattr(self, 'elite_position_manager'):
+                        for symbol, plan_data in scale_out_plans.items():
+                            self.elite_position_manager.restore_scale_plan(symbol, plan_data)
+
+                    # Scanner results (for UI continuity)
+                    self.last_scanner_results = state.get("last_scanner_results", [])
+                    self.last_analyzed_opportunities = state.get("last_analyzed_opportunities", [])
+                    self.symbols_scanned = state.get("symbols_scanned", 0)
+
+                    # Check if this was a recovery from disconnection
+                    last_updated = state.get("last_updated", "")
+                    was_running = state.get("was_running", False)
+
+                    logger.info(f"✅ Loaded state - Enabled: {self.enabled}, Mode: {self.mode}")
+                    logger.info(f"   Daily P&L: ${self.daily_pnl:.2f}, Decisions: {len(self.decisions)}")
+                    logger.info(f"   Active symbols: {len(self.active_symbols)}, Scale-out plans: {len(scale_out_plans)}")
+
+                    if was_running and last_updated:
+                        self._add_decision(
+                            "RECOVERY",
+                            f"Recovered from disconnection - State restored from {last_updated}",
+                            "INFO",
+                            {"decisions_recovered": len(self.decisions), "active_symbols": len(self.active_symbols)}
+                        )
+
         except Exception as e:
             logger.error(f"Error loading state: {e}")
 
     def _save_state(self):
-        """Save persistent state to disk"""
+        """Save comprehensive state to disk for recovery from disconnections"""
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Get scale-out plans from elite position manager
+            scale_out_plans = {}
+            if hasattr(self, 'elite_position_manager'):
+                for symbol, plan in self.elite_position_manager.positions.items():
+                    # Extract take profit levels from scale_levels list
+                    take_profit_1r = 0
+                    take_profit_2r = 0
+                    take_profit_3r = 0
+                    scaled_1r = False
+                    scaled_2r = False
+
+                    for level in plan.scale_levels:
+                        if level.get("level") == "1R":
+                            take_profit_1r = level.get("price", 0)
+                            scaled_1r = level.get("executed", False)
+                        elif level.get("level") == "2R":
+                            take_profit_2r = level.get("price", 0)
+                            scaled_2r = level.get("executed", False)
+                        elif level.get("level") == "3R":
+                            take_profit_3r = level.get("price", 0)
+
+                    scale_out_plans[symbol] = {
+                        "quantity": plan.total_quantity,
+                        "stop_loss": plan.original_stop,
+                        "take_profit_1r": take_profit_1r,
+                        "take_profit_2r": take_profit_2r,
+                        "take_profit_3r": take_profit_3r,
+                        "scaled_1r": scaled_1r,
+                        "scaled_2r": scaled_2r,
+                        "breakeven_activated": plan.breakeven_activated,
+                        "trailing_activated": plan.trailing_activated,
+                        "current_stop": plan.current_stop,
+                    }
+
             state = {
+                # Core configuration
                 "enabled": self.enabled,
                 "mode": self.mode,
                 "risk_posture": self.risk_posture,
                 "strategy_performance": self.strategy_performance,
+
+                # Day trading state (critical)
+                "daily_pnl": self.daily_pnl,
+                "eod_liquidation_done_today": self.eod_liquidation_done_today,
+                "last_liquidation_date": self.last_liquidation_date,
+
+                # Decision history (keep last 50 for context)
+                "decisions": self.decisions[:50],
+
+                # Active tracking
+                "active_symbols": list(self.active_symbols),
+                "scale_out_plans": scale_out_plans,
+
+                # Scanner results (for UI continuity)
+                "last_scanner_results": self.last_scanner_results[:20],
+                "last_analyzed_opportunities": self.last_analyzed_opportunities[:15],
+                "symbols_scanned": self.symbols_scanned,
+
+                # Recovery metadata
+                "was_running": self.running,
                 "last_updated": datetime.now().isoformat(),
             }
+
             with open(self.state_file, 'w') as f:
                 json.dump(state, f, indent=2)
+
         except Exception as e:
             logger.error(f"Error saving state: {e}")
 
@@ -323,6 +422,7 @@ class AutonomousEngine:
         asyncio.create_task(self._connection_keepalive())
         asyncio.create_task(self._position_monitor())
         asyncio.create_task(self._latency_monitor())  # Monitor latency
+        asyncio.create_task(self._periodic_state_save())  # Save state for recovery
 
     async def stop(self):
         """Stop the autonomous trading engine"""
@@ -357,6 +457,8 @@ class AutonomousEngine:
                         logger.info("✓ Reconnected successfully")
                         self._add_decision("SYSTEM", "Reconnected to broker", "INFO", {"attempts": reconnect_attempts})
                         reconnect_attempts = 0  # Reset on success
+                        # Save state after successful reconnection
+                        self._save_state()
                     else:
                         logger.error(f"✗ Reconnection failed - retrying in {backoff_time}s")
                         self._add_decision("SYSTEM", "Reconnection failed", "ERROR", {"next_retry_seconds": backoff_time})
@@ -371,6 +473,20 @@ class AutonomousEngine:
             except Exception as e:
                 logger.error(f"Error in keepalive: {e}")
                 await asyncio.sleep(10)  # Shorter sleep on error
+
+    async def _periodic_state_save(self):
+        """
+        Periodically save state for recovery from disconnections.
+        Runs every 60 seconds to ensure context is preserved.
+        """
+        while self.running:
+            try:
+                await asyncio.sleep(60)  # Save every 60 seconds
+                self._save_state()
+                logger.debug("📝 Periodic state save completed")
+            except Exception as e:
+                logger.error(f"Error in periodic state save: {e}")
+                await asyncio.sleep(30)
 
     async def _main_trading_loop(self):
         """Main autonomous trading loop - scans continuously for real-time UI updates"""

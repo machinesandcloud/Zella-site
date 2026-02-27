@@ -20,6 +20,7 @@ import { autoLogin, fetchAlpacaStatus, fetchIbkrDefaults } from "./services/api"
 import AutopilotControl from "./components/AI/AutopilotControl";
 import SystemHealth from "./components/Dashboard/SystemHealth";
 import BotLogs from "./components/AI/BotLogs";
+import WatchlistManager from "./components/Dashboard/WatchlistManager";
 
 // Navigation tabs
 const NAV = [
@@ -371,6 +372,9 @@ const App = () => {
 
         {tab === 3 && (
           <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <WatchlistManager />
+            </Grid>
             <Grid item xs={12} md={6}>
               <AlpacaConnection />
             </Grid>
