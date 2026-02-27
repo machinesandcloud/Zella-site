@@ -118,6 +118,7 @@ from core.performance_engine import (
     LATENCY,
 )
 from core.learning_engine import get_learning_engine, TradeRecord
+from core.edge_engine import get_edge_engine, EdgeEngine
 
 logger = logging.getLogger("autonomous_engine")
 
@@ -250,8 +251,15 @@ class AutonomousEngine:
         self._trades_since_learning_cycle = 0
         self._learning_cycle_threshold = 10  # Run learning cycle every 10 trades
 
+        # === COMPETITIVE EDGE ENGINE ===
+        # This is what separates #1 from #5
+        # Provides: Algo detection, Flow prediction, Sentiment analysis, Stealth execution
+        self.edge_engine: EdgeEngine = get_edge_engine()
+        self._edge_lock = Lock()  # Thread-safe edge analysis
+
         logger.info(f"Autonomous Engine initialized - Mode: {self.mode}, Risk: {self.risk_posture}")
         logger.info(f"🚀 High-Performance Engine ready (target: <10ms latency)")
+        logger.info(f"⚡ EDGE ENGINE ACTIVE - Operating on a different level")
 
     def _initialize_strategies(self) -> Dict[str, Any]:
         """Initialize all 37+ trading strategies including Warrior Trading patterns"""
@@ -1627,24 +1635,133 @@ class AutonomousEngine:
                 take_profit_2r = price + (risk_distance * 2)  # 25% exit
                 take_profit_3r = price + (risk_distance * 2.5)  # Final 25%
 
+                # === EDGE ENGINE ANALYSIS ===
+                # This gives us the competitive advantage: algo detection, flow prediction, sentiment
+                edge_analysis = None
+                edge_action = None
+                edge_boost = 0.0
+                use_stealth = False
+
+                try:
+                    # Get data for edge analysis
+                    symbol_state = self._get_symbol_state(symbol)
+                    edge_data = symbol_state.bars_cache
+                    if edge_data is None:
+                        bars = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
+                        if bars:
+                            edge_data = pd.DataFrame(bars)
+                            symbol_state.bars_cache = edge_data
+                            symbol_state.bars_cache_time = datetime.now()
+
+                    if edge_data is not None and len(edge_data) > 50:
+                        with self._edge_lock:
+                            edge_analysis = self.edge_engine.get_edge(symbol, edge_data)
+
+                        if edge_analysis:
+                            edge_action = edge_analysis.get("action", "HOLD")
+                            edge_score = edge_analysis.get("edge_score", 0)
+
+                            # Edge signals boost confidence
+                            sentiment = edge_analysis.get("sentiment", {})
+                            flow = edge_analysis.get("flow_prediction", {})
+
+                            # STRONG BUY signals from sentiment (capitulation, panic)
+                            if sentiment.get("exploit_signal") in ["BUY_CAPITULATION", "BUY_PANIC"]:
+                                edge_boost = 0.15  # 15% confidence boost
+                                logger.info(f"⚡ EDGE: {symbol} - {sentiment['exploit_signal']} detected! (+15% confidence)")
+
+                            # Flow prediction alignment
+                            if flow and flow.get("direction") == "UP" and action == "BUY" and flow.get("confidence", 0) > 0.5:
+                                edge_boost += 0.10  # 10% boost for aligned flow
+                                logger.info(f"⚡ EDGE: {symbol} - Flow predicting UP ({flow['confidence']:.0%}) - Aligned! (+10%)")
+
+                            elif flow and flow.get("direction") == "DOWN" and action == "BUY" and flow.get("confidence", 0) > 0.6:
+                                # Flow predicting DOWN but we want to BUY - reduce confidence
+                                edge_boost -= 0.15
+                                logger.warning(f"⚠️ EDGE: {symbol} - Flow predicting DOWN - Counter to our action (-15%)")
+
+                            # FADE signal - we're countering retail FOMO
+                            if sentiment.get("fomo_active") and action == "BUY":
+                                edge_boost -= 0.20  # Don't chase FOMO
+                                logger.warning(f"⚠️ EDGE: {symbol} - FOMO active! Don't chase. (-20%)")
+
+                            # Algo detection - if predictable algos are present, we might have edge
+                            algo_counter = edge_analysis.get("algo_counter", {})
+                            if algo_counter and algo_counter.get("predictability", 0) > 0.7:
+                                logger.info(f"⚡ EDGE: {symbol} - Algo detected (predictability: {algo_counter['predictability']:.0%})")
+
+                            # Use stealth execution for better fills
+                            use_stealth = edge_analysis.get("recommended_execution") == "STEALTH"
+
+                            # Log edge summary
+                            logger.info(f"   EDGE Score: {edge_score:.2f} | Action: {edge_action} | Boost: {edge_boost:+.0%}")
+
+                except Exception as e:
+                    logger.debug(f"Edge analysis skipped for {symbol}: {e}")
+
+                # Apply edge boost to confidence
+                final_confidence = adjusted_confidence + edge_boost
+
+                # If edge strongly conflicts, skip the trade
+                if edge_boost <= -0.15 and adjusted_confidence < 0.80:
+                    logger.warning(f"⛔ {symbol} SKIPPED: Edge conflict (boost: {edge_boost:+.0%}, confidence would be {final_confidence:.0%})")
+                    self._add_decision(
+                        "EDGE_REJECTED",
+                        f"{symbol} rejected due to edge conflict",
+                        "INFO",
+                        {"edge_boost": edge_boost, "original_confidence": adjusted_confidence, "edge_analysis": edge_analysis}
+                    )
+                    continue
+
                 # Execute trade
                 vol_regime = vol_adjustments.get("volatility_regime", "NORMAL")
                 power_hour_tag = " [POWER HOUR]" if in_power_hour else ""
                 vol_tag = f" [{vol_regime}]" if vol_regime != "NORMAL" else ""
                 grade_tag = f" [GRADE {setup_grade}]"
+                edge_tag = f" [EDGE +{edge_boost:.0%}]" if edge_boost > 0 else ""
 
-                logger.info(f"🚀 EXECUTING{power_hour_tag}{vol_tag}{grade_tag}: {action} {quantity} {symbol} @ ${price:.2f}")
+                logger.info(f"🚀 EXECUTING{power_hour_tag}{vol_tag}{grade_tag}{edge_tag}: {action} {quantity} {symbol} @ ${price:.2f}")
                 logger.info(f"   ATR: ${atr_value:.2f} | Stop: ${stop_loss_price:.2f}")
                 logger.info(f"   Scale-out: 50% @ ${take_profit_1r:.2f} (1R) | 25% @ ${take_profit_2r:.2f} (2R) | 25% @ ${take_profit_3r:.2f} (3R)")
                 logger.info(f"   Strategies: {', '.join(strategies)}")
-                logger.info(f"   Confidence: {adjusted_confidence:.2%} | Size mult: {combined_size_mult:.0%}")
+                logger.info(f"   Confidence: {final_confidence:.2%} (base: {adjusted_confidence:.2%}, edge: {edge_boost:+.0%})")
 
                 # HIGH-PERFORMANCE: Execute with latency monitoring
                 import time as time_module
                 exec_start = time_module.perf_counter()
 
-                with LATENCY.timed(f"order_execution_{symbol}"):
-                    order = self.broker.place_market_order(symbol, quantity, action)
+                # === STEALTH EXECUTION ===
+                # Split orders to avoid detection by competing algos
+                if use_stealth and quantity > 50:
+                    with self._edge_lock:
+                        stealth_order = self.edge_engine.prepare_stealth_order(
+                            symbol=symbol,
+                            quantity=quantity,
+                            side=action,
+                            edge=edge_analysis or {}
+                        )
+
+                    # Execute slices with delays (simplified - full implementation would be async)
+                    total_filled = 0
+                    orders = []
+                    for i, slice_qty in enumerate(stealth_order.slices):
+                        if slice_qty <= 0:
+                            continue
+                        with LATENCY.timed(f"order_execution_{symbol}_slice_{i}"):
+                            slice_order = self.broker.place_market_order(symbol, slice_qty, action)
+                            if slice_order and not slice_order.get("error"):
+                                orders.append(slice_order)
+                                total_filled += slice_qty
+                        # Small delay between slices (to avoid detection)
+                        if i < len(stealth_order.slices) - 1:
+                            time_module.sleep(stealth_order.timing_delays_ms[i] / 1000.0)
+
+                    order = orders[0] if orders else None
+                    if total_filled > 0:
+                        logger.info(f"   STEALTH: Executed {total_filled} shares in {len(orders)} slices")
+                else:
+                    with LATENCY.timed(f"order_execution_{symbol}"):
+                        order = self.broker.place_market_order(symbol, quantity, action)
 
                 exec_elapsed_ms = (time_module.perf_counter() - exec_start) * 1000
                 if exec_elapsed_ms > 10:
@@ -1676,8 +1793,10 @@ class AutonomousEngine:
                     "SUCCESS",
                     {
                         "strategies": strategies,
-                        "confidence": adjusted_confidence,
+                        "confidence": final_confidence,
+                        "base_confidence": adjusted_confidence,
                         "raw_confidence": confidence,
+                        "edge_boost": edge_boost,
                         "num_strategies": num_strategies,
                         "order_id": order_id,
                         "setup_grade": setup_grade,
@@ -1689,7 +1808,14 @@ class AutonomousEngine:
                             "3R": {"price": take_profit_3r, "quantity": quantity - int(quantity * 0.75)}
                         },
                         "power_hour": in_power_hour,
-                        "position_sizing": f"ATR-based ({combined_size_mult:.0%})"
+                        "position_sizing": f"ATR-based ({combined_size_mult:.0%})",
+                        "edge_analysis": {
+                            "action": edge_action,
+                            "score": edge_analysis.get("edge_score", 0) if edge_analysis else 0,
+                            "stealth_execution": use_stealth,
+                            "sentiment": edge_analysis.get("sentiment", {}).get("exploit_signal") if edge_analysis else None,
+                            "flow_direction": edge_analysis.get("flow_prediction", {}).get("direction") if edge_analysis else None
+                        }
                     }
                 )
 
@@ -1701,6 +1827,21 @@ class AutonomousEngine:
                         self.strategy_performance[strat] = {"signals": 0, "trades": 0}
                     self.strategy_performance[strat]["signals"] += 1
                     self.strategy_performance[strat]["trades"] += 1
+
+                # Feed trade data to algo detector for pattern learning
+                # Over time, this helps detect competing algorithms
+                try:
+                    self.edge_engine.algo_detector.ingest_trade({
+                        "symbol": symbol,
+                        "quantity": quantity,
+                        "price": price,
+                        "side": action,
+                        "timestamp": datetime.now(),
+                        "order_type": "MARKET",
+                        "is_our_trade": True  # Mark as our own trade
+                    })
+                except Exception as e:
+                    logger.debug(f"Algo detector ingestion failed: {e}")
 
                 self._save_state()
 
