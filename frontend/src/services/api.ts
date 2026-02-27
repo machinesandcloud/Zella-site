@@ -295,4 +295,10 @@ export const validateSymbol = async (symbol: string) => {
   return data;
 };
 
+export const fetchWatchlistSnapshots = async (symbols?: string[]) => {
+  const params = symbols ? `?symbols=${symbols.join(",")}` : "";
+  const { data } = await api.get(`/api/ai/watchlist/snapshots${params}`);
+  return data;
+};
+
 export default api;

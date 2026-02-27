@@ -314,6 +314,55 @@ def set_watchlist(
     return market_data.set_watchlist(request.symbols)
 
 
+@router.get("/watchlist/snapshots")
+def get_watchlist_snapshots(
+    symbols: str = None,  # Optional comma-separated list of symbols
+    market_data=Depends(get_market_data_provider),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """
+    Get real-time market snapshots for watchlist symbols.
+    Returns price, bid, ask, volume, change, etc. for each symbol.
+
+    Args:
+        symbols: Optional comma-separated list of symbols. If not provided, returns all watchlist symbols.
+    """
+    if not market_data:
+        raise HTTPException(status_code=503, detail="Market data provider not initialized")
+
+    # Get symbols to fetch
+    if symbols:
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        # Get all watchlist symbols (limit to first 50 for performance)
+        symbol_list = market_data.get_universe()[:50]
+
+    if not symbol_list:
+        return {"snapshots": {}, "count": 0}
+
+    # Get snapshots using batch method if available, otherwise individual
+    snapshots = {}
+
+    if hasattr(market_data, 'get_batch_snapshots'):
+        # Free provider has batch method
+        snapshots = market_data.get_batch_snapshots(symbol_list)
+    else:
+        # Fall back to individual snapshots
+        for symbol in symbol_list:
+            try:
+                snapshot = market_data.get_market_snapshot(symbol)
+                if snapshot and snapshot.get("price"):
+                    snapshots[symbol] = snapshot
+            except Exception:
+                pass
+
+    return {
+        "snapshots": snapshots,
+        "count": len(snapshots),
+        "requested": len(symbol_list)
+    }
+
+
 @router.get("/symbols/search")
 async def search_symbols(
     q: str,

@@ -345,6 +345,46 @@ class AlpacaMarketDataProvider(MarketDataProvider):
 
         return {}
 
+    def get_batch_snapshots(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Get market snapshots for multiple symbols efficiently from cache.
+
+        Args:
+            symbols: List of stock symbols
+
+        Returns:
+            Dict mapping symbol to snapshot data
+        """
+        if not symbols:
+            return {}
+
+        snapshots = {}
+        with self._cache_lock:
+            for symbol in symbols:
+                cached = self._quote_cache.get(symbol)
+                if cached and cached.get("price"):
+                    snapshots[symbol] = {
+                        "symbol": symbol,
+                        "price": cached.get("price", 0),
+                        "bid": cached.get("bid", 0),
+                        "ask": cached.get("ask", 0),
+                        "bid_size": cached.get("bid_size", 0),
+                        "ask_size": cached.get("ask_size", 0),
+                        "open": cached.get("open", 0),
+                        "high": cached.get("high", 0),
+                        "low": cached.get("low", 0),
+                        "close": cached.get("close", 0),
+                        "volume": cached.get("volume", 0),
+                        "vwap": cached.get("vwap", 0),
+                        "prev_close": cached.get("prev_close", 0),
+                        "prev_volume": cached.get("prev_volume", 0),
+                        "change": cached.get("change", 0),
+                        "change_pct": cached.get("change_pct", 0),
+                        "timestamp": cached.get("trade_timestamp") or cached.get("quote_timestamp") or datetime.now().isoformat()
+                    }
+
+        return snapshots
+
     # ==================== Watchlist Management ====================
 
     def _load_custom_watchlist(self) -> None:
