@@ -19,7 +19,7 @@ class WatchlistRequest(BaseModel):
 
 def get_market_data_provider():
     from main import app
-    return getattr(app.state, "market_data", None)
+    return getattr(app.state, "market_data_provider", None)
 
 
 def get_auto_trader() -> AutoTrader:
@@ -312,3 +312,142 @@ def set_watchlist(
         raise HTTPException(status_code=501, detail="Watchlist management not supported")
 
     return market_data.set_watchlist(request.symbols)
+
+
+@router.get("/symbols/search")
+async def search_symbols(
+    q: str,
+    limit: int = 10,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """
+    Search for valid stock symbols using Alpaca API.
+    Returns matching tradable symbols for autocomplete.
+    """
+    from config import settings as app_settings
+
+    if not q or len(q) < 1:
+        return {"symbols": []}
+
+    q = q.upper().strip()
+
+    try:
+        # Use Alpaca Trading API to search assets
+        import httpx
+
+        headers = {
+            "APCA-API-KEY-ID": app_settings.alpaca_api_key,
+            "APCA-API-SECRET-KEY": app_settings.alpaca_secret_key,
+        }
+
+        # Determine if paper or live
+        base_url = "https://paper-api.alpaca.markets" if app_settings.alpaca_paper else "https://api.alpaca.markets"
+
+        async with httpx.AsyncClient() as client:
+            # Get all assets and filter
+            response = await client.get(
+                f"{base_url}/v2/assets",
+                headers=headers,
+                params={"status": "active", "asset_class": "us_equity"},
+                timeout=10.0
+            )
+
+            if response.status_code != 200:
+                # Fallback to static list from universe
+                from market.universe import get_default_universe
+                universe = get_default_universe()
+                matches = [s for s in universe if s.startswith(q)][:limit]
+                return {"symbols": matches, "source": "fallback"}
+
+            assets = response.json()
+
+            # Filter by search query and tradability
+            matches = []
+            for asset in assets:
+                symbol = asset.get("symbol", "")
+                name = asset.get("name", "")
+                tradable = asset.get("tradable", False)
+                fractionable = asset.get("fractionable", False)
+
+                if not tradable:
+                    continue
+
+                # Match by symbol or name
+                if symbol.startswith(q) or q in name.upper():
+                    matches.append({
+                        "symbol": symbol,
+                        "name": name,
+                        "exchange": asset.get("exchange", ""),
+                        "tradable": tradable,
+                        "fractionable": fractionable
+                    })
+
+                if len(matches) >= limit:
+                    break
+
+            # Sort by exact match first, then by symbol length
+            matches.sort(key=lambda x: (0 if x["symbol"] == q else 1, len(x["symbol"])))
+
+            return {"symbols": matches[:limit], "source": "alpaca"}
+
+    except Exception as e:
+        # Fallback to static universe list
+        from market.universe import get_default_universe
+        universe = get_default_universe()
+        matches = [{"symbol": s, "name": "", "tradable": True} for s in universe if s.startswith(q)][:limit]
+        return {"symbols": matches, "source": "fallback", "error": str(e)}
+
+
+@router.get("/symbols/validate")
+async def validate_symbol(
+    symbol: str,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Validate if a symbol is a real, tradable stock."""
+    from config import settings as app_settings
+
+    symbol = symbol.upper().strip()
+
+    if not symbol:
+        return {"valid": False, "reason": "Empty symbol"}
+
+    try:
+        import httpx
+
+        headers = {
+            "APCA-API-KEY-ID": app_settings.alpaca_api_key,
+            "APCA-API-SECRET-KEY": app_settings.alpaca_secret_key,
+        }
+
+        base_url = "https://paper-api.alpaca.markets" if app_settings.alpaca_paper else "https://api.alpaca.markets"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{base_url}/v2/assets/{symbol}",
+                headers=headers,
+                timeout=5.0
+            )
+
+            if response.status_code == 200:
+                asset = response.json()
+                tradable = asset.get("tradable", False)
+                return {
+                    "valid": tradable,
+                    "symbol": asset.get("symbol"),
+                    "name": asset.get("name"),
+                    "exchange": asset.get("exchange"),
+                    "tradable": tradable,
+                    "reason": "Valid tradable asset" if tradable else "Asset exists but not tradable"
+                }
+            elif response.status_code == 404:
+                return {"valid": False, "reason": "Symbol not found"}
+            else:
+                return {"valid": False, "reason": f"API error: {response.status_code}"}
+
+    except Exception as e:
+        # Fallback: check if in our universe
+        from market.universe import get_default_universe
+        universe = get_default_universe()
+        if symbol in universe:
+            return {"valid": True, "symbol": symbol, "reason": "Found in trading universe", "source": "fallback"}
+        return {"valid": False, "reason": str(e), "source": "fallback"}
