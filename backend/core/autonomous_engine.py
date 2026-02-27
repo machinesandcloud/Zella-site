@@ -78,6 +78,7 @@ from core.performance_engine import (
     SystemIntegrationValidator,
     LATENCY,
 )
+from core.learning_engine import get_learning_engine, TradeRecord
 
 logger = logging.getLogger("autonomous_engine")
 
@@ -191,6 +192,11 @@ class AutonomousEngine:
         # Persistent state file
         self.state_file = Path("data/autonomous_state.json")
         self._load_state()
+
+        # ML Learning Engine - learns from wins/losses to improve over time
+        self.learning_engine = get_learning_engine()
+        self._trades_since_learning_cycle = 0
+        self._learning_cycle_threshold = 10  # Run learning cycle every 10 trades
 
         logger.info(f"Autonomous Engine initialized - Mode: {self.mode}, Risk: {self.risk_posture}")
         logger.info(f"🚀 High-Performance Engine ready (target: <10ms latency)")
@@ -608,6 +614,10 @@ class AutonomousEngine:
                     self.last_liquidation_date = today
                     logger.info("✓ EOD Liquidation complete - All positions closed")
 
+                    # Run end-of-day learning cycle to analyze today's trades
+                    logger.info("🧠 Running end-of-day ML learning cycle...")
+                    await self._run_learning_cycle()
+
                 # Check every 30 seconds
                 await asyncio.sleep(30)
 
@@ -910,10 +920,17 @@ class AutonomousEngine:
                     try:
                         signal = strategy.generate_signals(df)
                         if signal and signal.get("action") in ["BUY", "SELL"]:
+                            # Apply learned weight multiplier from ML learning engine
+                            base_confidence = signal.get("confidence", 0.5)
+                            learned_weight = self.learning_engine.get_strategy_weight(strat_name)
+                            adjusted_confidence = min(1.0, base_confidence * learned_weight)
+
                             strategy_signals.append({
                                 "strategy": strat_name,
                                 "action": signal.get("action"),
-                                "confidence": signal.get("confidence", 0.5),
+                                "confidence": adjusted_confidence,
+                                "base_confidence": base_confidence,
+                                "learned_weight": learned_weight,
                                 "reason": signal.get("reason", ""),
                                 # Include indicator data for UI visualization
                                 "indicators": signal.get("indicators", {}),
@@ -1360,6 +1377,15 @@ class AutonomousEngine:
             # Record trade result in risk manager
             self.risk_manager.record_trade_result(unrealized_pnl)
 
+            # Record trade for ML learning
+            await self._record_trade_for_learning(
+                symbol=symbol,
+                pnl=unrealized_pnl,
+                entry_price=position.get("avgPrice", 0),
+                exit_price=current_price,
+                quantity=quantity
+            )
+
             self._add_decision(
                 "CLOSE",
                 f"Closed {symbol}: {reason}",
@@ -1376,6 +1402,132 @@ class AutonomousEngine:
         except Exception as e:
             logger.error(f"Error closing {symbol}: {e}")
             self._add_decision("ERROR", f"Failed to close {symbol}: {str(e)}", "ERROR", {})
+
+    async def _record_trade_for_learning(
+        self,
+        symbol: str,
+        pnl: float,
+        entry_price: float,
+        exit_price: float,
+        quantity: int
+    ):
+        """Record a completed trade for ML learning system"""
+        try:
+            # Determine which strategies triggered this trade
+            # Look through recent decisions to find the trade entry
+            strategies_used = []
+            setup_grade = "B"
+            confidence = 0.5
+
+            for decision in self.decisions:
+                if decision.get("type") == "TRADE" and symbol in decision.get("action", ""):
+                    metadata = decision.get("metadata", {})
+                    strategies_used = metadata.get("strategies", [])
+                    setup_grade = metadata.get("setup_grade", "B")
+                    confidence = metadata.get("confidence", 0.5)
+                    break
+
+            # Determine volatility regime and time of day
+            now = datetime.now()
+            hour = now.hour
+            if hour < 10:
+                time_of_day = "opening"
+            elif hour < 12:
+                time_of_day = "morning"
+            elif hour < 14:
+                time_of_day = "midday"
+            elif hour < 15:
+                time_of_day = "afternoon"
+            else:
+                time_of_day = "power_hour"
+
+            # Get ATR for volatility context
+            atr_value = 0
+            try:
+                bars = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
+                if bars and len(bars) > 0:
+                    df = pd.DataFrame(bars)
+                    atr_series = atr(df, 14)
+                    atr_value = atr_series.iloc[-1] if len(atr_series) > 0 else entry_price * 0.02
+            except Exception:
+                atr_value = entry_price * 0.02
+
+            # Determine volatility regime based on ATR%
+            atr_percent = (atr_value / entry_price) * 100 if entry_price > 0 else 2.0
+            if atr_percent < 1.5:
+                volatility_regime = "low"
+            elif atr_percent < 3.0:
+                volatility_regime = "normal"
+            else:
+                volatility_regime = "high"
+
+            # Record trade for each strategy that was used
+            for strategy in strategies_used:
+                trade_record = TradeRecord(
+                    symbol=symbol,
+                    strategy=strategy,
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    quantity=quantity,
+                    pnl=pnl,
+                    entry_time=now,  # Approximate
+                    exit_time=now,
+                    confidence=confidence,
+                    setup_grade=setup_grade,
+                    volatility_regime=volatility_regime,
+                    time_of_day=time_of_day,
+                    market_condition="trending" if abs(pnl) > atr_value else "ranging"
+                )
+
+                self.learning_engine.record_trade(trade_record)
+                logger.info(f"🧠 Recorded trade for learning: {symbol} via {strategy} (P&L: ${pnl:.2f})")
+
+            # Increment trade counter and check for learning cycle
+            self._trades_since_learning_cycle += 1
+
+            if self._trades_since_learning_cycle >= self._learning_cycle_threshold:
+                await self._run_learning_cycle()
+
+        except Exception as e:
+            logger.error(f"Error recording trade for learning: {e}")
+
+    async def _run_learning_cycle(self):
+        """Run ML learning cycle to adjust strategy weights"""
+        try:
+            logger.info("🧠 Running ML learning cycle...")
+
+            results = self.learning_engine.run_learning_cycle()
+
+            self._trades_since_learning_cycle = 0
+
+            # Log learning results
+            insights = results.get("insights", [])
+            weight_changes = results.get("weight_changes", {})
+
+            if insights:
+                logger.info(f"🧠 Learning insights: {len(insights)} discoveries")
+                for insight in insights[:5]:  # Log top 5 insights
+                    logger.info(f"   - {insight}")
+
+            if weight_changes:
+                logger.info(f"🧠 Strategy weight adjustments:")
+                for strategy, change in weight_changes.items():
+                    direction = "↑" if change > 0 else "↓"
+                    logger.info(f"   {strategy}: {direction} {abs(change):.1%}")
+
+            self._add_decision(
+                "LEARNING",
+                f"ML learning cycle completed - {len(insights)} insights",
+                "INFO",
+                {
+                    "insights": insights[:10],
+                    "weight_changes": weight_changes,
+                    "trades_analyzed": results.get("trades_analyzed", 0)
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Error in learning cycle: {e}")
 
     def _should_trade_now(self) -> bool:
         """Check if we should trade at this time"""
@@ -1454,6 +1606,13 @@ class AutonomousEngine:
             # HIGH-PERFORMANCE: Latency metrics
             "performance": self.get_latency_report() if hasattr(self, 'perf_engine') else {},
             "integration_validated": self._integration_validated if hasattr(self, '_integration_validated') else False,
+            # ML Learning status
+            "learning": {
+                "enabled": hasattr(self, 'learning_engine'),
+                "trades_until_next_cycle": self._learning_cycle_threshold - self._trades_since_learning_cycle if hasattr(self, '_trades_since_learning_cycle') else 0,
+                "strategy_weights": self.learning_engine.get_all_weights() if hasattr(self, 'learning_engine') else {},
+                "recent_insights": self.learning_engine.get_recent_insights(5) if hasattr(self, 'learning_engine') else [],
+            },
         }
 
     def update_config(self, config: Dict[str, Any]):

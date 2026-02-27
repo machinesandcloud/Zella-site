@@ -19,12 +19,14 @@ import RiskSettings from "./components/Settings/RiskSettings";
 import { autoLogin, fetchAlpacaStatus, fetchIbkrDefaults } from "./services/api";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import SystemHealth from "./components/Dashboard/SystemHealth";
+import BotLogs from "./components/AI/BotLogs";
 
-// Simplified navigation - only what matters for an autonomous bot
+// Navigation tabs
 const NAV = [
   { label: "Dashboard", value: 0 },
-  { label: "Trade History", value: 1 },
-  { label: "Settings", value: 2 }
+  { label: "Bot Logs", value: 1 },
+  { label: "Trade History", value: 2 },
+  { label: "Settings", value: 3 }
 ];
 
 // Backend wake-up configuration for Render
@@ -303,7 +305,7 @@ const App = () => {
           </Box>
         )}
 
-        {/* Simple tab navigation */}
+        {/* Tab navigation */}
         <Stack direction="row" spacing={1} sx={{ mb: 3 }}>
           {NAV.map((item) => (
             <Button
@@ -354,12 +356,20 @@ const App = () => {
         {tab === 1 && (
           <Grid container spacing={3}>
             <Grid item xs={12}>
-              <TradeHistory />
+              <BotLogs />
             </Grid>
           </Grid>
         )}
 
         {tab === 2 && (
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <TradeHistory />
+            </Grid>
+          </Grid>
+        )}
+
+        {tab === 3 && (
           <Grid container spacing={3}>
             <Grid item xs={12} md={6}>
               <AlpacaConnection />
