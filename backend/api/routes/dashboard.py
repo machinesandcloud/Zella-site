@@ -79,11 +79,19 @@ def metrics(db: Session = Depends(get_db), current_user: User = Depends(get_curr
 
 
 @router.get("/trades/recent")
-def recent_trades(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list:
-    since = datetime.utcnow() - timedelta(days=1)
+def recent_trades(
+    days: int = 7,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> list:
+    """Get recent trades. Default is last 7 days, up to 50 trades."""
+    since = datetime.utcnow() - timedelta(days=days)
     trades = (
         db.query(Trade)
         .filter(Trade.user_id == current_user.id, Trade.entry_time >= since)
+        .order_by(Trade.entry_time.desc())
+        .limit(limit)
         .all()
     )
     return [
@@ -92,8 +100,13 @@ def recent_trades(db: Session = Depends(get_db), current_user: User = Depends(ge
             "action": t.action,
             "quantity": t.quantity,
             "pnl": t.pnl,
+            "pnl_percent": t.pnl_percent,
             "status": t.status,
-            "entry_time": t.entry_time,
+            "entry_time": t.entry_time.isoformat() if t.entry_time else None,
+            "exit_time": t.exit_time.isoformat() if t.exit_time else None,
+            "entry_price": t.entry_price,
+            "exit_price": t.exit_price,
+            "strategy_name": t.strategy_name,
         }
         for t in trades
     ]

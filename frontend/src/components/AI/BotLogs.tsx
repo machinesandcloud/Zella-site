@@ -56,7 +56,7 @@ const BotLogs = () => {
   const fetchLogs = async () => {
     try {
       const token = localStorage.getItem("zella_token");
-      const response = await fetch(`${API_URL}/api/ai-trading/autonomous/status`, {
+      const response = await fetch(`${API_URL}/api/ai/autonomous/status`, {
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json"
