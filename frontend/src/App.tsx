@@ -5,7 +5,6 @@ import {
   Chip,
   Container,
   Grid,
-  IconButton,
   Snackbar,
   Stack,
   Typography,
@@ -15,58 +14,27 @@ import Overview from "./components/Dashboard/Overview";
 import ActivePositions from "./components/Dashboard/ActivePositions";
 import TradeHistory from "./components/Dashboard/TradeHistory";
 import PerformanceMetrics from "./components/Dashboard/PerformanceMetrics";
-import RiskDashboard from "./components/Dashboard/RiskDashboard";
-import NotificationCenter from "./components/Dashboard/NotificationCenter";
-import ChartView from "./components/Trading/ChartView";
-import EquityCurve from "./components/Dashboard/EquityCurve";
-import TradeJournal from "./components/Dashboard/TradeJournal";
-import PerformanceAnalytics from "./components/Dashboard/PerformanceAnalytics";
-import PortfolioAnalysis from "./components/Dashboard/PortfolioAnalysis";
-import NewsFeed from "./components/Dashboard/NewsFeed";
-import OrderEntry from "./components/Trading/OrderEntry";
-import Watchlist from "./components/Trading/Watchlist";
-import StrategyControlPanel from "./components/Trading/StrategyControlPanel";
-import AIMarketScanner from "./components/Trading/AIMarketScanner";
-import OrderBook from "./components/Trading/OrderBook";
-import TimeSales from "./components/Trading/TimeSales";
-import OrderGrid from "./components/Trading/OrderGrid";
-import PremarketChecklist from "./components/Trading/PremarketChecklist";
 import AlpacaConnection from "./components/Settings/AlpacaConnection";
 import RiskSettings from "./components/Settings/RiskSettings";
-import StrategyConfig from "./components/Settings/StrategyConfig";
 import { autoLogin, fetchAlpacaStatus, fetchIbkrDefaults } from "./services/api";
 import AutopilotControl from "./components/AI/AutopilotControl";
-import AutonomyTimeline from "./components/AI/AutonomyTimeline";
-import BotThinkingProcess from "./components/AI/BotThinkingProcess";
-import MarketScannerPanel from "./components/AI/MarketScannerPanel";
-import LiveTickerFeed from "./components/AI/LiveTickerFeed";
-import BotStockAnalysisLive from "./components/AI/BotStockAnalysisLive";
-import OptionsChain from "./components/Trading/OptionsChain";
-import VoiceAssistantSettings from "./components/Settings/VoiceAssistantSettings";
-import BacktestPanel from "./components/Trading/BacktestPanel";
-import StrategyBuilder from "./components/Trading/StrategyBuilder";
 import SystemHealth from "./components/Dashboard/SystemHealth";
-import CalendarHeatmap from "./components/Dashboard/CalendarHeatmap";
-import HelpCenter from "./components/Settings/HelpCenter";
-import UnderTheHood from "./components/AI/UnderTheHood";
 
+// Simplified navigation - only what matters for an autonomous bot
 const NAV = [
-  { label: "🤖 Autonomous Trading", value: 0 },
-  { label: "🧠 Under The Hood", value: 1 },
-  { label: "Manual Trading", value: 2 },
-  { label: "Analytics", value: 3 },
-  { label: "Settings", value: 4 }
+  { label: "Dashboard", value: 0 },
+  { label: "Trade History", value: 1 },
+  { label: "Settings", value: 2 }
 ];
 
-// Backend wake-up configuration for Render free tier
-const MAX_WAKE_RETRIES = 6; // Try 6 times
-const WAKE_RETRY_INTERVAL = 10000; // 10 seconds between retries (total ~60s)
+// Backend wake-up configuration for Render
+const MAX_WAKE_RETRIES = 6;
+const WAKE_RETRY_INTERVAL = 10000;
 
 const App = () => {
   const [tab, setTab] = useState(0);
   const [authRequired, setAuthRequired] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem("zella_token"));
-  // Initialize with defaults immediately to prevent "Backend not connected" during loading
   const [ibkrDefaults, setIbkrDefaults] = useState<{
     is_paper_trading: boolean;
     use_mock_ibkr: boolean;
@@ -111,7 +79,7 @@ const App = () => {
     };
   }, []);
 
-  // Auto-login on mount with retry logic for Render cold starts
+  // Auto-login with retry logic for Render cold starts
   useEffect(() => {
     const token = localStorage.getItem("zella_token");
     if (token) {
@@ -145,10 +113,8 @@ const App = () => {
         if (cancelled) return;
 
         if (attempt < MAX_WAKE_RETRIES) {
-          // Retry after interval
           setTimeout(tryConnect, WAKE_RETRY_INTERVAL);
         } else {
-          // All retries exhausted
           setBackendConnected(false);
           setIsWakingUp(false);
         }
@@ -162,7 +128,7 @@ const App = () => {
     };
   }, []);
 
-  // Re-authenticate when auth is required (401 response)
+  // Re-authenticate when auth is required
   useEffect(() => {
     if (!authRequired) return;
     autoLogin()
@@ -177,7 +143,7 @@ const App = () => {
       .catch(() => undefined);
   }, [authRequired]);
 
-  // Fetch IBKR defaults only after authenticated
+  // Fetch IBKR defaults after authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchIbkrDefaults()
@@ -191,7 +157,7 @@ const App = () => {
       });
   }, [isAuthenticated]);
 
-  // Fetch Alpaca status only after authenticated
+  // Fetch Alpaca status after authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
@@ -216,38 +182,30 @@ const App = () => {
       const detail = (event as CustomEvent).detail || {};
       setToast({
         open: true,
-        message: detail.message || "Action queued.",
+        message: detail.message || "Action completed.",
         severity: detail.severity || "info"
       });
     };
-    const navHandler = (event: Event) => {
-      const detail = (event as CustomEvent).detail || {};
-      if (typeof detail.tab === "number") {
-        setTab(detail.tab);
-      }
-    };
     window.addEventListener("app:toast", toastHandler as EventListener);
-    window.addEventListener("app:navigate", navHandler as EventListener);
     return () => {
       window.removeEventListener("app:toast", toastHandler as EventListener);
-      window.removeEventListener("app:navigate", navHandler as EventListener);
     };
   }, []);
 
   return (
     <Box sx={{ minHeight: "100vh", pb: 6 }}>
+      {/* Header */}
       <Box
         sx={{
           position: "sticky",
           top: 0,
           zIndex: 10,
           backdropFilter: "blur(18px)",
-          background:
-            "linear-gradient(120deg, rgba(10, 15, 22, 0.92), rgba(16, 22, 34, 0.78))",
+          background: "linear-gradient(120deg, rgba(10, 15, 22, 0.95), rgba(16, 22, 34, 0.85))",
           borderBottom: "1px solid rgba(255,255,255,0.08)"
         }}
       >
-        <Container maxWidth="xl" sx={{ py: 2 }}>
+        <Container maxWidth="lg" sx={{ py: 2 }}>
           <Stack direction="row" alignItems="center" spacing={2} justifyContent="space-between">
             <Stack direction="row" alignItems="center" spacing={2}>
               <Box
@@ -260,73 +218,40 @@ const App = () => {
                   placeItems: "center",
                   color: "#0b0f17",
                   fontWeight: 700,
-                  boxShadow: "0 12px 28px rgba(20, 196, 184, 0.3)"
+                  fontSize: "1.2rem"
                 }}
               >
                 Z
               </Box>
               <Box>
-                <Typography variant="h5">Zella AI Trading Platform</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Fully Autonomous Trading • 25+ Strategies • Real-Time Intelligence
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>Zella AI</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Autonomous Day Trader
                 </Typography>
               </Box>
             </Stack>
             <Stack direction="row" spacing={1} alignItems="center">
-              {ibkrDefaults ? (
-                <Chip
-                  label={ibkrDefaults.is_paper_trading ? "Paper Mode" : "Live Mode"}
-                  color={ibkrDefaults.is_paper_trading ? "secondary" : "success"}
-                  size="small"
-                />
-              ) : (
-                <Chip label="Trading Mode" size="small" />
+              <Chip
+                label={ibkrDefaults.is_paper_trading ? "Paper" : "Live"}
+                color={ibkrDefaults.is_paper_trading ? "secondary" : "success"}
+                size="small"
+              />
+              {alpacaStatus?.connected && (
+                <Chip label="Connected" color="success" size="small" variant="outlined" />
               )}
-              {ibkrDefaults?.use_alpaca && <Chip label="Alpaca" size="small" />}
-              {ibkrDefaults?.use_free_data && <Chip label="Free Data" size="small" />}
-              {alpacaStatus?.enabled && (
-                <Chip
-                  label={alpacaStatus.connected ? "Alpaca Connected" : "Alpaca Disconnected"}
-                  color={alpacaStatus.connected ? "success" : "warning"}
-                  size="small"
-                />
-              )}
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={() =>
-                  window.dispatchEvent(
-                    new CustomEvent("app:toast", {
-                      detail: {
-                        message: "Deployment report generated for this session.",
-                        severity: "success"
-                      }
-                    })
-                  )
-                }
-              >
-                Deploy Report
-              </Button>
-              <IconButton
-                sx={{ border: "1px solid rgba(255,255,255,0.12)" }}
-                onClick={() =>
-                  window.dispatchEvent(new CustomEvent("app:navigate", { detail: { tab: 3 } }))
-                }
-              >
-                ⚙️
-              </IconButton>
             </Stack>
           </Stack>
         </Container>
       </Box>
 
-      <Container maxWidth="xl" sx={{ mt: 4 }}>
+      <Container maxWidth="lg" sx={{ mt: 3 }}>
+        {/* Wake-up indicator */}
         {isWakingUp && (
           <Box
             sx={{
               mb: 2,
               p: 2,
-              borderRadius: 3,
+              borderRadius: 2,
               border: "1px solid rgba(59, 130, 246, 0.3)",
               background: "rgba(59, 130, 246, 0.1)"
             }}
@@ -334,8 +259,8 @@ const App = () => {
             <Stack direction="row" alignItems="center" spacing={2}>
               <Box
                 sx={{
-                  width: 20,
-                  height: 20,
+                  width: 16,
+                  height: 16,
                   border: "2px solid rgba(59, 130, 246, 0.3)",
                   borderTop: "2px solid #3b82f6",
                   borderRadius: "50%",
@@ -347,260 +272,109 @@ const App = () => {
                 }}
               />
               <Typography variant="body2">
-                Waking up backend server... This may take up to 60 seconds. (Attempt {wakeAttempt}/{MAX_WAKE_RETRIES})
+                Connecting to server... ({wakeAttempt}/{MAX_WAKE_RETRIES})
               </Typography>
             </Stack>
           </Box>
         )}
+
+        {/* Backend disconnected warning */}
         {!backendConnected && !isWakingUp && (
           <Box
             sx={{
               mb: 2,
               p: 2,
-              borderRadius: 3,
+              borderRadius: 2,
               border: "1px solid rgba(255,184,77,0.3)",
               background: "rgba(255, 184, 77, 0.1)"
             }}
           >
-            <Typography variant="body2" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <span>⚠️</span>
-              <span>
-                Backend not connected - Running in demo mode.
-              </span>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Typography variant="body2">Backend offline</Typography>
               <Button
                 size="small"
                 variant="outlined"
                 onClick={() => window.location.reload()}
-                sx={{ ml: 1, textTransform: "none", fontSize: "0.75rem" }}
+                sx={{ ml: 1, textTransform: "none" }}
               >
                 Retry
               </Button>
-            </Typography>
+            </Stack>
           </Box>
         )}
-        {authRequired && (
-          <Box
-            sx={{
-              mb: 2,
-              p: 2,
-              borderRadius: 3,
-              border: "1px solid rgba(255,255,255,0.08)",
-              background: "rgba(255, 92, 92, 0.1)"
-            }}
-          >
-            <Typography variant="body2">
-              Session expired. Auto-login is retrying in the background.
-            </Typography>
-          </Box>
-        )}
-        <Grid container spacing={3}>
-          <Grid item xs={12} md={2.5}>
-            <Box
+
+        {/* Simple tab navigation */}
+        <Stack direction="row" spacing={1} sx={{ mb: 3 }}>
+          {NAV.map((item) => (
+            <Button
+              key={item.value}
+              variant={tab === item.value ? "contained" : "outlined"}
+              onClick={() => setTab(item.value)}
               sx={{
-                p: 2,
-                borderRadius: 3,
-                border: "1px solid rgba(255,255,255,0.1)",
-                background:
-                  "linear-gradient(160deg, rgba(18, 24, 36, 0.92), rgba(9, 12, 20, 0.72))",
-                boxShadow: "0 20px 50px rgba(4, 8, 18, 0.45)",
-                position: "sticky",
-                top: 96
+                textTransform: "none",
+                borderRadius: 2,
+                px: 3
               }}
             >
-              <Typography variant="overline" color="text.secondary">
-                Navigation
-              </Typography>
-              <Stack spacing={1} sx={{ mt: 1 }}>
-                {NAV.map((item) => (
-                  <Button
-                    key={item.value}
-                    variant="text"
-                    color="inherit"
-                    onClick={() => setTab(item.value)}
-                    sx={{
-                      justifyContent: "flex-start",
-                      borderRadius: 2,
-                      px: 2,
-                      py: 1.2,
-                      backgroundColor: tab === item.value ? "rgba(47, 227, 207, 0.15)" : "transparent",
-                      border: tab === item.value ? "1px solid rgba(47, 227, 207, 0.35)" : "1px solid transparent",
-                      color: tab === item.value ? "#e8edf6" : "text.secondary",
-                      boxShadow: tab === item.value ? "0 12px 24px rgba(15, 135, 126, 0.2)" : "none"
-                    }}
-                  >
-                    {item.label}
-                  </Button>
-                ))}
-              </Stack>
-            </Box>
+              {item.label}
+            </Button>
+          ))}
+        </Stack>
+
+        {/* Tab Content */}
+        {tab === 0 && (
+          <Grid container spacing={3}>
+            {/* Main Control - Start/Stop Bot */}
+            <Grid item xs={12} md={8}>
+              <AutopilotControl />
+            </Grid>
+
+            {/* System Status */}
+            <Grid item xs={12} md={4}>
+              <SystemHealth />
+            </Grid>
+
+            {/* Active Positions */}
+            <Grid item xs={12} md={8}>
+              <ActivePositions />
+            </Grid>
+
+            {/* Account Overview */}
+            <Grid item xs={12} md={4}>
+              <Overview />
+            </Grid>
+
+            {/* Performance */}
+            <Grid item xs={12}>
+              <PerformanceMetrics />
+            </Grid>
           </Grid>
+        )}
 
-          <Grid item xs={12} md={9.5}>
-            {tab === 0 && (
-              <Grid container spacing={3}>
-                {/* Autonomous Trading Engine Control */}
-                <Grid item xs={12} lg={7}>
-                  <AutopilotControl />
-                </Grid>
-
-                {/* System Health */}
-                <Grid item xs={12} lg={5}>
-                  <SystemHealth />
-                </Grid>
-
-                {/* Live Ticker Feed - Real-time stock prices */}
-                <Grid item xs={12}>
-                  <LiveTickerFeed />
-                </Grid>
-
-                {/* Bot Stock Analysis - Shows all stocks being analyzed in real-time */}
-                <Grid item xs={12}>
-                  <BotStockAnalysisLive />
-                </Grid>
-
-                {/* Market Scanner Analysis - Detailed evaluation data */}
-                <Grid item xs={12}>
-                  <MarketScannerPanel />
-                </Grid>
-
-                {/* Bot Thinking Process - Shows what stocks bot is analyzing and why */}
-                <Grid item xs={12} lg={6}>
-                  <BotThinkingProcess />
-                </Grid>
-
-                {/* Real-Time Decision Log */}
-                <Grid item xs={12} lg={6}>
-                  <AutonomyTimeline />
-                </Grid>
-
-                {/* Current Positions */}
-                <Grid item xs={12} lg={8}>
-                  <ActivePositions />
-                </Grid>
-
-                {/* Account Overview */}
-                <Grid item xs={12} lg={4}>
-                  <Overview />
-                </Grid>
-
-                {/* Risk Monitoring */}
-                <Grid item xs={12} md={6}>
-                  <RiskDashboard />
-                </Grid>
-
-                {/* Performance */}
-                <Grid item xs={12} md={6}>
-                  <PerformanceMetrics />
-                </Grid>
-
-                {/* Equity Curve */}
-                <Grid item xs={12}>
-                  <EquityCurve />
-                </Grid>
-              </Grid>
-            )}
-
-            {tab === 1 && (
-              <Grid container spacing={3}>
-                <Grid item xs={12}>
-                  <UnderTheHood />
-                </Grid>
-              </Grid>
-            )}
-
-            {tab === 2 && (
-              <Grid container spacing={3}>
-                <Grid item xs={12} md={8}>
-                  <ChartView />
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <Watchlist />
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <PremarketChecklist />
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <OrderBook />
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <TimeSales />
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <OptionsChain />
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <AIMarketScanner />
-                </Grid>
-                <Grid item xs={12} md={8}>
-                  <OrderEntry />
-                </Grid>
-                <Grid item xs={12}>
-                  <OrderGrid />
-                </Grid>
-                <Grid item xs={12}>
-                  <BacktestPanel />
-                </Grid>
-                <Grid item xs={12}>
-                  <StrategyBuilder />
-                </Grid>
-                <Grid item xs={12}>
-                  <StrategyControlPanel />
-                </Grid>
-              </Grid>
-            )}
-
-            {tab === 3 && (
-              <Grid container spacing={3}>
-                <Grid item xs={12}>
-                  <PerformanceAnalytics />
-                </Grid>
-                <Grid item xs={12}>
-                  <CalendarHeatmap />
-                </Grid>
-                <Grid item xs={12}>
-                  <PortfolioAnalysis />
-                </Grid>
-                <Grid item xs={12}>
-                  <NewsFeed />
-                </Grid>
-                <Grid item xs={12}>
-                  <NotificationCenter />
-                </Grid>
-                <Grid item xs={12}>
-                  <TradeHistory />
-                </Grid>
-                <Grid item xs={12}>
-                  <TradeJournal />
-                </Grid>
-              </Grid>
-            )}
-
-            {tab === 4 && (
-              <Grid container spacing={3}>
-                <Grid item xs={12} md={6}>
-                  <AlpacaConnection />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <RiskSettings />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <VoiceAssistantSettings />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <HelpCenter />
-                </Grid>
-                <Grid item xs={12}>
-                  <StrategyConfig />
-                </Grid>
-              </Grid>
-            )}
-
+        {tab === 1 && (
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <TradeHistory />
+            </Grid>
           </Grid>
-        </Grid>
+        )}
+
+        {tab === 2 && (
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={6}>
+              <AlpacaConnection />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <RiskSettings />
+            </Grid>
+          </Grid>
+        )}
       </Container>
+
+      {/* Toast notifications */}
       <Snackbar
         open={toast.open}
-        autoHideDuration={3500}
+        autoHideDuration={3000}
         onClose={() => setToast((prev) => ({ ...prev, open: false }))}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
       >
@@ -608,7 +382,7 @@ const App = () => {
           severity={toast.severity}
           variant="filled"
           onClose={() => setToast((prev) => ({ ...prev, open: false }))}
-          sx={{ borderRadius: 2, alignItems: "center" }}
+          sx={{ borderRadius: 2 }}
         >
           {toast.message}
         </Alert>
