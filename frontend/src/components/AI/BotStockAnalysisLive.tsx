@@ -135,6 +135,8 @@ const BotStockAnalysisLive = () => {
     return `${protocol}//${host}/ws/bot-activity`;
   }, []);
 
+  const retryCountRef = useRef(0);
+
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
@@ -146,6 +148,7 @@ const BotStockAnalysisLive = () => {
       ws.onopen = () => {
         setConnected(true);
         setConnecting(false);
+        retryCountRef.current = 0; // Reset retry count on successful connection
       };
 
       ws.onmessage = (event) => {
@@ -178,7 +181,12 @@ const BotStockAnalysisLive = () => {
       ws.onclose = () => {
         setConnected(false);
         setConnecting(false);
-        reconnectTimeoutRef.current = setTimeout(connect, 3000);
+
+        // Exponential backoff: 1s, 2s, 4s, 8s, max 30s
+        const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
+        retryCountRef.current++;
+        console.log(`[BotStockAnalysis WS] Reconnecting in ${delay}ms (attempt ${retryCountRef.current})`);
+        reconnectTimeoutRef.current = setTimeout(connect, delay);
       };
 
       wsRef.current = ws;

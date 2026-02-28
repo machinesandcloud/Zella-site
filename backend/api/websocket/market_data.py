@@ -340,6 +340,8 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
     """
     Real-time bot activity stream showing autonomous engine decisions.
     Streams: current status, scan results, trade decisions, position updates
+
+    Includes heartbeat mechanism to detect and handle stale connections.
     """
     await websocket.accept()
 
@@ -349,11 +351,19 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
         "timestamp": datetime.utcnow().isoformat(),
     })
 
-    try:
-        last_decision_count = 0
-        last_scan_time: Optional[str] = None
+    last_decision_count = 0
+    last_scan_time: Optional[str] = None
+    heartbeat_counter = 0
+    HEARTBEAT_INTERVAL = 50  # Send heartbeat every 50 iterations (25 seconds at 500ms)
 
+    try:
         while True:
+            # Check if connection is still alive
+            if websocket.client_state != WebSocketState.CONNECTED:
+                logger.debug("Bot activity WebSocket client disconnected")
+                break
+
+            heartbeat_counter += 1
             engine = _get_autonomous_engine()
 
             if engine:
@@ -447,18 +457,40 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                     activity["data"]["new_decisions"] = new_decisions
                     last_decision_count = current_decision_count
 
-                await websocket.send_json(activity)
-            else:
-                await websocket.send_json({
-                    "channel": "bot-activity",
-                    "type": "error",
-                    "message": "Autonomous engine not available",
-                    "timestamp": datetime.utcnow().isoformat(),
-                })
+                # Add heartbeat flag periodically to help detect stale connections
+                if heartbeat_counter >= HEARTBEAT_INTERVAL:
+                    activity["heartbeat"] = True
+                    heartbeat_counter = 0
 
-            await asyncio.sleep(0.1)  # 100ms for real-time bot activity updates
+                try:
+                    await websocket.send_json(activity)
+                except Exception as e:
+                    logger.debug(f"Failed to send bot activity update: {e}")
+                    break
+            else:
+                try:
+                    await websocket.send_json({
+                        "channel": "bot-activity",
+                        "type": "error",
+                        "message": "Autonomous engine not available",
+                        "timestamp": datetime.utcnow().isoformat(),
+                    })
+                except Exception as e:
+                    logger.debug(f"Failed to send bot activity error: {e}")
+                    break
+
+            await asyncio.sleep(0.5)  # 500ms for bot activity updates (balanced for responsiveness vs stability)
     except WebSocketDisconnect:
-        return
+        logger.debug("Bot activity WebSocket disconnected normally")
+    except Exception as e:
+        logger.warning(f"Bot activity WebSocket error: {e}")
+    finally:
+        # Ensure clean disconnect
+        try:
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.close()
+        except Exception:
+            pass
 
 
 @router.websocket("/ws/orders")

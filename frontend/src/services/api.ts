@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 
 // Check if VITE_API_URL is explicitly set (not undefined, not empty)
 const API_URL = import.meta.env.VITE_API_URL?.trim();
@@ -20,6 +20,36 @@ console.log("[API Config]", {
 const isNetlifyDemoMode = import.meta.env.VITE_API_URL === "";
 const timeout = isNetlifyDemoMode ? 1000 : 30000;
 
+// Retry configuration
+const MAX_RETRIES = 3;
+const RETRY_DELAY_BASE = 1000; // 1 second base delay
+
+// Helper to check if error is retryable
+const isRetryableError = (error: AxiosError): boolean => {
+  // Network errors (no response)
+  if (!error.response) return true;
+
+  // Server errors (5xx) are often transient
+  const status = error.response.status;
+  if (status >= 500 && status < 600) return true;
+
+  // Rate limiting
+  if (status === 429) return true;
+
+  // Connection timeout
+  if (error.code === "ECONNABORTED") return true;
+
+  return false;
+};
+
+// Helper for exponential backoff delay
+const getRetryDelay = (retryCount: number): number => {
+  // Exponential backoff: 1s, 2s, 4s with jitter
+  const delay = RETRY_DELAY_BASE * Math.pow(2, retryCount);
+  const jitter = Math.random() * 500; // Add 0-500ms jitter
+  return delay + jitter;
+};
+
 const api = axios.create({
   baseURL,
   headers: {
@@ -27,6 +57,11 @@ const api = axios.create({
   },
   timeout
 });
+
+// Extend config type to track retries
+interface RetryConfig extends InternalAxiosRequestConfig {
+  __retryCount?: number;
+}
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("zella_token");
@@ -38,12 +73,40 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error: AxiosError) => {
+    const config = error.config as RetryConfig;
+
+    // Handle 401 unauthorized
     if (error?.response?.status === 401) {
       localStorage.removeItem("zella_token");
       window.dispatchEvent(new Event("auth:logout"));
+      return Promise.reject(error);
     }
-    return Promise.reject(error);
+
+    // Check if we should retry
+    if (!config || !isRetryableError(error)) {
+      return Promise.reject(error);
+    }
+
+    // Initialize or increment retry count
+    config.__retryCount = config.__retryCount ?? 0;
+
+    // Check if we've exceeded max retries
+    if (config.__retryCount >= MAX_RETRIES) {
+      console.warn(`[API] Max retries (${MAX_RETRIES}) exceeded for ${config.url}`);
+      return Promise.reject(error);
+    }
+
+    config.__retryCount += 1;
+
+    // Calculate delay
+    const delay = getRetryDelay(config.__retryCount - 1);
+    console.log(`[API] Retry ${config.__retryCount}/${MAX_RETRIES} for ${config.url} in ${Math.round(delay)}ms`);
+
+    // Wait and retry
+    await new Promise((resolve) => setTimeout(resolve, delay));
+
+    return api(config);
   }
 );
 
@@ -330,6 +393,66 @@ export const fetchTradesByStrategy = async (strategyName: string, limit: number 
 export const fetchAvailableStrategies = async () => {
   const { data } = await api.get("/api/trades/strategies");
   return data;
+};
+
+// ==================== Health Check API ====================
+
+export const checkHealth = async (): Promise<{
+  status: string;
+  service: string;
+  components: Record<string, unknown>;
+}> => {
+  const { data } = await api.get("/health", { timeout: 5000 }); // Short timeout for health checks
+  return data;
+};
+
+// Connection status tracking
+let connectionListeners: ((connected: boolean) => void)[] = [];
+let lastConnectionState = true;
+
+export const onConnectionChange = (callback: (connected: boolean) => void) => {
+  connectionListeners.push(callback);
+  return () => {
+    connectionListeners = connectionListeners.filter((cb) => cb !== callback);
+  };
+};
+
+const notifyConnectionChange = (connected: boolean) => {
+  if (connected !== lastConnectionState) {
+    lastConnectionState = connected;
+    connectionListeners.forEach((cb) => cb(connected));
+    window.dispatchEvent(new CustomEvent("connection:change", { detail: { connected } }));
+  }
+};
+
+// Start periodic health monitoring (every 30 seconds)
+let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+export const startHealthMonitoring = () => {
+  if (healthCheckInterval) return;
+
+  const doHealthCheck = async () => {
+    try {
+      await checkHealth();
+      notifyConnectionChange(true);
+    } catch {
+      console.warn("[API] Health check failed - connection may be lost");
+      notifyConnectionChange(false);
+    }
+  };
+
+  // Initial check
+  doHealthCheck();
+
+  // Periodic checks
+  healthCheckInterval = setInterval(doHealthCheck, 30000);
+};
+
+export const stopHealthMonitoring = () => {
+  if (healthCheckInterval) {
+    clearInterval(healthCheckInterval);
+    healthCheckInterval = null;
+  }
 };
 
 export default api;

@@ -16,7 +16,7 @@ import TradeHistory from "./components/Dashboard/TradeHistory";
 import PerformanceMetrics from "./components/Dashboard/PerformanceMetrics";
 import AlpacaConnection from "./components/Settings/AlpacaConnection";
 import RiskSettings from "./components/Settings/RiskSettings";
-import { autoLogin, fetchAlpacaStatus, fetchIbkrDefaults } from "./services/api";
+import { autoLogin, fetchAlpacaStatus, fetchIbkrDefaults, startHealthMonitoring, onConnectionChange } from "./services/api";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import SystemHealth from "./components/Dashboard/SystemHealth";
 import BotLogs from "./components/AI/BotLogs";
@@ -82,6 +82,37 @@ const App = () => {
       window.removeEventListener("auth:login", loginHandler);
     };
   }, []);
+
+  // Connection health monitoring - starts after authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // Start health monitoring
+    startHealthMonitoring();
+
+    // Listen for connection changes
+    const unsubscribe = onConnectionChange((connected) => {
+      setBackendConnected(connected);
+      if (!connected) {
+        setToast({
+          open: true,
+          message: "Connection to server lost. Retrying...",
+          severity: "warning"
+        });
+      } else if (!backendConnected) {
+        // Only show reconnected toast if we were previously disconnected
+        setToast({
+          open: true,
+          message: "Reconnected to server",
+          severity: "success"
+        });
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isAuthenticated, backendConnected]);
 
   // Auto-login with retry logic for Render cold starts
   useEffect(() => {

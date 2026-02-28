@@ -903,14 +903,35 @@ const UnderTheHood = () => {
   }, []);
 
   useEffect(() => {
+    let retryCount = 0;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let isMounted = true;
+
     const connect = () => {
+      if (!isMounted) return;
+
       const ws = new WebSocket(getWebSocketUrl());
-      ws.onopen = () => setConnected(true);
-      ws.onclose = () => {
-        setConnected(false);
-        setTimeout(connect, 2000);
+
+      ws.onopen = () => {
+        if (!isMounted) return;
+        setConnected(true);
+        retryCount = 0; // Reset retry count on successful connection
       };
-      ws.onerror = () => setConnected(false);
+
+      ws.onclose = () => {
+        if (!isMounted) return;
+        setConnected(false);
+
+        // Exponential backoff: 1s, 2s, 4s, 8s, max 30s
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+        retryCount++;
+        console.log(`[UnderTheHood WS] Reconnecting in ${delay}ms (attempt ${retryCount})`);
+        reconnectTimeout = setTimeout(connect, delay);
+      };
+
+      ws.onerror = () => {
+        if (isMounted) setConnected(false);
+      };
 
       ws.onmessage = (event) => {
         try {
@@ -945,7 +966,12 @@ const UnderTheHood = () => {
     };
 
     connect();
-    return () => wsRef.current?.close();
+
+    return () => {
+      isMounted = false;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      wsRef.current?.close();
+    };
   }, [getWebSocketUrl]);
 
   const getCategoryForStrategy = (strategyName: string) => {

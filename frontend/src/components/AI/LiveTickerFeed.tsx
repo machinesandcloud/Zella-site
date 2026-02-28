@@ -90,6 +90,8 @@ const LiveTickerFeed = () => {
     return `${protocol}//${host}/ws/live-ticker${symbols ? `?symbols=${symbols}` : ""}`;
   }, [subscribedSymbols]);
 
+  const retryCountRef = useRef(0);
+
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
@@ -103,6 +105,7 @@ const LiveTickerFeed = () => {
         setConnected(true);
         setConnecting(false);
         setError(null);
+        retryCountRef.current = 0; // Reset retry count on successful connection
       };
 
       ws.onmessage = (event) => {
@@ -133,10 +136,13 @@ const LiveTickerFeed = () => {
         setConnected(false);
         setConnecting(false);
 
-        // Auto-reconnect after 2 seconds
+        // Exponential backoff: 1s, 2s, 4s, 8s, max 30s
+        const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
+        retryCountRef.current++;
+        console.log(`[LiveTicker WS] Reconnecting in ${delay}ms (attempt ${retryCountRef.current})`);
         reconnectTimeoutRef.current = setTimeout(() => {
           connect();
-        }, 2000);
+        }, delay);
       };
 
       wsRef.current = ws;
