@@ -138,24 +138,27 @@ async def server_self_ping():
     Critical for 24/7 trading bot operation.
     """
     import aiohttp
+    import os
+
+    # Use Render's URL or hardcoded production URL
+    server_url = os.environ.get("RENDER_EXTERNAL_URL", "https://zella-site.onrender.com")
+    ping_count = 0
 
     while True:
         try:
-            await asyncio.sleep(30)  # Ping every 30 seconds
+            await asyncio.sleep(25)  # Ping every 25 seconds (more aggressive)
+            ping_count += 1
 
-            # Internal health check - lightweight verification the server is responsive
             async with aiohttp.ClientSession() as session:
-                # Use environment variable for the server URL, fallback to localhost
-                import os
-                server_url = os.environ.get("RENDER_EXTERNAL_URL", "http://localhost:10000")
-                async with session.get(f"{server_url}/health", timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(f"{server_url}/health", timeout=aiohttp.ClientTimeout(total=15)) as response:
                     if response.status == 200:
-                        logger.debug("Server self-ping successful")
+                        # Log every 10th ping to reduce noise but confirm it's working
+                        if ping_count % 10 == 0:
+                            logger.info(f"✓ Self-ping #{ping_count} OK - server alive")
                     else:
-                        logger.warning(f"Server self-ping returned status {response.status}")
+                        logger.warning(f"Self-ping returned status {response.status}")
         except Exception as e:
-            logger.debug(f"Server self-ping failed (may be normal during startup): {e}")
-            # Don't crash - just continue trying
+            logger.warning(f"Self-ping failed: {e} - will retry")
             await asyncio.sleep(5)
 
 
