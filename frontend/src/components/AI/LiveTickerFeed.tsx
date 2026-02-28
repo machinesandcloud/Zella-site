@@ -82,7 +82,8 @@ const LiveTickerFeed = () => {
 
   const getWebSocketUrl = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = import.meta.env.VITE_API_URL?.replace(/^https?:\/\//, "") || "localhost:8000";
+    const isProduction = window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1";
+    const host = isProduction ? "zella-site.onrender.com" : "localhost:8000";
     const symbols = subscribedSymbols.length > 0 ? subscribedSymbols.join(",") : "";
     return `${protocol}//${host}/ws/live-ticker${symbols ? `?symbols=${symbols}` : ""}`;
   }, [subscribedSymbols]);

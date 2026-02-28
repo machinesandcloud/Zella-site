@@ -11,7 +11,10 @@ import {
   Switch
 } from "@mui/material";
 
-const API_URL = import.meta.env.VITE_API_URL?.trim() || "http://localhost:8000";
+// Production backend URL - hardcoded for reliability
+const PRODUCTION_API_URL = "https://zella-site.onrender.com";
+const isProduction = window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1";
+const API_URL = isProduction ? PRODUCTION_API_URL : "http://localhost:8000";
 
 type LogEntry = {
   type: string;
