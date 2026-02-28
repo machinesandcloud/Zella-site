@@ -35,6 +35,9 @@ const getLogIcon = (type: string): string => {
   switch (type) {
     case "TRADE": return "💰";
     case "SCAN": return "🔍";
+    case "THINKING": return "🧠";
+    case "ANALYZING": return "🎯";
+    case "CONSIDERING": return "⚖️";
     case "REJECTED": return "⛔";
     case "HALTED": return "🛑";
     case "CUTOFF": return "⏰";
@@ -67,6 +70,8 @@ const BotLogs = () => {
         const data = await response.json();
         // decisions is an array of {type, message, category, details, timestamp}
         const decisions = data.decisions || [];
+        console.log("🔍 Bot decisions received:", decisions);  // DEBUG
+        console.log("🔍 First decision:", decisions[0]);  // DEBUG
         setLogs(decisions.reverse()); // Show newest first
       }
     } catch (error) {

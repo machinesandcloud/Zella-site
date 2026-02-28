@@ -248,6 +248,11 @@ export const stopAutonomousEngine = async () => {
   return data;
 };
 
+export const liquidateAllPositions = async () => {
+  const { data } = await api.post("/api/ai/autonomous/liquidate-all");
+  return data;
+};
+
 export const getAutonomousStatus = async () => {
   const { data } = await api.get("/api/ai/autonomous/status");
   return data;

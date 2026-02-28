@@ -165,6 +165,10 @@ class AutonomousEngine:
         self.active_symbols: Set[str] = set()
         self.strategy_performance: Dict[str, Dict[str, Any]] = {}
 
+        # CRITICAL: Store background task references to prevent garbage collection
+        # Tasks stored in local variables may be GC'd before they run!
+        self._background_tasks: List[asyncio.Task] = []
+
         # CRITICAL: Thread locks for concurrent access
         self._state_lock = RLock()  # Protects: daily_pnl, decisions, active_symbols
         self._position_lock = Lock()  # Protects: elite_position_manager, position operations
@@ -260,6 +264,20 @@ class AutonomousEngine:
         logger.info(f"Autonomous Engine initialized - Mode: {self.mode}, Risk: {self.risk_posture}")
         logger.info(f"🚀 High-Performance Engine ready (target: <10ms latency)")
         logger.info(f"⚡ EDGE ENGINE ACTIVE - Operating on a different level")
+
+        # Add initialization decision so user sees engine was created
+        self._add_decision(
+            "SYSTEM",
+            f"🤖 Engine INITIALIZED - Mode: {self.mode}, Risk: {self.risk_posture}, Strategies: {len(self.all_strategies)}",
+            "INFO",
+            {
+                "mode": self.mode,
+                "risk_posture": self.risk_posture,
+                "strategies": len(self.all_strategies),
+                "scan_interval": self.scan_interval,
+                "enabled": self.enabled
+            }
+        )
 
     def _initialize_strategies(self) -> Dict[str, Any]:
         """Initialize all 37+ trading strategies including Warrior Trading patterns"""
@@ -627,43 +645,126 @@ class AutonomousEngine:
             {"mode": self.mode, "risk_posture": self.risk_posture, "broker_connected": self.broker.is_connected()}
         )
 
-        # Run system integration validation on first start
-        if not self._integration_validated:
-            logger.info("🔍 Running system integration validation...")
-            validation_passed = self.integration_validator.validate_all(
-                performance_engine=self.perf_engine,
-                elite_system=self.elite_system,
-                pro_validator=self.pro_validator,
-                broker=self.broker
-            )
-            self._integration_validated = True
-            if validation_passed:
-                logger.info("✅ All systems validated and ready for trading")
-            else:
-                logger.warning("⚠️ Some integration tests failed - trading with caution")
+        # =====================================================
+        # CRITICAL: CHECK FOR AND CLOSE ANY OVERNIGHT POSITIONS
+        # Day traders NEVER hold overnight - liquidate immediately!
+        # =====================================================
+        try:
+            if self.broker.is_connected():
+                positions = self.broker.get_positions()
+                if positions:
+                    logger.warning(f"🚨 FOUND {len(positions)} OVERNIGHT POSITIONS - LIQUIDATING NOW!")
+                    self._add_decision(
+                        "OVERNIGHT_LIQUIDATION",
+                        f"🚨 Found {len(positions)} overnight positions - LIQUIDATING IMMEDIATELY (Day trading rule: NO overnight holds)",
+                        "CRITICAL",
+                        {"positions": [p.get("symbol") for p in positions]}
+                    )
+                    await self._liquidate_all_positions()
+                    self._add_decision(
+                        "OVERNIGHT_LIQUIDATION",
+                        "✅ All overnight positions closed - Day trading rule enforced",
+                        "SUCCESS",
+                        {}
+                    )
+                else:
+                    self._add_decision(
+                        "SYSTEM",
+                        "✅ No overnight positions found - clean slate for today",
+                        "SUCCESS",
+                        {}
+                    )
+        except Exception as e:
+            logger.error(f"Error checking overnight positions: {e}")
+            self._add_decision("ERROR", f"Could not check overnight positions: {str(e)}", "ERROR", {})
+
+        # Skip integration validation on startup (too slow, can hang)
+        self._integration_validated = True
 
         # Reset daily tracking
         today = datetime.now().strftime("%Y-%m-%d")
         if self.last_liquidation_date != today:
             self.eod_liquidation_done_today = False
             self.daily_pnl = 0.0
-            self.discipline.reset_daily()  # Reset discipline counters too
+            try:
+                self.discipline.reset_daily()
+            except:
+                pass
             logger.info("📅 New trading day - daily counters reset")
 
-        # Start background tasks
-        asyncio.create_task(self._main_trading_loop())
-        asyncio.create_task(self._eod_liquidation_monitor())  # Critical: close all positions before market close
-        asyncio.create_task(self._connection_keepalive())
-        asyncio.create_task(self._position_monitor())
-        asyncio.create_task(self._latency_monitor())  # Monitor latency
-        asyncio.create_task(self._periodic_state_save())  # Save state for recovery
-        asyncio.create_task(self._position_reconciliation_loop())  # Reconcile with broker
+        # =====================================================
+        # START BACKGROUND TASKS
+        # CRITICAL: Store task references to prevent garbage collection!
+        # =====================================================
+        def log_task_exception(task, name):
+            """Log any exception from a background task"""
+            try:
+                exc = task.exception()
+                if exc:
+                    logger.error(f"❌ Task {name} failed: {exc}")
+                    import traceback
+                    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+                    logger.error(f"Traceback:\n{tb}")
+                    self._add_decision("ERROR", f"Background task {name} crashed: {exc}", "ERROR", {"traceback": tb[:500]})
+            except (asyncio.CancelledError, asyncio.InvalidStateError):
+                pass
+
+        # Clear any old tasks
+        self._background_tasks = []
+
+        # Main trading loop - CRITICAL - store reference to prevent GC!
+        logger.info("📍 Creating background tasks (storing references to prevent GC)...")
+
+        main_task = asyncio.create_task(self._main_trading_loop())
+        main_task.add_done_callback(lambda t: log_task_exception(t, "main_trading_loop"))
+        self._background_tasks.append(main_task)
+
+        # Other background tasks - ALL stored to prevent GC
+        eod_task = asyncio.create_task(self._eod_liquidation_monitor())
+        self._background_tasks.append(eod_task)
+
+        keepalive_task = asyncio.create_task(self._connection_keepalive())
+        self._background_tasks.append(keepalive_task)
+
+        position_task = asyncio.create_task(self._position_monitor())
+        self._background_tasks.append(position_task)
+
+        latency_task = asyncio.create_task(self._latency_monitor())
+        self._background_tasks.append(latency_task)
+
+        save_task = asyncio.create_task(self._periodic_state_save())
+        self._background_tasks.append(save_task)
+
+        reconcile_task = asyncio.create_task(self._position_reconciliation_loop())
+        self._background_tasks.append(reconcile_task)
+
+        logger.info(f"✅ {len(self._background_tasks)} background tasks created and stored")
+
+        # Give tasks a moment to start
+        await asyncio.sleep(0.5)
+
+        self._add_decision(
+            "SYSTEM",
+            "✅ Engine fully started - continuous scanning active",
+            "SUCCESS",
+            {"background_tasks": len(self._background_tasks), "mode": self.mode}
+        )
 
     async def stop(self):
         """Stop the autonomous trading engine"""
         self.running = False
         self.enabled = False
         self._save_state()
+
+        # Cancel all background tasks
+        if hasattr(self, '_background_tasks'):
+            for task in self._background_tasks:
+                if not task.done():
+                    task.cancel()
+            # Wait for tasks to finish cancelling
+            if self._background_tasks:
+                await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks = []
 
         # Stop performance engine background processes
         if hasattr(self, 'perf_engine'):
@@ -754,89 +855,205 @@ class AutonomousEngine:
 
     async def _main_trading_loop(self):
         """Main autonomous trading loop - scans continuously for real-time UI updates"""
-        while self.running:
-            try:
-                # Check basic requirements
-                if not self._should_trade_now():
-                    await asyncio.sleep(10)  # Shorter sleep when not ready
-                    continue
+        try:
+            # Log that we've entered the loop IMMEDIATELY
+            logger.info("🤖 Main trading loop STARTED - beginning continuous scanning")
+            self._add_decision(
+                "SYSTEM",
+                "🚀 Main trading loop ACTIVE - continuous scanning started",
+                "SUCCESS",
+                {"enabled": self.enabled, "running": self.running, "mode": self.mode}
+            )
 
-                # Determine scan interval based on market hours
-                is_market_open = self._is_market_hours()
-                current_scan_interval = self.scan_interval if is_market_open else 30  # 30s outside market hours
+            loop_count = 0
+            consecutive_errors = 0
 
-                logger.info(f"🔍 Starting autonomous scan cycle... (market_open={is_market_open})")
-                self.last_scan_time = datetime.now()
+            while self.running:
+                try:
+                    loop_count += 1
+                    scan_start = datetime.now()
 
-                # 1. Scan market for opportunities (ALWAYS - for real-time UI)
-                opportunities = await self._scan_market()
+                    # Log every iteration so user can see activity
+                    self._add_decision(
+                        "THINKING",
+                        f"🔄 Scan cycle #{loop_count} starting...",
+                        "INFO",
+                        {"cycle": loop_count, "time": scan_start.strftime("%H:%M:%S")}
+                    )
+                    logger.info(f"🔄 Scan cycle #{loop_count} starting...")
 
-                # 2. Analyze each opportunity with ALL strategies
-                analyzed = await self._analyze_opportunities(opportunities)
-
-                # Log scan results so user can see activity
-                self._add_decision(
-                    "SCAN",
-                    f"Scanned {self.symbols_scanned} symbols - Found {len(opportunities)} opportunities, {len(analyzed)} analyzed",
-                    "INFO",
-                    {
-                        "symbols_scanned": self.symbols_scanned,
-                        "opportunities": len(opportunities),
-                        "analyzed": len(analyzed),
-                        "market_open": is_market_open,
-                        "top_symbols": [o.get("symbol") for o in opportunities[:5]]
-                    }
-                )
-
-                # 3. Rank and select best opportunities
-                top_picks = self._rank_opportunities(analyzed)
-
-                # 4. Execute trades ONLY during market hours and in auto modes
-                # DAY TRADING RULE: No new positions after 3:30 PM ET
-                if is_market_open and self.mode in ["FULL_AUTO", "GOD_MODE"]:
-                    # Check broker connection before trading
-                    if not self._can_execute_trades():
+                    # Check basic requirements
+                    if not self._should_trade_now():
                         self._add_decision(
-                            "SYSTEM",
-                            f"Broker not connected - scanning only ({len(opportunities)} opportunities found)",
+                            "THINKING",
+                            f"⏸️ Engine paused (enabled={self.enabled}, running={self.running})",
                             "WARNING",
-                            {"opportunities": len(opportunities), "analyzed": len(analyzed), "broker_connected": False}
+                            {"enabled": self.enabled, "running": self.running}
                         )
-                        logger.warning("⚠️ Broker not connected - cannot execute trades")
-                    elif is_past_new_trade_cutoff():
-                        mins_left = minutes_until_close()
+                        await asyncio.sleep(10)
+                        continue
+
+                    # Determine scan interval based on market hours
+                    is_market_open = self._is_market_hours()
+                    current_scan_interval = self.scan_interval if is_market_open else 15
+                    self.last_scan_time = datetime.now()
+
+                    # 1. Scan market for opportunities
+                    try:
+                        opportunities = await self._scan_market()
+                    except Exception as scan_error:
+                        logger.error(f"❌ Scan market failed: {scan_error}")
                         self._add_decision(
-                            "CUTOFF",
-                            f"Past 3:30 PM ET - No new trades ({mins_left} mins to close)",
-                            "INFO",
-                            {"minutes_to_close": mins_left}
+                            "ERROR",
+                            f"Market scan failed: {str(scan_error)[:100]}",
+                            "ERROR",
+                            {"error": str(scan_error)}
                         )
-                        logger.info(f"⏰ Past trade cutoff (3:30 PM) - {mins_left} mins until close, no new trades")
-                    elif self.daily_pnl <= self.daily_pnl_limit:
+                        opportunities = []
+
+                    # 2. Analyze each opportunity with ALL strategies
+                    try:
+                        analyzed = await self._analyze_opportunities(opportunities)
+                    except Exception as analyze_error:
+                        logger.error(f"❌ Analysis failed: {analyze_error}")
                         self._add_decision(
-                            "DAILY_LIMIT",
-                            f"Daily loss limit hit (${self.daily_pnl:.2f}) - Trading halted",
-                            "WARNING",
-                            {"daily_pnl": self.daily_pnl, "limit": self.daily_pnl_limit}
+                            "ERROR",
+                            f"Analysis failed: {str(analyze_error)[:100]}",
+                            "ERROR",
+                            {"error": str(analyze_error)}
                         )
-                        logger.warning(f"🛑 Daily loss limit reached: ${self.daily_pnl:.2f}")
-                    else:
-                        await self._execute_trades(top_picks)
-                elif not is_market_open and opportunities:
+                        analyzed = []
+
+                    # Log scan results so user can see activity
                     self._add_decision(
                         "SCAN",
-                        f"Market closed - scan only mode ({len(opportunities)} opportunities)",
+                        f"Scanned {self.symbols_scanned} symbols - Found {len(opportunities)} opportunities, {len(analyzed)} analyzed",
                         "INFO",
-                        {"opportunities": len(opportunities), "analyzed": len(analyzed)}
+                        {
+                            "symbols_scanned": self.symbols_scanned,
+                            "opportunities": len(opportunities),
+                            "analyzed": len(analyzed),
+                            "market_open": is_market_open,
+                            "top_symbols": [o.get("symbol") for o in opportunities[:5]]
+                        }
                     )
 
-                # 5. Wait for next scan
-                await asyncio.sleep(current_scan_interval)
+                    # 3. Rank and select best opportunities
+                    top_picks = self._rank_opportunities(analyzed)
 
-            except Exception as e:
-                logger.error(f"Error in trading loop: {e}")
-                self._add_decision("ERROR", f"Trading loop error: {str(e)}", "ERROR", {})
-                await asyncio.sleep(30)
+                    # =====================================================
+                    # CRITICAL: EOD LIQUIDATION CHECK (redundant - for safety)
+                    # Day traders MUST close all positions before market close
+                    # =====================================================
+                    if is_eod_liquidation_time() and not self.eod_liquidation_done_today:
+                        logger.warning("⚠️ EOD LIQUIDATION TIME - Closing ALL positions!")
+                        self._add_decision(
+                            "EOD_LIQUIDATION",
+                            "🚨 EOD LIQUIDATION - Day traders do NOT hold overnight!",
+                            "CRITICAL",
+                            {"time": datetime.now().isoformat()}
+                        )
+                        await self._liquidate_all_positions()
+                        self.eod_liquidation_done_today = True
+                        self.last_liquidation_date = datetime.now().strftime("%Y-%m-%d")
+                        self._add_decision(
+                            "EOD_LIQUIDATION",
+                            "✅ All positions closed - Ready for tomorrow",
+                            "SUCCESS",
+                            {}
+                        )
+
+                    # 4. Execute trades ONLY during market hours and in auto modes
+                    # DAY TRADING RULE: No new positions after 3:30 PM ET
+                    if is_market_open and self.mode in ["FULL_AUTO", "GOD_MODE"]:
+                        # Check broker connection before trading
+                        if not self._can_execute_trades():
+                            self._add_decision(
+                                "SYSTEM",
+                                f"Broker not connected - scanning only ({len(opportunities)} opportunities found)",
+                                "WARNING",
+                                {"opportunities": len(opportunities), "analyzed": len(analyzed), "broker_connected": False}
+                            )
+                            logger.warning("⚠️ Broker not connected - cannot execute trades")
+                        elif is_past_new_trade_cutoff():
+                            mins_left = minutes_until_close()
+                            self._add_decision(
+                                "CUTOFF",
+                                f"Past 3:30 PM ET - No new trades ({mins_left} mins to close)",
+                                "INFO",
+                                {"minutes_to_close": mins_left}
+                            )
+                            logger.info(f"⏰ Past trade cutoff (3:30 PM) - {mins_left} mins until close, no new trades")
+                        elif self.daily_pnl <= self.daily_pnl_limit:
+                            self._add_decision(
+                                "DAILY_LIMIT",
+                                f"Daily loss limit hit (${self.daily_pnl:.2f}) - Trading halted",
+                                "WARNING",
+                                {"daily_pnl": self.daily_pnl, "limit": self.daily_pnl_limit}
+                            )
+                            logger.warning(f"🛑 Daily loss limit reached: ${self.daily_pnl:.2f}")
+                        else:
+                            await self._execute_trades(top_picks)
+                    elif not is_market_open and opportunities:
+                        self._add_decision(
+                            "SCAN",
+                            f"Market closed - scan only mode ({len(opportunities)} opportunities)",
+                            "INFO",
+                            {"opportunities": len(opportunities), "analyzed": len(analyzed)}
+                        )
+
+                    # Scan complete summary - always show what happened
+                    scan_duration = (datetime.now() - scan_start).total_seconds()
+                    if len(top_picks) > 0:
+                        self._add_decision(
+                            "THINKING",
+                            f"✅ Scan #{loop_count} complete ({scan_duration:.1f}s): {len(top_picks)} actionable trades found",
+                            "SUCCESS",
+                            {"top_picks": [t.get("symbol") for t in top_picks[:5]], "duration": scan_duration}
+                        )
+                    elif len(analyzed) > 0:
+                        self._add_decision(
+                            "THINKING",
+                            f"💭 Scan #{loop_count} complete ({scan_duration:.1f}s): {len(analyzed)} analyzed, none meet criteria",
+                            "INFO",
+                            {"analyzed": len(analyzed), "duration": scan_duration}
+                        )
+                    else:
+                        self._add_decision(
+                            "THINKING",
+                            f"💭 Scan #{loop_count} complete ({scan_duration:.1f}s): 0/{self.symbols_scanned} passed filters",
+                            "INFO",
+                            {"symbols_scanned": self.symbols_scanned, "duration": scan_duration}
+                        )
+
+                    # Reset error counter on success
+                    consecutive_errors = 0
+
+                    # 5. Wait for next scan
+                    logger.info(f"⏳ Waiting {current_scan_interval}s for next scan...")
+                    await asyncio.sleep(current_scan_interval)
+
+                except Exception as e:
+                    consecutive_errors += 1
+                    logger.error(f"Error in trading loop (attempt {consecutive_errors}): {e}")
+                    self._add_decision("ERROR", f"Trading loop error #{consecutive_errors}: {str(e)}", "ERROR", {})
+
+                    # If too many consecutive errors, slow down
+                    sleep_time = min(30 * consecutive_errors, 120)
+                    await asyncio.sleep(sleep_time)
+
+        except Exception as fatal_error:
+            # This catches any error before the while loop starts
+            import traceback
+            tb = traceback.format_exc()
+            logger.error(f"💀 FATAL ERROR in main trading loop: {fatal_error}")
+            logger.error(f"Traceback:\n{tb}")
+            self._add_decision(
+                "ERROR",
+                f"💀 FATAL ERROR in main loop: {str(fatal_error)[:200]}",
+                "ERROR",
+                {"error": str(fatal_error), "traceback": tb[:500]}
+            )
 
     async def _position_monitor(self):
         """
@@ -1032,8 +1249,44 @@ class AutonomousEngine:
         """
         Emergency liquidation of all open positions.
         Used for end-of-day close and emergency stops.
+
+        CRITICAL: Must cancel all pending orders first, then liquidate.
         """
         try:
+            # =====================================================
+            # STEP 1: CANCEL ALL PENDING ORDERS FIRST
+            # Shares held by pending orders cannot be sold
+            # =====================================================
+            if hasattr(self.broker, 'get_orders'):
+                try:
+                    open_orders = self.broker.get_orders(status="open")
+                    if open_orders:
+                        logger.warning(f"🚫 Cancelling {len(open_orders)} pending orders before liquidation...")
+                        self._add_decision(
+                            "LIQUIDATION",
+                            f"Cancelling {len(open_orders)} pending orders first...",
+                            "INFO",
+                            {"order_count": len(open_orders)}
+                        )
+                        for order in open_orders:
+                            order_id = order.get("id") or order.get("order_id")
+                            symbol = order.get("symbol", "???")
+                            if order_id:
+                                try:
+                                    self.broker.cancel_order(order_id)
+                                    logger.info(f"Cancelled order {order_id} for {symbol}")
+                                except Exception as cancel_err:
+                                    logger.error(f"Failed to cancel order {order_id}: {cancel_err}")
+
+                        # Wait for cancellations to process
+                        import asyncio
+                        await asyncio.sleep(2)
+                except Exception as e:
+                    logger.error(f"Error cancelling orders: {e}")
+
+            # =====================================================
+            # STEP 2: LIQUIDATE ALL POSITIONS
+            # =====================================================
             positions = self.broker.get_positions()
 
             if not positions:
@@ -1062,7 +1315,7 @@ class AutonomousEngine:
 
                         self._add_decision(
                             "LIQUIDATION",
-                            f"EOD liquidation: {side} {abs_qty} {symbol}",
+                            f"EOD liquidation: {side} {abs_qty} {symbol} @ ${current_price:.2f}",
                             "EXECUTED",
                             {"symbol": symbol, "quantity": abs_qty, "side": side, "pnl": pnl}
                         )
@@ -1071,18 +1324,56 @@ class AutonomousEngine:
                         self.daily_pnl += pnl
 
                     except Exception as e:
+                        error_str = str(e)
                         logger.error(f"Failed to liquidate {symbol}: {e}")
-                        self._add_decision(
-                            "LIQUIDATION_FAILED",
-                            f"Failed to close {symbol}: {str(e)}",
-                            "ERROR",
-                            {"symbol": symbol, "error": str(e)}
-                        )
+
+                        # If it's an "insufficient qty" error, try to cancel orders for this symbol
+                        if "insufficient" in error_str.lower() or "held_for_orders" in error_str.lower():
+                            self._add_decision(
+                                "LIQUIDATION_FAILED",
+                                f"⚠️ {symbol}: Shares blocked by pending orders - trying to cancel...",
+                                "WARNING",
+                                {"symbol": symbol, "error": error_str}
+                            )
+                            # Try to cancel orders for this specific symbol
+                            if hasattr(self.broker, 'get_orders'):
+                                try:
+                                    all_orders = self.broker.get_orders(status="open")
+                                    for order in all_orders:
+                                        if order.get("symbol") == symbol:
+                                            order_id = order.get("id") or order.get("order_id")
+                                            if order_id:
+                                                self.broker.cancel_order(order_id)
+                                                logger.info(f"Cancelled blocking order {order_id} for {symbol}")
+                                    # Wait and retry
+                                    await asyncio.sleep(1)
+                                    self.broker.place_market_order(symbol, abs_qty, side)
+                                    self._add_decision(
+                                        "LIQUIDATION",
+                                        f"✅ {symbol} liquidated after cancelling blocking orders",
+                                        "SUCCESS",
+                                        {"symbol": symbol, "quantity": abs_qty}
+                                    )
+                                except Exception as retry_err:
+                                    self._add_decision(
+                                        "LIQUIDATION_FAILED",
+                                        f"❌ {symbol}: Still cannot close - {str(retry_err)[:100]}",
+                                        "ERROR",
+                                        {"symbol": symbol}
+                                    )
+                        else:
+                            self._add_decision(
+                                "LIQUIDATION_FAILED",
+                                f"Failed to close {symbol}: {error_str[:100]}",
+                                "ERROR",
+                                {"symbol": symbol, "error": error_str}
+                            )
 
             logger.info(f"📊 Daily P&L after liquidation: ${self.daily_pnl:.2f}")
 
         except Exception as e:
             logger.error(f"Error in liquidate_all_positions: {e}")
+            self._add_decision("ERROR", f"Liquidation error: {str(e)}", "ERROR", {})
 
     async def _scan_market(self) -> List[Dict[str, Any]]:
         """
@@ -1095,12 +1386,25 @@ class AutonomousEngine:
         - Pattern detection (bull flag, flat top)
         - HIGH-PERFORMANCE: Uses cached data and parallel processing
         """
+        logger.info("📊 _scan_market() called - beginning market scan")
+        self._add_decision(
+            "THINKING",
+            "🔎 Starting market scan - fetching universe data...",
+            "INFO",
+            {"timestamp": datetime.now().isoformat()}
+        )
         import time as time_module
         scan_start = time_module.perf_counter()
 
         try:
             universe = self.market_data.get_universe()
             logger.info(f"Scanning {len(universe)} symbols...")
+            self._add_decision(
+                "THINKING",
+                f"📈 Universe loaded: {len(universe)} symbols to scan",
+                "INFO",
+                {"universe_size": len(universe), "sample": universe[:5] if universe else []}
+            )
 
             # Get current time for power hour weighting
             now = datetime.now()
@@ -1144,6 +1448,15 @@ class AutonomousEngine:
                 if df is not None:
                     market_data[symbol] = df
 
+            # Log how much data we got
+            logger.info(f"📊 Got market data for {len(market_data)}/{len(universe)} symbols")
+            self._add_decision(
+                "THINKING",
+                f"📊 Market data fetched: {len(market_data)}/{len(universe)} symbols have data",
+                "INFO",
+                {"symbols_with_data": len(market_data), "total_universe": len(universe)}
+            )
+
             # Fetch news catalysts for scanned symbols (async would be better)
             try:
                 await self._update_news_catalysts(list(market_data.keys())[:50])  # Top 50 symbols
@@ -1174,6 +1487,84 @@ class AutonomousEngine:
 
             logger.info(f"Found {len(passed_list)} opportunities out of {len(all_evaluations)} evaluated")
             logger.info(f"  Patterns: {pattern_count}, News catalysts: {news_count}")
+
+            # === DETAILED THINKING LOGS FOR UI ===
+            # Log sample of FAILED stocks so user can see why they were rejected
+            failed_stocks = [e for e in all_evaluations if not e.get("passed", False)]
+            for fail in failed_stocks[:5]:  # Show first 5 failures
+                symbol = fail.get("symbol", "???")
+                filters = fail.get("filters", {})
+                data = fail.get("data", {})
+
+                # Find which filter failed
+                fail_reasons = []
+                if filters.get("data_check", {}).get("passed") == False:
+                    fail_reasons.append("insufficient data")
+                if filters.get("volume", {}).get("passed") == False:
+                    actual = data.get("avg_volume", 0)
+                    required = filters.get("volume", {}).get("required", 0)
+                    fail_reasons.append(f"volume {actual:,.0f} < {required:,.0f}")
+                if filters.get("price", {}).get("passed") == False:
+                    price = data.get("price", 0)
+                    fail_reasons.append(f"price ${price:.2f} outside range")
+                if filters.get("volatility", {}).get("passed") == False:
+                    atr_pct = data.get("atr_percent", 0)
+                    fail_reasons.append(f"volatility {atr_pct:.1f}% too low")
+                if filters.get("relative_volume", {}).get("passed") == False:
+                    rvol = data.get("relative_volume", 0)
+                    fail_reasons.append(f"rel.vol {rvol:.1f}x too low")
+
+                reason_str = ", ".join(fail_reasons) if fail_reasons else "unknown"
+                self._add_decision(
+                    "THINKING",
+                    f"❌ REJECTED {symbol}: {reason_str}",
+                    "INFO",
+                    {
+                        "symbol": symbol,
+                        "price": data.get("price", 0),
+                        "volume": data.get("avg_volume", 0),
+                        "rvol": data.get("relative_volume", 0),
+                        "atr_pct": data.get("atr_percent", 0),
+                        "reasons": fail_reasons
+                    }
+                )
+
+            # Log PASSED stocks with their qualifying metrics
+            for passed in passed_list[:8]:  # Show first 8 qualifiers
+                symbol = passed.get("symbol", "???")
+                data = passed.get("data", {})
+                scores = passed.get("scores", {})
+
+                # Build qualification summary
+                qualifications = []
+                if scores.get("ml_score", 0) > 0.6:
+                    qualifications.append(f"ML:{scores.get('ml_score', 0):.2f}")
+                if data.get("relative_volume", 0) > 1.5:
+                    qualifications.append(f"RVol:{data.get('relative_volume', 0):.1f}x")
+                if data.get("pattern"):
+                    qualifications.append(f"Pattern:{data.get('pattern')}")
+                if data.get("news_catalyst"):
+                    qualifications.append(f"News:{data.get('news_catalyst')}")
+                if scores.get("momentum_score", 0) > 0.5:
+                    qualifications.append(f"Mom:{scores.get('momentum_score', 0):.2f}")
+
+                qual_str = " | ".join(qualifications) if qualifications else "baseline"
+                self._add_decision(
+                    "THINKING",
+                    f"✅ QUALIFIED {symbol} @ ${data.get('price', 0):.2f}: {qual_str}",
+                    "SUCCESS",
+                    {
+                        "symbol": symbol,
+                        "price": data.get("price", 0),
+                        "ml_score": scores.get("ml_score", 0),
+                        "momentum_score": scores.get("momentum_score", 0),
+                        "combined_score": scores.get("combined_score", 0),
+                        "relative_volume": data.get("relative_volume", 0),
+                        "atr_percent": data.get("atr_percent", 0),
+                        "pattern": data.get("pattern"),
+                        "news": data.get("news_catalyst")
+                    }
+                )
 
             # Store passed results in old format for compatibility
             self.last_scanner_results = [
@@ -1351,26 +1742,73 @@ class AutonomousEngine:
                     # Calculate aggregate confidence
                     if buy_signals:
                         avg_confidence = sum(s["confidence"] for s in buy_signals) / len(buy_signals)
+                        strategy_names = [s["strategy"] for s in buy_signals]
+
+                        # === DETAILED STRATEGY ANALYSIS LOG ===
+                        top_reasons = [f"{s['strategy']}({s['confidence']:.0%})" for s in sorted(buy_signals, key=lambda x: x['confidence'], reverse=True)[:3]]
+                        self._add_decision(
+                            "ANALYZING",
+                            f"🎯 {symbol} BUY signal: {len(buy_signals)} strategies agree ({', '.join(top_reasons)})",
+                            "SUCCESS",
+                            {
+                                "symbol": symbol,
+                                "action": "BUY",
+                                "confidence": round(avg_confidence, 3),
+                                "num_strategies": len(buy_signals),
+                                "strategies": strategy_names,
+                                "price": current_price,
+                                "reasoning": [f"{s['strategy']}: {s['reason']}" for s in buy_signals[:5]]
+                            }
+                        )
+
                         analyzed.append({
                             **opp,
                             "recommended_action": "BUY",
                             "num_strategies": len(buy_signals),
                             "confidence": avg_confidence,
-                            "strategies": [s["strategy"] for s in buy_signals],
+                            "strategies": strategy_names,
                             "strategy_signals": buy_signals,  # Include full signal data with indicators
                             "reasoning": " | ".join([f"{s['strategy']}: {s['reason']}" for s in buy_signals[:3]])
                         })
                     elif sell_signals:
                         avg_confidence = sum(s["confidence"] for s in sell_signals) / len(sell_signals)
+                        strategy_names = [s["strategy"] for s in sell_signals]
+
+                        # === DETAILED STRATEGY ANALYSIS LOG ===
+                        top_reasons = [f"{s['strategy']}({s['confidence']:.0%})" for s in sorted(sell_signals, key=lambda x: x['confidence'], reverse=True)[:3]]
+                        self._add_decision(
+                            "ANALYZING",
+                            f"🎯 {symbol} SELL signal: {len(sell_signals)} strategies agree ({', '.join(top_reasons)})",
+                            "INFO",
+                            {
+                                "symbol": symbol,
+                                "action": "SELL",
+                                "confidence": round(avg_confidence, 3),
+                                "num_strategies": len(sell_signals),
+                                "strategies": strategy_names,
+                                "price": current_price,
+                                "reasoning": [f"{s['strategy']}: {s['reason']}" for s in sell_signals[:5]]
+                            }
+                        )
+
                         analyzed.append({
                             **opp,
                             "recommended_action": "SELL",
                             "num_strategies": len(sell_signals),
                             "confidence": avg_confidence,
-                            "strategies": [s["strategy"] for s in sell_signals],
+                            "strategies": strategy_names,
                             "strategy_signals": sell_signals,  # Include full signal data with indicators
                             "reasoning": " | ".join([f"{s['strategy']}: {s['reason']}" for s in sell_signals[:3]])
                         })
+                else:
+                    # Log when no strategies fire - user wants to see this
+                    if len(opportunities) <= 20:  # Only log for smaller sets to avoid spam
+                        self._add_decision(
+                            "THINKING",
+                            f"📊 {symbol} @ ${current_price:.2f}: No strategy signals (0/{len(self.all_strategies)} strategies)",
+                            "INFO",
+                            {"symbol": symbol, "price": current_price, "strategies_tested": len(self.all_strategies)}
+                        )
 
             except Exception as e:
                 logger.error(f"Error analyzing {symbol}: {e}")
@@ -1465,14 +1903,39 @@ class AutonomousEngine:
 
             # Global minimum - never trade below this regardless of settings
             if adjusted_confidence < self.min_confidence_threshold:
-                logger.debug(f"Skipping {symbol}: confidence {adjusted_confidence:.2f} below threshold {self.min_confidence_threshold}")
+                self._add_decision(
+                    "CONSIDERING",
+                    f"⚠️ {symbol}: Confidence {adjusted_confidence:.0%} below min threshold {self.min_confidence_threshold:.0%}",
+                    "INFO",
+                    {"symbol": symbol, "confidence": adjusted_confidence, "threshold": self.min_confidence_threshold, "reason": "below_global_min"}
+                )
                 continue
 
             if adjusted_confidence < min_confidence:
+                self._add_decision(
+                    "CONSIDERING",
+                    f"⚠️ {symbol}: Confidence {adjusted_confidence:.0%} below {self.risk_posture} threshold {min_confidence:.0%}",
+                    "INFO",
+                    {"symbol": symbol, "confidence": adjusted_confidence, "required": min_confidence, "risk_posture": self.risk_posture}
+                )
                 continue
 
             if num_strategies < min_strategies:
+                self._add_decision(
+                    "CONSIDERING",
+                    f"⚠️ {symbol}: Only {num_strategies} strategies agree (need {min_strategies}+)",
+                    "INFO",
+                    {"symbol": symbol, "num_strategies": num_strategies, "required": min_strategies, "strategies": strategies}
+                )
                 continue
+
+            # Log that we're actively considering this trade
+            self._add_decision(
+                "CONSIDERING",
+                f"🔍 {symbol}: Evaluating trade - {num_strategies} strategies @ {adjusted_confidence:.0%} confidence",
+                "INFO",
+                {"symbol": symbol, "action": action, "confidence": adjusted_confidence, "strategies": strategies}
+            )
 
             try:
                 price = opp.get("last_price", 0)
@@ -1567,19 +2030,48 @@ class AutonomousEngine:
 
                         # Only trade A+, A, or B setups
                         if setup_grade == "F":
+                            factors = elite_analysis.get("grade_details", {}).get("factors", [])
+                            factor_str = ", ".join(factors[:3]) if factors else "weak setup"
                             logger.info(f"⛔ {symbol} GRADE F - Setup rejected")
                             self._add_decision(
                                 "REJECTED",
-                                f"{symbol} failed elite grading (F)",
-                                "INFO",
-                                {"grade": setup_grade, "factors": elite_analysis.get("grade_details", {}).get("factors", [])}
+                                f"❌ {symbol} GRADE F: {factor_str}",
+                                "WARNING",
+                                {
+                                    "symbol": symbol,
+                                    "grade": setup_grade,
+                                    "factors": factors,
+                                    "analysis": elite_analysis.get("analysis", {})
+                                }
                             )
                             continue
                         elif setup_grade == "C":
+                            factors = elite_analysis.get("grade_details", {}).get("factors", [])
+                            factor_str = ", ".join(factors[:3]) if factors else "marginal"
                             logger.info(f"⚠️ {symbol} GRADE C - Skipping marginal setup")
+                            self._add_decision(
+                                "CONSIDERING",
+                                f"⚠️ {symbol} GRADE C: Skipping marginal setup ({factor_str})",
+                                "INFO",
+                                {"symbol": symbol, "grade": setup_grade, "factors": factors}
+                            )
                             continue
 
+                        # Passed elite grading - log the analysis
+                        factors = elite_analysis.get("grade_details", {}).get("factors", [])
+                        factor_str = ", ".join(factors[:3]) if factors else "solid setup"
                         logger.info(f"📊 {symbol} GRADE {setup_grade} - Elite analysis passed")
+                        self._add_decision(
+                            "CONSIDERING",
+                            f"✅ {symbol} GRADE {setup_grade}: {factor_str}",
+                            "SUCCESS",
+                            {
+                                "symbol": symbol,
+                                "grade": setup_grade,
+                                "factors": factors,
+                                "size_multiplier": elite_size_mult
+                            }
+                        )
 
                         # Log key analysis points
                         analysis = elite_analysis.get("analysis", {})

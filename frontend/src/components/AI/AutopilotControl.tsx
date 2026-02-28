@@ -36,7 +36,8 @@ import {
   stopAutonomousEngine,
   getAutonomousStatus,
   updateAutonomousConfig,
-  getStrategyPerformance
+  getStrategyPerformance,
+  liquidateAllPositions
 } from "../../services/api";
 
 type Mode = "ASSISTED" | "SEMI_AUTO" | "FULL_AUTO" | "GOD_MODE";
@@ -177,6 +178,22 @@ const AutopilotControl = () => {
       await loadStatus();
     } catch (error) {
       notify("Failed to execute emergency stop", "error");
+    }
+  };
+
+  const handleForceCloseAll = async () => {
+    const confirmed = window.confirm(
+      "🚨 FORCE CLOSE ALL POSITIONS\n\nThis will immediately:\n• Cancel ALL pending orders\n• Sell ALL open positions at market price\n• Day trading rule: NO overnight holds!\n\nContinue?"
+    );
+    if (!confirmed) return;
+
+    try {
+      notify("🔄 Closing all positions...", "warning");
+      const result = await liquidateAllPositions();
+      notify(`✅ Closed ${result.positions_closed} positions`, "success");
+      await loadStatus();
+    } catch (error: any) {
+      notify(error.message || "Failed to close positions", "error");
     }
   };
 
@@ -458,24 +475,27 @@ const AutopilotControl = () => {
               >
                 <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
                   <Typography variant="body2" color="text.secondary">
-                    {decision.time} · {decision.type}
+                    {decision.timestamp ? new Date(decision.timestamp).toLocaleTimeString() : "--"} · {decision.type}
                   </Typography>
                   <Chip
-                    label={decision.status}
+                    label={decision.category || decision.status || "INFO"}
                     size="small"
                     color={
-                      decision.status === "SUCCESS" ? "success" :
-                      decision.status === "ERROR" ? "error" :
+                      (decision.category || decision.status) === "SUCCESS" ? "success" :
+                      (decision.category || decision.status) === "ERROR" ? "error" :
+                      (decision.category || decision.status) === "WARNING" ? "warning" :
                       "default"
                     }
                   />
                 </Stack>
                 <Typography variant="body1" fontWeight="medium">
-                  {decision.action}
+                  {decision.message || decision.action || "No message"}
                 </Typography>
-                {decision.metadata && decision.metadata.strategies && (
+                {(decision.details || decision.metadata)?.strategies && (
                   <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
-                    Strategies: {decision.metadata.strategies.join(", ")}
+                    Strategies: {Array.isArray((decision.details || decision.metadata).strategies)
+                      ? (decision.details || decision.metadata).strategies.join(", ")
+                      : String((decision.details || decision.metadata).strategies)}
                   </Typography>
                 )}
               </Box>
@@ -498,16 +518,22 @@ const AutopilotControl = () => {
               window.dispatchEvent(new CustomEvent("app:navigate", { detail: { tab: 3 } }));
               notify("Opening AI configuration in Settings.", "info");
             }}
-            fullWidth
           >
-            Advanced Settings
+            Settings
+          </Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={handleForceCloseAll}
+            disabled={!status?.connected}
+          >
+            Close All Positions
           </Button>
           <Button
             variant="contained"
             color="error"
             startIcon={<Stop />}
             onClick={handleEmergencyStop}
-            fullWidth
             disabled={!isRunning}
           >
             Emergency Stop

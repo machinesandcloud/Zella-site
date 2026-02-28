@@ -175,6 +175,44 @@ async def stop_autonomous_engine(
     return {"status": "stopped", "message": "Autonomous trading engine stopped"}
 
 
+@router.post("/autonomous/liquidate-all")
+async def force_liquidate_all_positions(
+    engine: Optional[AutonomousEngine] = Depends(get_autonomous_engine),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """
+    EMERGENCY: Force close ALL open positions immediately.
+    Cancels all pending orders first, then liquidates all positions.
+    Use this to enforce day trading rules or in emergencies.
+    """
+    if not engine:
+        raise HTTPException(status_code=503, detail="Autonomous engine not initialized")
+
+    if not engine.broker.is_connected():
+        raise HTTPException(status_code=503, detail="Broker not connected")
+
+    # Get positions before liquidation
+    positions_before = engine.broker.get_positions()
+    position_count = len(positions_before)
+
+    if position_count == 0:
+        return {"status": "success", "message": "No positions to liquidate", "positions_closed": 0}
+
+    # Force liquidate
+    await engine._liquidate_all_positions()
+
+    # Get positions after
+    positions_after = engine.broker.get_positions()
+
+    return {
+        "status": "success",
+        "message": f"Liquidation complete",
+        "positions_before": position_count,
+        "positions_after": len(positions_after),
+        "positions_closed": position_count - len(positions_after)
+    }
+
+
 @router.get("/autonomous/status")
 def get_autonomous_status(
     engine: Optional[AutonomousEngine] = Depends(get_autonomous_engine),

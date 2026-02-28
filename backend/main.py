@@ -170,7 +170,7 @@ async def prometheus_middleware(request: Request, call_next):
 
 
 @app.on_event("startup")
-def on_startup() -> None:
+async def on_startup() -> None:
     setup_logging()
     init_db()
 
@@ -303,13 +303,15 @@ def on_startup() -> None:
         )
 
         # Auto-start the engine for real-time market scanning
-        async def start_engine_async():
-            await asyncio.sleep(2)  # Wait for full initialization
-            if hasattr(app.state, "autonomous_engine") and app.state.autonomous_engine:
-                logger.info("🚀 Auto-starting Autonomous Trading Engine...")
-                await app.state.autonomous_engine.start()
-
-        asyncio.create_task(start_engine_async())
+        # Start directly (startup is now async)
+        logger.info("🚀 Auto-starting Autonomous Trading Engine...")
+        try:
+            await app.state.autonomous_engine.start()
+            logger.info("✅ Autonomous Engine start() completed - main loop running in background")
+        except Exception as e:
+            logger.error(f"❌ Failed to start autonomous engine: {e}")
+            import traceback
+            traceback.print_exc()
 
         if app_settings.use_mock_ibkr or not (app.state.alpaca_client and app.state.alpaca_client.is_connected()):
             logger.info("✓ Autonomous Trading Engine initialized and starting (DEMO MODE - scan only)")
@@ -367,3 +369,22 @@ async def root() -> dict:
 @app.get("/metrics")
 def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/debug/engine")
+async def debug_engine() -> dict:
+    """Debug endpoint to check engine state (no auth required for debugging)"""
+    if not hasattr(app.state, "autonomous_engine") or not app.state.autonomous_engine:
+        return {"error": "Engine not initialized", "state": None}
+
+    engine = app.state.autonomous_engine
+    return {
+        "enabled": engine.enabled,
+        "running": engine.running,
+        "mode": engine.mode,
+        "last_scan": engine.last_scan_time.isoformat() if engine.last_scan_time else None,
+        "decisions_count": len(engine.decisions),
+        "decisions": engine.decisions[:10],  # Last 10 decisions
+        "symbols_scanned": engine.symbols_scanned,
+        "broker_connected": engine.broker.is_connected() if engine.broker else False,
+    }
