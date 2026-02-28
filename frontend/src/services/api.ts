@@ -11,6 +11,9 @@ const baseURL = hasExplicitApiUrl ? API_URL : "http://localhost:8000";
 const isNetlifyDemoMode = import.meta.env.VITE_API_URL === "";
 const timeout = isNetlifyDemoMode ? 1000 : 30000;
 
+// Debug: Log API configuration (remove in production if noisy)
+console.log("[API] Config:", { baseURL, hasExplicitApiUrl, isNetlifyDemoMode, timeout });
+
 const api = axios.create({
   baseURL,
   headers: {

@@ -101,10 +101,13 @@ const App = () => {
 
       attempt++;
       setWakeAttempt(attempt);
+      console.log(`[Auth] Auto-login attempt ${attempt}/${MAX_WAKE_RETRIES}`);
 
       try {
         const data = await autoLogin();
         if (cancelled) return;
+
+        console.log("[Auth] Auto-login response:", data);
 
         if (data?.access_token) {
           localStorage.setItem("zella_token", data.access_token);
@@ -112,13 +115,17 @@ const App = () => {
           setBackendConnected(true);
           setIsWakingUp(false);
           window.dispatchEvent(new CustomEvent("auth:login"));
+          console.log("[Auth] Auto-login successful");
         }
-      } catch {
+      } catch (error) {
+        console.error("[Auth] Auto-login error:", error);
         if (cancelled) return;
 
         if (attempt < MAX_WAKE_RETRIES) {
+          console.log(`[Auth] Retrying in ${WAKE_RETRY_INTERVAL / 1000}s...`);
           setTimeout(tryConnect, WAKE_RETRY_INTERVAL);
         } else {
+          console.error("[Auth] All retries exhausted, marking backend as offline");
           setBackendConnected(false);
           setIsWakingUp(false);
         }
