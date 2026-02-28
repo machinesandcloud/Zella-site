@@ -210,10 +210,19 @@ async def on_startup() -> None:
     )
     app.state.ai_activity = ActivityLog()
     app.state.strategy_configs = {}
+    # Initialize Dynamic Universe Manager (auto-updates weekly with most liquid stocks)
+    if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
+        from market.dynamic_universe import get_dynamic_universe_manager
+        app.state.dynamic_universe_manager = get_dynamic_universe_manager(
+            api_key=app_settings.alpaca_api_key,
+            secret_key=app_settings.alpaca_secret_key
+        )
+        logger.info(f"Dynamic Universe Manager initialized: {len(app.state.dynamic_universe_manager.get_universe())} symbols")
+
     # Initialize Market Data Provider
     # Priority: Alpaca > IBKR WebAPI > Free Data > IBKR
     if app_settings.use_alpaca and app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
-        logger.info("Using Alpaca Market Data Provider with day trading universe (90+ stocks)")
+        logger.info("Using Alpaca Market Data Provider with dynamic universe")
         app.state.market_data_provider = AlpacaMarketDataProvider(
             api_key=app_settings.alpaca_api_key,
             secret_key=app_settings.alpaca_secret_key

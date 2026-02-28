@@ -224,9 +224,18 @@ def get_default_universe() -> List[str]:
     """
     Get optimized day trading universe (~100 most liquid stocks).
 
-    Reduced from 500 to avoid Alpaca API rate limits.
-    Focuses on the most actively traded stocks that day traders actually use.
+    Uses dynamic universe that auto-updates weekly with the most liquid stocks.
+    Falls back to static list if dynamic update fails.
     """
+    try:
+        from market.dynamic_universe import get_dynamic_universe
+        universe = get_dynamic_universe()
+        if universe and len(universe) >= 50:
+            return universe
+    except Exception:
+        pass
+
+    # Fallback to static list
     return get_day_trading_universe()
 
 

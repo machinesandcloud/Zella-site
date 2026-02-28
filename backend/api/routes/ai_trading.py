@@ -538,3 +538,61 @@ async def validate_symbol(
         if symbol in universe:
             return {"valid": True, "symbol": symbol, "reason": "Found in trading universe", "source": "fallback"}
         return {"valid": False, "reason": str(e), "source": "fallback"}
+
+
+# =====================================================
+# DYNAMIC UNIVERSE MANAGEMENT
+# =====================================================
+
+@router.get("/universe/status")
+def get_universe_status(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Get status of the dynamic trading universe"""
+    try:
+        from market.dynamic_universe import get_dynamic_universe_manager
+        manager = get_dynamic_universe_manager()
+        return manager.get_status()
+    except Exception as e:
+        from market.universe import get_default_universe
+        universe = get_default_universe()
+        return {
+            "symbol_count": len(universe),
+            "last_update": None,
+            "next_update": "static list - no auto-update",
+            "needs_update": False,
+            "sample_symbols": universe[:20],
+            "error": str(e)
+        }
+
+
+@router.post("/universe/update")
+def force_update_universe(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Force an immediate update of the trading universe"""
+    try:
+        from market.dynamic_universe import get_dynamic_universe_manager
+        manager = get_dynamic_universe_manager()
+        return manager.force_update()
+    except Exception as e:
+        return {
+            "success": False,
+            "reason": str(e)
+        }
+
+
+@router.get("/universe/symbols")
+def get_universe_symbols(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Get all symbols in the current trading universe"""
+    from market.universe import get_default_universe
+    universe = get_default_universe()
+    return {
+        "count": len(universe),
+        "symbols": universe
+    }
