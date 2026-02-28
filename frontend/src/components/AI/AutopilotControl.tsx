@@ -59,9 +59,13 @@ interface AutonomousStatus {
 interface Decision {
   id: string;
   time: string;
+  timestamp?: string;
   type: string;
   action: string;
   status: string;
+  category?: string;
+  message?: string;
+  details?: Record<string, any>;
   metadata?: any;
 }
 

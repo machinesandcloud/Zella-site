@@ -1,23 +1,28 @@
 """
-Dynamic Universe Manager - Auto-updates weekly with most liquid stocks
+Dynamic Universe Manager - Auto-updates daily with most liquid stocks
 
 Fetches the most actively traded stocks from market data sources
-and updates the trading universe automatically.
+and updates the trading universe automatically every business day
+after market open (9:30 AM ET).
 """
 
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import threading
+import pytz
 
 logger = logging.getLogger("dynamic_universe")
 
 # File to store the dynamic universe
 DYNAMIC_UNIVERSE_FILE = Path("data/dynamic_universe.json")
-UPDATE_INTERVAL_DAYS = 7  # Update weekly
+
+# Update settings
+UPDATE_AFTER_MARKET_OPEN = time(9, 35)  # 9:35 AM ET (5 mins after open)
+ET_TIMEZONE = pytz.timezone("America/New_York")
 
 # Fallback core stocks (always included, never removed)
 CORE_STOCKS = [
@@ -87,11 +92,30 @@ class DynamicUniverseManager:
             logger.error(f"Error saving dynamic universe: {e}")
 
     def _needs_update(self) -> bool:
-        """Check if universe needs updating"""
+        """
+        Check if universe needs updating.
+
+        Updates daily after market open (9:35 AM ET) on business days.
+        """
         if not self._last_update:
             return True
-        age = datetime.now() - self._last_update
-        return age > timedelta(days=UPDATE_INTERVAL_DAYS)
+
+        now_et = datetime.now(ET_TIMEZONE)
+        today = now_et.date()
+
+        # Only update on business days (Monday=0 through Friday=4)
+        if now_et.weekday() > 4:  # Saturday or Sunday
+            return False
+
+        # Only update after market open (9:35 AM ET)
+        if now_et.time() < UPDATE_AFTER_MARKET_OPEN:
+            return False
+
+        # Check if we already updated today
+        last_update_date = self._last_update.date() if self._last_update else None
+
+        # Need update if we haven't updated today
+        return last_update_date != today
 
     def _get_static_fallback(self) -> List[str]:
         """Get static fallback universe"""
@@ -305,10 +329,23 @@ class DynamicUniverseManager:
     def get_status(self) -> Dict[str, Any]:
         """Get status of the dynamic universe"""
         with self._lock:
+            # Calculate next update time (next business day at 9:35 AM ET)
+            next_update = "pending"
+            if self._last_update:
+                now_et = datetime.now(ET_TIMEZONE)
+                # If we already updated today, next update is tomorrow (or Monday if Friday)
+                next_day = now_et.date() + timedelta(days=1)
+                # Skip weekends
+                while next_day.weekday() > 4:
+                    next_day += timedelta(days=1)
+                next_update_dt = datetime.combine(next_day, UPDATE_AFTER_MARKET_OPEN)
+                next_update = ET_TIMEZONE.localize(next_update_dt).isoformat()
+
             return {
                 "symbol_count": len(self._universe),
                 "last_update": self._last_update.isoformat() if self._last_update else None,
-                "next_update": (self._last_update + timedelta(days=UPDATE_INTERVAL_DAYS)).isoformat() if self._last_update else "pending",
+                "next_update": next_update,
+                "update_schedule": "Daily at 9:35 AM ET (business days)",
                 "needs_update": self._needs_update(),
                 "sample_symbols": self._universe[:20] if self._universe else []
             }
