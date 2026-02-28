@@ -2588,7 +2588,7 @@ class AutonomousEngine:
         """
         decision = {
             "id": f"d_{datetime.now().timestamp()}",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.utcnow().isoformat() + "Z",  # UTC with Z suffix for proper JS parsing
             "type": decision_type,
             "message": message,
             "category": category,
