@@ -1,16 +1,12 @@
 import axios from "axios";
 
-// Production API URL - hardcoded for reliability
-const PRODUCTION_API_URL = "https://zella-site.onrender.com";
+// API URL configuration
+// Production: always use Render backend
+// Development: use env var or localhost
+const baseURL = import.meta.env.PROD
+  ? "https://zella-site.onrender.com"
+  : (import.meta.env.VITE_API_URL || "http://localhost:8000");
 
-// Determine environment: production if on Netlify domain, otherwise development
-const isProduction = typeof window !== "undefined" && window.location.hostname.includes("netlify.app");
-
-// Use environment variable for development, hardcoded URL for production
-const envApiUrl = import.meta.env.VITE_API_URL?.trim();
-const baseURL = isProduction ? PRODUCTION_API_URL : (envApiUrl || "http://localhost:8000");
-
-// Normal timeout (30s) for all environments
 const timeout = 30000;
 
 const api = axios.create({
