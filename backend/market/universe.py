@@ -221,13 +221,23 @@ DEFAULT_UNIVERSE = [
 
 
 def get_default_universe() -> List[str]:
-    """Get top 500 highest volume stocks for day trading"""
-    return TOP_500_VOLUME_STOCKS.copy()
+    """
+    Get optimized day trading universe (~100 most liquid stocks).
+
+    Reduced from 500 to avoid Alpaca API rate limits.
+    Focuses on the most actively traded stocks that day traders actually use.
+    """
+    return get_day_trading_universe()
 
 
 def get_small_universe() -> List[str]:
     """Get small universe for testing (10 stocks)"""
     return DEFAULT_UNIVERSE.copy()
+
+
+def get_full_500_universe() -> List[str]:
+    """Get full 500 stock universe (may hit API rate limits)"""
+    return TOP_500_VOLUME_STOCKS.copy()
 
 
 def get_mega_cap_universe() -> List[str]:
