@@ -80,7 +80,12 @@ const BotLogs = () => {
   const formatTime = (timestamp?: string): string => {
     if (!timestamp) return "--";
     try {
-      return new Date(timestamp).toLocaleTimeString();
+      return new Date(timestamp).toLocaleTimeString("en-US", {
+        timeZone: "America/Chicago",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      });
     } catch {
       return "--";
     }
