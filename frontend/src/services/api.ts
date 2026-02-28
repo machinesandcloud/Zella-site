@@ -1,16 +1,15 @@
 import axios from "axios";
 
-// Production backend URL - hardcoded for reliability
-const PRODUCTION_API_URL = "https://zella-site.onrender.com";
+// Check if VITE_API_URL is explicitly set (not undefined, not empty)
+const API_URL = import.meta.env.VITE_API_URL?.trim();
+const hasExplicitApiUrl = API_URL !== undefined && API_URL !== "";
 
-// Detect if we're in production (Netlify) or development (localhost)
-const isProduction = window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1";
+// Use localhost:8000 as default for development
+const baseURL = hasExplicitApiUrl ? API_URL : "http://localhost:8000";
 
-// Use production URL when deployed, localhost when developing
-const baseURL = isProduction ? PRODUCTION_API_URL : "http://localhost:8000";
-
-// Standard timeout
-const timeout = 30000;
+// Only use fast timeout when explicitly set to empty string (Netlify demo mode)
+const isNetlifyDemoMode = import.meta.env.VITE_API_URL === "";
+const timeout = isNetlifyDemoMode ? 1000 : 30000;
 
 const api = axios.create({
   baseURL,
@@ -246,11 +245,6 @@ export const startAutonomousEngine = async () => {
 
 export const stopAutonomousEngine = async () => {
   const { data } = await api.post("/api/ai/autonomous/stop");
-  return data;
-};
-
-export const liquidateAllPositions = async () => {
-  const { data } = await api.post("/api/ai/autonomous/liquidate-all");
   return data;
 };
 

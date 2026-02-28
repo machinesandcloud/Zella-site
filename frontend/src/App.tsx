@@ -101,13 +101,10 @@ const App = () => {
 
       attempt++;
       setWakeAttempt(attempt);
-      console.log(`[Auth] Auto-login attempt ${attempt}/${MAX_WAKE_RETRIES}`);
 
       try {
         const data = await autoLogin();
         if (cancelled) return;
-
-        console.log("[Auth] Auto-login response:", data);
 
         if (data?.access_token) {
           localStorage.setItem("zella_token", data.access_token);
@@ -115,17 +112,13 @@ const App = () => {
           setBackendConnected(true);
           setIsWakingUp(false);
           window.dispatchEvent(new CustomEvent("auth:login"));
-          console.log("[Auth] Auto-login successful");
         }
-      } catch (error) {
-        console.error("[Auth] Auto-login error:", error);
+      } catch {
         if (cancelled) return;
 
         if (attempt < MAX_WAKE_RETRIES) {
-          console.log(`[Auth] Retrying in ${WAKE_RETRY_INTERVAL / 1000}s...`);
           setTimeout(tryConnect, WAKE_RETRY_INTERVAL);
         } else {
-          console.error("[Auth] All retries exhausted, marking backend as offline");
           setBackendConnected(false);
           setIsWakingUp(false);
         }
@@ -148,7 +141,6 @@ const App = () => {
           localStorage.setItem("zella_token", data.access_token);
           setAuthRequired(false);
           setIsAuthenticated(true);
-          setBackendConnected(true);
           window.dispatchEvent(new CustomEvent("auth:login"));
         }
       })
@@ -333,77 +325,67 @@ const App = () => {
           ))}
         </Stack>
 
-        {/* Tab Content - Only render after authentication */}
-        {!isAuthenticated ? (
-          <Box sx={{ textAlign: "center", py: 8 }}>
-            <Typography color="text.secondary">
-              {isWakingUp ? "Authenticating..." : "Please wait..."}
-            </Typography>
-          </Box>
-        ) : (
-          <>
-            {tab === 0 && (
-              <Grid container spacing={3}>
-                {/* Main Control - Start/Stop Bot */}
-                <Grid item xs={12} md={8}>
-                  <AutopilotControl />
-                </Grid>
+        {/* Tab Content */}
+        {tab === 0 && (
+          <Grid container spacing={3}>
+            {/* Main Control - Start/Stop Bot */}
+            <Grid item xs={12} md={8}>
+              <AutopilotControl />
+            </Grid>
 
-                {/* System Status */}
-                <Grid item xs={12} md={4}>
-                  <SystemHealth />
-                </Grid>
+            {/* System Status */}
+            <Grid item xs={12} md={4}>
+              <SystemHealth />
+            </Grid>
 
-                {/* Active Positions */}
-                <Grid item xs={12} md={8}>
-                  <ActivePositions />
-                </Grid>
+            {/* Active Positions */}
+            <Grid item xs={12} md={8}>
+              <ActivePositions />
+            </Grid>
 
-                {/* Account Overview */}
-                <Grid item xs={12} md={4}>
-                  <Overview />
-                </Grid>
+            {/* Account Overview */}
+            <Grid item xs={12} md={4}>
+              <Overview />
+            </Grid>
 
-                {/* Performance */}
-                <Grid item xs={12}>
-                  <PerformanceMetrics />
-                </Grid>
-              </Grid>
-            )}
+            {/* Performance */}
+            <Grid item xs={12}>
+              <PerformanceMetrics />
+            </Grid>
+          </Grid>
+        )}
 
-            {tab === 1 && (
-              <Grid container spacing={3}>
-                <Grid item xs={12}>
-                  <BotLogs />
-                </Grid>
-              </Grid>
-            )}
+        {tab === 1 && (
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <BotLogs />
+            </Grid>
+          </Grid>
+        )}
 
-            {tab === 2 && (
-              <Grid container spacing={3}>
-                <Grid item xs={12}>
-                  <StrategyPerformancePanel />
-                </Grid>
-                <Grid item xs={12}>
-                  <TradeHistory />
-                </Grid>
-              </Grid>
-            )}
+        {tab === 2 && (
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <StrategyPerformancePanel />
+            </Grid>
+            <Grid item xs={12}>
+              <TradeHistory />
+            </Grid>
+          </Grid>
+        )}
 
-            {tab === 3 && (
-              <Grid container spacing={3}>
-                <Grid item xs={12}>
-                  <WatchlistManager />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <AlpacaConnection />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <RiskSettings />
-                </Grid>
-              </Grid>
-            )}
-          </>
+        {tab === 3 && (
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <WatchlistManager />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <AlpacaConnection />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <RiskSettings />
+            </Grid>
+          </Grid>
         )}
       </Container>
 

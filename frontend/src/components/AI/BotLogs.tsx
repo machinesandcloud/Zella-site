@@ -11,10 +11,7 @@ import {
   Switch
 } from "@mui/material";
 
-// Production backend URL - hardcoded for reliability
-const PRODUCTION_API_URL = "https://zella-site.onrender.com";
-const isProduction = window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1";
-const API_URL = isProduction ? PRODUCTION_API_URL : "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_URL?.trim() || "http://localhost:8000";
 
 type LogEntry = {
   type: string;
@@ -38,9 +35,6 @@ const getLogIcon = (type: string): string => {
   switch (type) {
     case "TRADE": return "💰";
     case "SCAN": return "🔍";
-    case "THINKING": return "🧠";
-    case "ANALYZING": return "🎯";
-    case "CONSIDERING": return "⚖️";
     case "REJECTED": return "⛔";
     case "HALTED": return "🛑";
     case "CUTOFF": return "⏰";
@@ -62,7 +56,7 @@ const BotLogs = () => {
   const fetchLogs = async () => {
     try {
       const token = localStorage.getItem("zella_token");
-      const response = await fetch(`${API_URL}/api/ai/autonomous/status`, {
+      const response = await fetch(`${API_URL}/api/ai-trading/autonomous/status`, {
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json"
@@ -73,8 +67,6 @@ const BotLogs = () => {
         const data = await response.json();
         // decisions is an array of {type, message, category, details, timestamp}
         const decisions = data.decisions || [];
-        console.log("🔍 Bot decisions received:", decisions);  // DEBUG
-        console.log("🔍 First decision:", decisions[0]);  // DEBUG
         setLogs(decisions.reverse()); // Show newest first
       }
     } catch (error) {
