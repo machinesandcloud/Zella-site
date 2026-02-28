@@ -10,8 +10,7 @@ import {
   FormControlLabel,
   Switch
 } from "@mui/material";
-
-const API_URL = import.meta.env.VITE_API_URL?.trim() || "http://localhost:8000";
+import { getAutonomousStatus } from "../../services/api";
 
 type LogEntry = {
   type: string;
@@ -55,20 +54,10 @@ const BotLogs = () => {
 
   const fetchLogs = async () => {
     try {
-      const token = localStorage.getItem("zella_token");
-      const response = await fetch(`${API_URL}/api/ai-trading/autonomous/status`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        // decisions is an array of {type, message, category, details, timestamp}
-        const decisions = data.decisions || [];
-        setLogs(decisions.reverse()); // Show newest first
-      }
+      const data = await getAutonomousStatus();
+      // decisions is an array of {type, message, category, details, timestamp}
+      const decisions = data.decisions || [];
+      setLogs(decisions.reverse()); // Show newest first
     } catch (error) {
       console.warn("Failed to fetch bot logs:", error);
     } finally {
