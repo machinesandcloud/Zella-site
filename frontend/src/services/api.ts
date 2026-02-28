@@ -1,15 +1,17 @@
 import axios from "axios";
 
-// Check if VITE_API_URL is explicitly set (not undefined, not empty)
-const API_URL = import.meta.env.VITE_API_URL?.trim();
-const hasExplicitApiUrl = API_URL !== undefined && API_URL !== "";
+// Production API URL - hardcoded for reliability
+const PRODUCTION_API_URL = "https://zella-site.onrender.com";
 
-// Use localhost:8000 as default for development
-const baseURL = hasExplicitApiUrl ? API_URL : "http://localhost:8000";
+// Determine environment: production if on Netlify domain, otherwise development
+const isProduction = typeof window !== "undefined" && window.location.hostname.includes("netlify.app");
 
-// Only use fast timeout when explicitly set to empty string (Netlify demo mode)
-const isNetlifyDemoMode = import.meta.env.VITE_API_URL === "";
-const timeout = isNetlifyDemoMode ? 1000 : 30000;
+// Use environment variable for development, hardcoded URL for production
+const envApiUrl = import.meta.env.VITE_API_URL?.trim();
+const baseURL = isProduction ? PRODUCTION_API_URL : (envApiUrl || "http://localhost:8000");
+
+// Normal timeout (30s) for all environments
+const timeout = 30000;
 
 const api = axios.create({
   baseURL,
