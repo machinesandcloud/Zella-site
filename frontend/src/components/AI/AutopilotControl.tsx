@@ -479,7 +479,7 @@ const AutopilotControl = () => {
               >
                 <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
                   <Typography variant="body2" color="text.secondary">
-                    {decision.timestamp ? new Date(decision.timestamp).toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--"} · {decision.type}
+                    {decision.timestamp ? `${new Date(decision.timestamp).toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit", second: "2-digit" })} CT` : "--"} · {decision.type}
                   </Typography>
                   <Chip
                     label={decision.category || decision.status || "INFO"}
