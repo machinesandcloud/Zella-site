@@ -1537,7 +1537,7 @@ class AutonomousEngine:
             # === DETAILED THINKING LOGS FOR UI ===
             # Log sample of FAILED stocks so user can see why they were rejected
             failed_stocks = [e for e in all_evaluations if not e.get("passed", False)]
-            for fail in failed_stocks[:20]:  # Show first 20 failures for visibility
+            for fail in failed_stocks:  # Show all failures for full visibility
                 symbol = fail.get("symbol", "???")
                 filters = fail.get("filters", {})
                 data = fail.get("data", {})
@@ -1580,7 +1580,7 @@ class AutonomousEngine:
                 )
 
             # Log PASSED stocks with their qualifying metrics
-            for passed in passed_list[:20]:  # Show first 20 qualifiers
+            for passed in passed_list:  # Show all qualifiers
                 symbol = passed.get("symbol", "???")
                 data = passed.get("data", {})
                 scores = passed.get("scores", {})

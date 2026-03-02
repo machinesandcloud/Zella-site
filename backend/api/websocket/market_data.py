@@ -406,7 +406,7 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                                 "atr": opp.get("atr", 0),
                                 "pattern": opp.get("pattern"),
                             }
-                            for opp in (engine.last_analyzed_opportunities or [])[:20]
+                            for opp in (engine.last_analyzed_opportunities or [])
                         ],
                         # ALL scanner results (stocks that passed screening)
                         "scanner_results": [
@@ -423,7 +423,7 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                                 "news_catalyst": r.get("news_catalyst"),
                                 "float_millions": r.get("float_millions"),
                             }
-                            for r in (engine.last_scanner_results or [])[:30]
+                            for r in (engine.last_scanner_results or [])
                         ],
                         # ALL evaluated stocks (including those that failed filters)
                         "all_evaluations": [
@@ -438,7 +438,7 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                                     "relative_volume": e.get("data", {}).get("relative_volume", 0),
                                 }
                             }
-                            for e in (engine.all_evaluations or [])[:50]
+                            for e in (engine.all_evaluations or [])
                         ],
                         "strategy_performance": engine.strategy_performance if hasattr(engine, 'strategy_performance') else {},
                         # Always include filter_summary if available
