@@ -171,9 +171,11 @@ class MarketScreener:
 
         features = latest_feature_vector(df)
         last_price = float(df["close"].iloc[-1])
-        avg_volume = float(df["volume"].tail(20).mean())
+        bars_per_day = 78  # 6.5 trading hours * 12 (5-min bars)
+        avg_volume_bar = float(df["volume"].tail(20).mean())
+        avg_volume = avg_volume_bar * bars_per_day
         last_volume = float(df["volume"].iloc[-1])
-        relative_volume = last_volume / avg_volume if avg_volume else 0.0
+        relative_volume = last_volume / avg_volume_bar if avg_volume_bar else 0.0
 
         # Calculate gap - KEY day trading indicator
         gap_info = self.calculate_gap(df)
@@ -181,6 +183,7 @@ class MarketScreener:
         # Store basic data
         result["data"]["price"] = round(last_price, 2)
         result["data"]["avg_volume"] = int(avg_volume)
+        result["data"]["avg_volume_bar"] = int(avg_volume_bar)
         result["data"]["last_volume"] = int(last_volume)
         result["data"]["relative_volume"] = round(relative_volume, 2)
         result["data"]["volatility"] = round(features.get("volatility", 0), 4)
@@ -390,9 +393,11 @@ class MarketScreener:
 
         features = latest_feature_vector(df)
         last_price = float(df["close"].iloc[-1])
-        avg_volume = float(df["volume"].tail(20).mean())
+        bars_per_day = 78  # 6.5 trading hours * 12 (5-min bars)
+        avg_volume_bar = float(df["volume"].tail(20).mean())
+        avg_volume = avg_volume_bar * bars_per_day
         last_volume = float(df["volume"].iloc[-1])
-        relative_volume = last_volume / avg_volume if avg_volume else 0.0
+        relative_volume = last_volume / avg_volume_bar if avg_volume_bar else 0.0
 
         # Calculate gap
         gap_info = self.calculate_gap(df)
