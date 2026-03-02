@@ -1476,6 +1476,9 @@ class AutonomousEngine:
                 )
                 return []
 
+            # Record scan count as soon as we have valid market data
+            self.symbols_scanned = len(market_data)
+
             # Fetch news catalysts for scanned symbols (async would be better)
             try:
                 await self._update_news_catalysts(list(market_data.keys())[:50])  # Top 50 symbols
@@ -1483,10 +1486,27 @@ class AutonomousEngine:
                 logger.debug(f"Could not fetch news catalysts: {e}")
 
             # Use enhanced ML screener with DETAILED evaluation
-            passed_list, all_evaluations = self.screener.rank_with_details(market_data, current_hour, current_minute)
+            try:
+                passed_list, all_evaluations = self.screener.rank_with_details(market_data, current_hour, current_minute)
+            except Exception as e:
+                logger.error(f"Screener error: {e}")
+                self.last_scanner_results = []
+                self.last_analyzed_opportunities = []
+                self.all_evaluations = []
+                self.filter_summary = {}
+                self._add_decision(
+                    "SCAN",
+                    "Screener failed while evaluating market data. Check logs for details.",
+                    "ERROR",
+                    {
+                        "symbols_scanned": self.symbols_scanned,
+                        "total_universe": len(universe),
+                        "error": str(e),
+                    },
+                )
+                return []
 
             # Store ALL evaluations for UI display (showing why each stock passed/failed)
-            self.symbols_scanned = len(market_data)
             self.all_evaluations = all_evaluations  # Full list with pass/fail details
 
             # Calculate filter summary (how many failed at each filter)
