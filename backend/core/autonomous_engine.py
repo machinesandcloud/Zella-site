@@ -1624,6 +1624,8 @@ class AutonomousEngine:
                     "momentum_score": e.get("scores", {}).get("momentum_score", 0),
                     "combined_score": e.get("scores", {}).get("combined_score", 0),
                     "last_price": e.get("data", {}).get("price", 0),
+                    "avg_volume": e.get("data", {}).get("avg_volume", 0),
+                    "today_volume": e.get("data", {}).get("today_volume", 0),
                     "relative_volume": e.get("data", {}).get("relative_volume", 0),
                     "float_millions": e.get("data", {}).get("float_millions"),
                     "float_score": e.get("scores", {}).get("float_score", 0),
@@ -1663,6 +1665,7 @@ class AutonomousEngine:
                     "combined_score": e.get("scores", {}).get("combined_score", 0),
                     "last_price": e.get("data", {}).get("price", 0),
                     "avg_volume": e.get("data", {}).get("avg_volume", 0),
+                    "today_volume": e.get("data", {}).get("today_volume", 0),
                     "relative_volume": e.get("data", {}).get("relative_volume", 0),
                     "float_millions": e.get("data", {}).get("float_millions"),
                     "float_score": e.get("scores", {}).get("float_score", 0),
@@ -2012,9 +2015,21 @@ class AutonomousEngine:
 
                 # === PRO-LEVEL VALIDATION ===
                 # These filters separate profitable traders from retail losers
-                bid = opp.get("bid", price * 0.999)
-                ask = opp.get("ask", price * 1.001)
-                current_volume = opp.get("volume", 0)
+                snapshot = {}
+                if hasattr(self.market_data, "get_market_snapshot"):
+                    try:
+                        snapshot = self.market_data.get_market_snapshot(symbol) or {}
+                    except Exception:
+                        snapshot = {}
+
+                bid = snapshot.get("bid") or opp.get("bid") or (price * 0.999)
+                ask = snapshot.get("ask") or opp.get("ask") or (price * 1.001)
+                current_volume = (
+                    snapshot.get("volume")
+                    or opp.get("today_volume")
+                    or opp.get("volume")
+                    or 0
+                )
                 avg_volume = opp.get("avg_volume", current_volume)
                 atr_percent = opp.get("atr_percent", 2.0)
 

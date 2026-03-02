@@ -111,8 +111,21 @@ class MarketScreener:
 
         # Get today's first bar and previous day's last bar
         try:
-            today_open = float(df["open"].iloc[-1])
-            prev_close = float(df["close"].iloc[-2])
+            if "date" in df:
+                date_key = df["date"].astype(str).str.slice(0, 10)
+                groups = df.groupby(date_key, sort=True)
+                dates = list(groups.groups.keys())
+                if len(dates) >= 2:
+                    prev_day = groups.get_group(dates[-2])
+                    today = groups.get_group(dates[-1])
+                    today_open = float(today["open"].iloc[0])
+                    prev_close = float(prev_day["close"].iloc[-1])
+                else:
+                    today_open = float(df["open"].iloc[-1])
+                    prev_close = float(df["close"].iloc[-2])
+            else:
+                today_open = float(df["open"].iloc[-1])
+                prev_close = float(df["close"].iloc[-2])
         except Exception:
             return {"gap_percent": 0.0, "gap_direction": "FLAT", "is_gapper": False, "is_significant_gap": False}
 
@@ -154,22 +167,54 @@ class MarketScreener:
         last_volume = float(df["volume"].iloc[-1]) if "volume" in df and len(df) > 0 else 0.0
 
         avg_daily_volume = 0.0
-        if "date" in df and "volume" in df:
+        today_cum_volume = 0.0
+        avg_cum_volume = 0.0
+        rvol_tod = 0.0
+
+        if "date" in df and "volume" in df and len(df) > 0:
             try:
                 date_key = df["date"].astype(str).str.slice(0, 10)
-                daily_volumes = df.groupby(date_key)["volume"].sum()
+                daily_groups = df.groupby(date_key)
+                daily_volumes = daily_groups["volume"].sum()
                 if len(daily_volumes) > 0:
                     avg_daily_volume = float(daily_volumes.mean())
+
+                    # Time-of-day relative volume: compare today's cumulative volume
+                    # vs average cumulative volume at the same bar index.
+                    last_date = daily_volumes.index[-1]
+                    today_df = daily_groups.get_group(last_date)
+                    bar_index = max(len(today_df) - 1, 0)
+                    today_cum_volume = float(today_df["volume"].iloc[: bar_index + 1].sum())
+
+                    prev_dates = [d for d in daily_volumes.index[:-1]]
+                    if prev_dates:
+                        prev_cums = []
+                        for d in prev_dates:
+                            ddf = daily_groups.get_group(d)
+                            if len(ddf) == 0:
+                                continue
+                            idx = min(bar_index, len(ddf) - 1)
+                            prev_cums.append(float(ddf["volume"].iloc[: idx + 1].sum()))
+                        if prev_cums:
+                            avg_cum_volume = float(sum(prev_cums) / len(prev_cums))
+                            if avg_cum_volume > 0:
+                                rvol_tod = today_cum_volume / avg_cum_volume
             except Exception:
                 avg_daily_volume = 0.0
 
         if avg_daily_volume <= 0:
             avg_daily_volume = avg_volume_bar * bars_per_day
 
+        if rvol_tod <= 0 and avg_volume_bar > 0:
+            rvol_tod = last_volume / avg_volume_bar
+
         return {
             "avg_volume_bar": avg_volume_bar,
             "avg_daily_volume": avg_daily_volume,
             "last_volume": last_volume,
+            "today_cum_volume": today_cum_volume,
+            "avg_cum_volume": avg_cum_volume,
+            "rvol_tod": rvol_tod,
         }
 
     def evaluate_symbol_detailed(
@@ -206,7 +251,7 @@ class MarketScreener:
         avg_volume_bar = volumes["avg_volume_bar"]
         avg_volume = volumes["avg_daily_volume"]
         last_volume = volumes["last_volume"]
-        relative_volume = last_volume / avg_volume_bar if avg_volume_bar else 0.0
+        relative_volume = volumes["rvol_tod"]
 
         # Calculate gap - KEY day trading indicator
         gap_info = self.calculate_gap(df_clean)
@@ -217,6 +262,9 @@ class MarketScreener:
         result["data"]["avg_volume_bar"] = int(avg_volume_bar)
         result["data"]["last_volume"] = int(last_volume)
         result["data"]["relative_volume"] = round(relative_volume, 2)
+        result["data"]["rvol_tod"] = round(relative_volume, 2)
+        result["data"]["today_volume"] = int(volumes["today_cum_volume"])
+        result["data"]["avg_cum_volume"] = int(volumes["avg_cum_volume"])
         result["data"]["volatility"] = round(features.get("volatility", 0), 4)
         result["data"]["gap_percent"] = gap_info["gap_percent"]
         result["data"]["gap_direction"] = gap_info["gap_direction"]
@@ -270,7 +318,7 @@ class MarketScreener:
             "value": round(relative_volume, 2),
             "threshold": self.min_relative_volume,
             "gapper_bypass": gapper_bypass,
-            "reason": f"RVol {relative_volume:.1f}x {'≥' if rvol_passed else '<'} {self.min_relative_volume}x" +
+            "reason": f"RVol(ToD) {relative_volume:.1f}x {'≥' if rvol_passed else '<'} {self.min_relative_volume}x" +
                       (f" (GAPPER BYPASS: {gap_info['gap_percent']}%)" if gapper_bypass and not rvol_passed else "")
         }
         if not effective_rvol_passed:
@@ -429,7 +477,7 @@ class MarketScreener:
         avg_volume_bar = volumes["avg_volume_bar"]
         avg_volume = volumes["avg_daily_volume"]
         last_volume = volumes["last_volume"]
-        relative_volume = last_volume / avg_volume_bar if avg_volume_bar else 0.0
+        relative_volume = volumes["rvol_tod"]
 
         # Calculate gap
         gap_info = self.calculate_gap(df_clean)
