@@ -143,6 +143,32 @@ class MarketScreener:
         """
         return LOW_FLOAT_STOCKS.get(symbol)
 
+    def _volume_metrics(self, df: pd.DataFrame) -> Dict[str, float]:
+        """Compute volume metrics consistently for 5m bars."""
+        bars_per_day = 78  # 6.5 trading hours * 12 (5-min bars)
+
+        avg_volume_bar = float(df["volume"].tail(20).mean()) if "volume" in df else 0.0
+        last_volume = float(df["volume"].iloc[-1]) if "volume" in df and len(df) > 0 else 0.0
+
+        avg_daily_volume = 0.0
+        if "date" in df and "volume" in df:
+            try:
+                date_key = df["date"].astype(str).str.slice(0, 10)
+                daily_volumes = df.groupby(date_key)["volume"].sum()
+                if len(daily_volumes) > 0:
+                    avg_daily_volume = float(daily_volumes.mean())
+            except Exception:
+                avg_daily_volume = 0.0
+
+        if avg_daily_volume <= 0:
+            avg_daily_volume = avg_volume_bar * bars_per_day
+
+        return {
+            "avg_volume_bar": avg_volume_bar,
+            "avg_daily_volume": avg_daily_volume,
+            "last_volume": last_volume,
+        }
+
     def evaluate_symbol_detailed(
         self,
         symbol: str,
@@ -171,10 +197,10 @@ class MarketScreener:
 
         features = latest_feature_vector(df)
         last_price = float(df["close"].iloc[-1])
-        bars_per_day = 78  # 6.5 trading hours * 12 (5-min bars)
-        avg_volume_bar = float(df["volume"].tail(20).mean())
-        avg_volume = avg_volume_bar * bars_per_day
-        last_volume = float(df["volume"].iloc[-1])
+        volumes = self._volume_metrics(df)
+        avg_volume_bar = volumes["avg_volume_bar"]
+        avg_volume = volumes["avg_daily_volume"]
+        last_volume = volumes["last_volume"]
         relative_volume = last_volume / avg_volume_bar if avg_volume_bar else 0.0
 
         # Calculate gap - KEY day trading indicator
@@ -393,10 +419,10 @@ class MarketScreener:
 
         features = latest_feature_vector(df)
         last_price = float(df["close"].iloc[-1])
-        bars_per_day = 78  # 6.5 trading hours * 12 (5-min bars)
-        avg_volume_bar = float(df["volume"].tail(20).mean())
-        avg_volume = avg_volume_bar * bars_per_day
-        last_volume = float(df["volume"].iloc[-1])
+        volumes = self._volume_metrics(df)
+        avg_volume_bar = volumes["avg_volume_bar"]
+        avg_volume = volumes["avg_daily_volume"]
+        last_volume = volumes["last_volume"]
         relative_volume = last_volume / avg_volume_bar if avg_volume_bar else 0.0
 
         # Calculate gap
