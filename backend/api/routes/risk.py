@@ -6,25 +6,16 @@ from typing import Dict
 from fastapi import APIRouter, Depends
 
 from api.routes.auth import get_current_user
-from core.ibkr_client import IBKRClient
-from core.ibkr_webapi import IBKRWebAPIClient
-from config import settings as app_settings
+from core.alpaca_client import AlpacaClient
 from core.risk_manager import RiskManager
 from models import User
 
 router = APIRouter(prefix="/api/risk", tags=["risk"])
 
 
-def get_ibkr_client() -> IBKRClient:
+def get_alpaca_client() -> AlpacaClient | None:
     from main import app
-
-    return app.state.ibkr_client
-
-
-def get_webapi_client() -> IBKRWebAPIClient | None:
-    from main import app
-
-    return getattr(app.state, "ibkr_webapi_client", None)
+    return getattr(app.state, "alpaca_client", None)
 
 
 def get_risk_manager() -> RiskManager:
@@ -35,25 +26,20 @@ def get_risk_manager() -> RiskManager:
 
 @router.get("/summary")
 def risk_summary(
-    ibkr: IBKRClient = Depends(get_ibkr_client),
-    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     risk_manager: RiskManager = Depends(get_risk_manager),
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, object]:
-    if app_settings.use_ibkr_webapi and webapi:
-        summary = webapi.get_account_summary()
-        positions = webapi.get_positions()
-    else:
-        summary = ibkr.get_account_summary()
-        positions = ibkr.get_positions()
+    summary = alpaca.get_account_summary() if alpaca and alpaca.is_connected() else {}
+    positions = alpaca.get_positions() if alpaca and alpaca.is_connected() else []
     account_value = float(summary.get("NetLiquidation", 0) or 0)
     daily_pnl = float(summary.get("RealizedPnL", 0) or 0)
     gross_exposure = 0.0
     net_exposure = 0.0
     largest = {"symbol": None, "percentOfAccount": 0.0}
     for pos in positions:
-        qty = float(pos.get("position", 0) or 0)
-        price = float(pos.get("avg_cost", 0) or 0)
+        qty = float(pos.get("quantity", 0) or 0)
+        price = float(pos.get("avgPrice", 0) or 0)
         value = qty * price
         gross_exposure += abs(value)
         net_exposure += value

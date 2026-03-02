@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     alpaca_api_key: str = ""
     alpaca_secret_key: str = ""
     alpaca_paper: bool = True  # True for paper trading, False for live
+    alpaca_data_feed: str = "iex"  # "iex" for free accounts, "sip" for paid
 
     # Screener defaults - lowered for pre-market and early morning trading
     screener_min_avg_volume: float = 100000  # Lowered from 500k to allow more stocks

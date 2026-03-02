@@ -4,51 +4,36 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from core.db import get_db
-from core.ibkr_client import IBKRClient
-from core.ibkr_webapi import IBKRWebAPIClient
-from config import settings as app_settings
+from core.alpaca_client import AlpacaClient
 from api.routes.auth import get_current_user
 from models import AccountSnapshot, Trade, User
 
 router = APIRouter(prefix="/api/account", tags=["account"])
 
 
-def get_ibkr_client() -> IBKRClient:
+def get_alpaca_client() -> AlpacaClient | None:
     from main import app
-
-    return app.state.ibkr_client
-
-
-def get_webapi_client() -> IBKRWebAPIClient | None:
-    from main import app
-
-    return getattr(app.state, "ibkr_webapi_client", None)
+    return getattr(app.state, "alpaca_client", None)
 
 
 @router.get("/summary")
 def account_summary(
-    ibkr: IBKRClient = Depends(get_ibkr_client),
-    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    if app_settings.use_ibkr_webapi and webapi:
-        return webapi.get_account_summary()
-    if not ibkr.is_connected():
+    if not alpaca or not alpaca.is_connected():
         return {"connected": False}
-    return ibkr.get_account_summary()
+    return alpaca.get_account_summary()
 
 
 @router.get("/positions")
 def positions(
-    ibkr: IBKRClient = Depends(get_ibkr_client),
-    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     current_user: User = Depends(get_current_user),
 ) -> list:
-    if app_settings.use_ibkr_webapi and webapi:
-        return webapi.get_positions()
-    if not ibkr.is_connected():
+    if not alpaca or not alpaca.is_connected():
         return []
-    return ibkr.get_positions()
+    return alpaca.get_positions()
 
 
 @router.get("/history")

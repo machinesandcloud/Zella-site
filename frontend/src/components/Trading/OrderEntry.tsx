@@ -511,7 +511,7 @@ const OrderEntry = () => {
             </Button>
             {unsupported && (
               <Typography variant="caption" color="text.secondary">
-                Unsupported types will be enabled when IBKR order APIs go live.
+                Unsupported types will be enabled when Alpaca order APIs go live.
               </Typography>
             )}
           </Grid>

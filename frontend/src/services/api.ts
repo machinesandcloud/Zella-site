@@ -168,21 +168,6 @@ export const fetchAccountSummary = async () => {
   return data;
 };
 
-export const fetchIbkrStatus = async () => {
-  const { data } = await api.get("/api/ibkr/status");
-  return data;
-};
-
-export const fetchIbkrWebapiStatus = async () => {
-  const { data } = await api.get("/api/ibkr/webapi/status");
-  return data;
-};
-
-export const fetchIbkrDefaults = async () => {
-  const { data } = await api.get("/api/settings/ibkr-defaults");
-  return data;
-};
-
 export const fetchAlpacaStatus = async () => {
   const { data } = await api.get("/api/alpaca/status");
   return data;

@@ -6,28 +6,21 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
-from api.routes import account, auth, backtest, dashboard, ibkr, settings, strategies, trading, ai_trading, qa, alerts, risk, trades, news, market, alpaca
+from api.routes import account, auth, backtest, dashboard, settings, strategies, trading, ai_trading, qa, alerts, risk, trades, news, market, alpaca
 from api.websocket.market_data import router as ws_router
 from config import settings as app_settings
 from core import (
     AlertManager,
-    IBKRClient,
     PositionManager,
     PreTradeRiskValidator,
     RiskConfig,
     RiskManager,
     StrategyEngine,
 )
-from core.ibkr_webapi import IBKRWebAPIClient
 from core.alpaca_client import AlpacaClient
 from core.ai_activity import ActivityLog
 from core.auto_trader import AutoTrader
 from core.autonomous_engine import AutonomousEngine
-from core.mock_ibkr_client import MockIBKRClient
-from core.ibkr_client import ibkr_api_available
-from market.ibkr_provider import IBKRMarketDataProvider
-from market.free_provider import FreeMarketDataProvider
-from market.webapi_provider import IBKRWebAPIProvider
 from market.alpaca_provider import AlpacaMarketDataProvider
 from market.universe import get_default_universe
 from core.init_db import init_db
@@ -72,12 +65,6 @@ async def health_check():
     if hasattr(app.state, "alpaca_client") and app.state.alpaca_client:
         if app.state.alpaca_client.is_connected():
             broker_status = "alpaca_connected"
-    elif hasattr(app.state, "ibkr_client") and app.state.ibkr_client:
-        if app.state.ibkr_client.is_connected():
-            broker_status = "ibkr_connected"
-        elif hasattr(app.state.ibkr_client, '__class__') and 'Mock' in app.state.ibkr_client.__class__.__name__:
-            broker_status = "mock_connected"
-
     health_status["components"]["broker"] = broker_status
 
     # Check market data provider
@@ -115,20 +102,6 @@ REQUEST_LATENCY = Histogram(
 )
 
 logger = logging.getLogger("zella")
-
-
-async def keep_ibkr_session_alive():
-    """Background task to keep IBKR Web API session alive - pings every 30 seconds to prevent Render idle timeout."""
-    while True:
-        try:
-            await asyncio.sleep(30)  # 30 seconds - Render kills idle connections after ~60s
-            if hasattr(app.state, "ibkr_webapi_client") and app.state.ibkr_webapi_client:
-                result = app.state.ibkr_webapi_client.tickle()
-                logger.debug(f"IBKR session tickle: {result}")  # Debug level to reduce log spam
-        except Exception as e:
-            logger.error(f"Error in IBKR session keepalive: {e}")
-            # Don't crash the loop - keep trying
-            await asyncio.sleep(5)
 
 
 async def server_self_ping():
@@ -184,13 +157,6 @@ async def on_startup() -> None:
         for warning in config_warnings:
             logger.warning(f"  {warning}")
 
-    if app_settings.use_mock_ibkr or not ibkr_api_available():
-        app.state.ibkr_client = MockIBKRClient()
-        # Auto-connect mock client so autonomous engine can start
-        app.state.ibkr_client.connect_to_ibkr("127.0.0.1", 7497, 1, is_paper_trading=True)
-        logger.info("MockIBKRClient auto-connected for paper trading")
-    else:
-        app.state.ibkr_client = IBKRClient()
     app.state.risk_manager = RiskManager(
         RiskConfig(
             max_position_size_percent=app_settings.max_position_size_percent,
@@ -208,11 +174,40 @@ async def on_startup() -> None:
         max_positions=app_settings.max_concurrent_positions,
     )
     app.state.position_manager = PositionManager()
-    app.state.strategy_engine = StrategyEngine(
-        app.state.ibkr_client, app.state.risk_manager, app.state.position_manager
-    )
     app.state.ai_activity = ActivityLog()
     app.state.strategy_configs = {}
+
+    # Initialize Alpaca client (Alpaca-only mode)
+    logger.info(f"Alpaca initialization: use_alpaca={app_settings.use_alpaca}, effective={app_settings.use_alpaca_effective}")
+    logger.info(f"Alpaca keys configured: api_key={bool(app_settings.alpaca_api_key)}, secret={bool(app_settings.alpaca_secret_key)}, paper={app_settings.alpaca_paper}")
+
+    app.state.alpaca_client = None
+
+    if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
+        try:
+            logger.info(f"Creating Alpaca client (paper={app_settings.alpaca_paper})...")
+            alpaca_client = AlpacaClient(
+                api_key=app_settings.alpaca_api_key,
+                secret_key=app_settings.alpaca_secret_key,
+                paper=app_settings.alpaca_paper,
+                data_feed=app_settings.alpaca_data_feed,
+            )
+            if alpaca_client.connect():
+                app.state.alpaca_client = alpaca_client
+                logger.info(f"✓ Alpaca connected successfully (paper={app_settings.alpaca_paper})")
+            else:
+                app.state.alpaca_client = alpaca_client
+                logger.warning("✗ Alpaca client created but initial connection failed - will retry on API calls")
+        except Exception as e:
+            logger.error(f"✗ Failed to create Alpaca client: {e}")
+            app.state.alpaca_client = None
+    else:
+        logger.error("✗ Alpaca API keys missing - configure ALPACA_API_KEY and ALPACA_SECRET_KEY")
+
+    # Initialize Strategy Engine with Alpaca broker (if available)
+    app.state.strategy_engine = StrategyEngine(
+        app.state.alpaca_client, app.state.risk_manager, app.state.position_manager
+    )
     # Initialize Dynamic Universe Manager (auto-updates weekly with most liquid stocks)
     if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
         from market.dynamic_universe import get_dynamic_universe_manager
@@ -222,116 +217,74 @@ async def on_startup() -> None:
         )
         logger.info(f"Dynamic Universe Manager initialized: {len(app.state.dynamic_universe_manager.get_universe())} symbols")
 
-    # Initialize Market Data Provider
-    # Priority: Alpaca > IBKR WebAPI > Free Data > IBKR
-    if app_settings.use_alpaca and app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
-        logger.info("Using Alpaca Market Data Provider with dynamic universe")
+    # Initialize Market Data Provider (Alpaca-only)
+    if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
+        logger.info("Using Alpaca Market Data Provider (Alpaca-only mode)")
         app.state.market_data_provider = AlpacaMarketDataProvider(
             api_key=app_settings.alpaca_api_key,
-            secret_key=app_settings.alpaca_secret_key
+            secret_key=app_settings.alpaca_secret_key,
+            universe=get_default_universe(),
+            data_feed=app_settings.alpaca_data_feed,
         )
-    elif app_settings.use_ibkr_webapi:
-        web_client = IBKRWebAPIClient(
-            base_url=app_settings.ibkr_webapi_base_url,
-            account_id=app_settings.ibkr_webapi_account_id or None,
-            verify_ssl=app_settings.ibkr_webapi_verify_ssl,
-        )
-        app.state.ibkr_webapi_client = web_client
-        app.state.market_data_provider = IBKRWebAPIProvider(web_client)
-    elif app_settings.use_free_data or app_settings.use_mock_ibkr:
-        logger.info("Using Free Market Data Provider with day trading universe (90+ stocks)")
-        app.state.market_data_provider = FreeMarketDataProvider(get_default_universe())
     else:
-        app.state.market_data_provider = IBKRMarketDataProvider(
-            app.state.ibkr_client, universe=get_default_universe()
+        logger.error("Alpaca API keys missing - market data provider not initialized")
+        app.state.market_data_provider = None
+
+    if app.state.market_data_provider:
+        app.state.auto_trader = AutoTrader(
+            app.state.market_data_provider,
+            app.state.strategy_engine,
+            screener_config={
+                "min_avg_volume": app_settings.screener_min_avg_volume,
+                "min_price": app_settings.screener_min_price,
+                "max_price": app_settings.screener_max_price,
+                "min_volatility": app_settings.screener_min_volatility,
+                "min_relative_volume": app_settings.screener_min_relative_volume,
+            },
         )
-    app.state.auto_trader = AutoTrader(
-        app.state.market_data_provider,
-        app.state.strategy_engine,
-        screener_config={
-            "min_avg_volume": app_settings.screener_min_avg_volume,
-            "min_price": app_settings.screener_min_price,
-            "max_price": app_settings.screener_max_price,
-            "min_volatility": app_settings.screener_min_volatility,
-            "min_relative_volume": app_settings.screener_min_relative_volume,
-        },
-    )
-
-    # Start IBKR session keepalive task if using Web API
-    if app_settings.use_ibkr_webapi:
-        asyncio.create_task(keep_ibkr_session_alive())
-        logger.info("Started IBKR Web API session keepalive task")
-
-    # Initialize Alpaca client if enabled
-    logger.info(f"Alpaca initialization: use_alpaca={app_settings.use_alpaca}, effective={app_settings.use_alpaca_effective}")
-    logger.info(f"Alpaca keys configured: api_key={bool(app_settings.alpaca_api_key)}, secret={bool(app_settings.alpaca_secret_key)}, paper={app_settings.alpaca_paper}")
-
-    app.state.alpaca_client = None  # Initialize to None by default
-
-    if app_settings.use_alpaca_effective:
-        if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
-            try:
-                logger.info(f"Creating Alpaca client (paper={app_settings.alpaca_paper})...")
-                alpaca_client = AlpacaClient(
-                    api_key=app_settings.alpaca_api_key,
-                    secret_key=app_settings.alpaca_secret_key,
-                    paper=app_settings.alpaca_paper
-                )
-                # Test connection with timeout
-                if alpaca_client.connect():
-                    app.state.alpaca_client = alpaca_client
-                    logger.info(f"✓ Alpaca connected successfully (paper={app_settings.alpaca_paper})")
-                else:
-                    # Still set the client even if connection failed - it can retry later
-                    app.state.alpaca_client = alpaca_client
-                    logger.warning("✗ Alpaca client created but initial connection failed - will retry on API calls")
-            except Exception as e:
-                logger.error(f"✗ Failed to create Alpaca client: {e}")
-                app.state.alpaca_client = None
-        else:
-            logger.warning(f"✗ Alpaca enabled but API keys missing: api_key={'SET' if app_settings.alpaca_api_key else 'MISSING'}, secret={'SET' if app_settings.alpaca_secret_key else 'MISSING'}")
     else:
-        logger.info("Alpaca disabled in configuration")
+        app.state.auto_trader = None
 
-    # Initialize Autonomous Trading Engine (Alpaca or Mock)
-    broker_client = app.state.alpaca_client if app.state.alpaca_client else app.state.ibkr_client
+    # Initialize Autonomous Trading Engine (Alpaca-only)
+    broker_client = app.state.alpaca_client
 
-    try:
-        logger.info("Initializing Autonomous Trading Engine...")
-        app.state.autonomous_engine = AutonomousEngine(
-            market_data_provider=app.state.market_data_provider,
-            strategy_engine=app.state.strategy_engine,
-            risk_manager=app.state.risk_manager,
-            position_manager=app.state.position_manager,
-            broker_client=broker_client,
-            config={
-                "enabled": True,  # Auto-enable for real-time scanning
-                "mode": "FULL_AUTO",
-                "risk_posture": "BALANCED",
-                "scan_interval": 30,  # 30s for real-time updates
-                "max_positions": 5,
-                "enabled_strategies": "ALL"
-            }
-        )
-
-        # Auto-start the engine for real-time market scanning
-        # Start directly (startup is now async)
-        logger.info("🚀 Auto-starting Autonomous Trading Engine...")
+    if app.state.market_data_provider:
         try:
-            await app.state.autonomous_engine.start()
-            logger.info("✅ Autonomous Engine start() completed - main loop running in background")
-        except Exception as e:
-            logger.error(f"❌ Failed to start autonomous engine: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.info("Initializing Autonomous Trading Engine...")
+            app.state.autonomous_engine = AutonomousEngine(
+                market_data_provider=app.state.market_data_provider,
+                strategy_engine=app.state.strategy_engine,
+                risk_manager=app.state.risk_manager,
+                position_manager=app.state.position_manager,
+                broker_client=broker_client,
+                config={
+                    "enabled": True,  # Auto-enable for real-time scanning
+                    "mode": "FULL_AUTO",
+                    "risk_posture": "BALANCED",
+                    "scan_interval": 30,  # 30s for real-time updates
+                    "max_positions": 5,
+                    "enabled_strategies": "ALL"
+                }
+            )
 
-        if app_settings.use_mock_ibkr or not (app.state.alpaca_client and app.state.alpaca_client.is_connected()):
-            logger.info("✓ Autonomous Trading Engine initialized and starting (DEMO MODE - scan only)")
-        else:
-            logger.info("✓ Autonomous Trading Engine initialized and starting (LIVE MODE)")
-    except Exception as e:
-        logger.error(f"✗ Failed to initialize Autonomous Engine: {e}")
-        app.state.autonomous_engine = None
+            logger.info("🚀 Auto-starting Autonomous Trading Engine...")
+            try:
+                await app.state.autonomous_engine.start()
+                logger.info("✅ Autonomous Engine start() completed - main loop running in background")
+            except Exception as e:
+                logger.error(f"❌ Failed to start autonomous engine: {e}")
+                import traceback
+                traceback.print_exc()
+
+            if not (app.state.alpaca_client and app.state.alpaca_client.is_connected()):
+                logger.info("✓ Autonomous Trading Engine initialized and starting (DEMO MODE - scan only)")
+            else:
+                logger.info("✓ Autonomous Trading Engine initialized and starting (LIVE MODE)")
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize Autonomous Engine: {e}")
+            app.state.autonomous_engine = None
+    else:
+        logger.error("Autonomous engine not started: market data provider is missing (check Alpaca keys)")
 
     # Start server self-ping to prevent Render idle timeout (critical for 24/7 operation)
     asyncio.create_task(server_self_ping())
@@ -346,15 +299,13 @@ async def on_shutdown() -> None:
         await app.state.autonomous_engine.stop()
 
     # Disconnect broker clients
-    if hasattr(app.state, "ibkr_client") and app.state.ibkr_client.is_connected():
-        app.state.ibkr_client.disconnect()
+    # Alpaca has no persistent disconnect requirement here
 
     if hasattr(app.state, "alpaca_client") and app.state.alpaca_client and app.state.alpaca_client.is_connected():
         app.state.alpaca_client.disconnect()
 
 
 app.include_router(auth.router)
-app.include_router(ibkr.router)
 app.include_router(alpaca.router)
 app.include_router(account.router)
 app.include_router(trading.router)

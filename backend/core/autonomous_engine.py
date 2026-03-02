@@ -1457,6 +1457,25 @@ class AutonomousEngine:
                 {"symbols_with_data": len(market_data), "total_universe": len(universe)}
             )
 
+            if not market_data:
+                provider_error = getattr(self.market_data, "last_error", None)
+                provider_error_at = getattr(self.market_data, "last_error_at", None)
+                self.symbols_scanned = 0
+                self.last_scanner_results = []
+                self.last_analyzed_opportunities = []
+                self._add_decision(
+                    "SCAN",
+                    "No market data returned. Check Alpaca credentials, market data subscription, and connectivity.",
+                    "ERROR",
+                    {
+                        "symbols_scanned": 0,
+                        "total_universe": len(universe),
+                        "provider_error": provider_error,
+                        "provider_error_at": provider_error_at,
+                    },
+                )
+                return []
+
             # Fetch news catalysts for scanned symbols (async would be better)
             try:
                 await self._update_news_catalysts(list(market_data.keys())[:50])  # Top 50 symbols

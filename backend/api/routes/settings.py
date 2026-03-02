@@ -24,17 +24,6 @@ class RiskSettings(BaseModel):
     risk_per_trade_percent: float
 
 
-class IBKRDefaults(BaseModel):
-    host: str
-    port: int
-    client_id: int
-    is_paper_trading: bool
-    use_mock_ibkr: bool
-    use_ibkr_webapi: bool
-    use_free_data: bool
-    use_alpaca: bool
-
-
 @router.get("/risk", response_model=RiskSettings)
 def get_risk_settings(
     risk_manager: RiskManager = Depends(get_risk_manager),
@@ -63,23 +52,6 @@ def update_risk_settings(
     return body
 
 
-@router.get("/ibkr-defaults", response_model=IBKRDefaults)
-def get_ibkr_defaults(
-    current_user: User = Depends(get_current_user),
-) -> IBKRDefaults:
-    is_paper = app_settings.default_trading_mode.upper() != "LIVE"
-    return IBKRDefaults(
-        host=app_settings.ibkr_host,
-        port=app_settings.ibkr_paper_port if is_paper else app_settings.ibkr_live_port,
-        client_id=app_settings.ibkr_client_id,
-        is_paper_trading=is_paper,
-        use_mock_ibkr=app_settings.use_mock_ibkr,
-        use_ibkr_webapi=app_settings.use_ibkr_webapi,
-        use_free_data=app_settings.use_free_data,
-        use_alpaca=app_settings.use_alpaca_effective,
-    )
-
-
 @router.get("/alpaca-debug")
 def get_alpaca_debug(
     current_user: User = Depends(get_current_user),
@@ -91,4 +63,5 @@ def get_alpaca_debug(
         "has_api_key": bool(app_settings.alpaca_api_key),
         "has_secret_key": bool(app_settings.alpaca_secret_key),
         "alpaca_paper": app_settings.alpaca_paper,
+        "alpaca_data_feed": app_settings.alpaca_data_feed,
     }

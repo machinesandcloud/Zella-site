@@ -9,9 +9,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from core.db import get_db
-from core.ibkr_client import IBKRClient
-from core.ibkr_webapi import IBKRWebAPIClient
-from config import settings as app_settings
+from core.alpaca_client import AlpacaClient
 from core.risk_manager import RiskManager
 from core.risk_validator import PreTradeRiskValidator
 from models import Order, User
@@ -62,16 +60,9 @@ class ClosePositionRequest(BaseModel):
     symbol: str
 
 
-def get_ibkr_client() -> IBKRClient:
+def get_alpaca_client() -> AlpacaClient | None:
     from main import app
-
-    return app.state.ibkr_client
-
-
-def get_webapi_client() -> IBKRWebAPIClient | None:
-    from main import app
-
-    return getattr(app.state, "ibkr_webapi_client", None)
+    return getattr(app.state, "alpaca_client", None)
 
 
 def get_risk_manager() -> RiskManager:
@@ -96,8 +87,7 @@ def get_alert_manager():
 def place_order(
     order_in: OrderRequest,
     db: Session = Depends(get_db),
-    ibkr: IBKRClient = Depends(get_ibkr_client),
-    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     risk_manager: RiskManager = Depends(get_risk_manager),
     risk_validator: PreTradeRiskValidator = Depends(get_risk_validator),
     current_user: User = Depends(get_current_user),
@@ -106,28 +96,16 @@ def place_order(
     quantity = validate_quantity(order_in.quantity)
     action = order_in.action.upper()
     order_type = order_in.order_type.upper()
-    contract_params = {
-        "sec_type": order_in.asset_type.upper(),
-        "exchange": order_in.exchange,
-        "currency": order_in.currency,
-        "expiry": order_in.expiry,
-        "strike": order_in.strike,
-        "right": order_in.right,
-        "multiplier": order_in.multiplier,
-    }
 
     if order_type == "LMT" and order_in.limit_price is not None:
         validate_price(order_in.limit_price)
     if order_type == "STP" and order_in.stop_price is not None:
         validate_price(order_in.stop_price)
 
-    if app_settings.use_ibkr_webapi and webapi:
-        if not webapi.is_connected():
-            raise HTTPException(status_code=503, detail="IBKR Web API not authenticated")
-    elif not ibkr.is_connected():
-        raise HTTPException(status_code=503, detail="IBKR not connected")
+    if not alpaca or not alpaca.is_connected():
+        raise HTTPException(status_code=503, detail="Alpaca not connected")
 
-    account_summary = webapi.get_account_summary() if app_settings.use_ibkr_webapi and webapi else ibkr.get_account_summary()
+    account_summary = alpaca.get_account_summary()
     account_value = float(account_summary.get("NetLiquidation", 0) or 0)
     buying_power = float(account_summary.get("BuyingPower", 0) or 0)
     price_for_risk = order_in.limit_price or order_in.stop_price or 0
@@ -143,7 +121,7 @@ def place_order(
     if price_for_risk and not risk_manager.check_buying_power(quantity * price_for_risk, buying_power):
         raise HTTPException(status_code=403, detail="Insufficient buying power")
 
-    open_positions = len(webapi.get_positions()) if app_settings.use_ibkr_webapi and webapi else len(ibkr.get_positions())
+    open_positions = len(alpaca.get_positions())
     risk_validation = risk_validator.validate(
         symbol=symbol,
         quantity=quantity,
@@ -169,34 +147,28 @@ def place_order(
         )
 
     order_id = None
+    broker_order_id = None
     try:
-        if app_settings.use_ibkr_webapi and webapi:
-            if order_type == "MKT":
-                response = webapi.place_order(symbol, quantity, action, "MKT")
-                order_id = response[0].get("order_id") if isinstance(response, list) else response.get("order_id")
-            elif order_type == "LMT" and order_in.limit_price is not None:
-                response = webapi.place_order(symbol, quantity, action, "LMT", price=order_in.limit_price)
-                order_id = response[0].get("order_id") if isinstance(response, list) else response.get("order_id")
-            else:
-                raise HTTPException(status_code=400, detail="Order type not supported via Web API")
+        if order_type == "MKT":
+            order_id = alpaca.place_market_order(symbol, quantity, action)
+        elif order_type == "LMT" and order_in.limit_price is not None:
+            order_id = alpaca.place_limit_order(symbol, quantity, action, order_in.limit_price)
+        elif order_type == "STP" and order_in.stop_price is not None:
+            order_id = alpaca.place_stop_order(symbol, quantity, action, order_in.stop_price)
+        elif order_type == "BRACKET" and order_in.take_profit and order_in.stop_loss:
+            order_id = alpaca.place_bracket_order(
+                symbol,
+                quantity,
+                action,
+                order_in.take_profit,
+                order_in.stop_loss,
+            )
         else:
-            if order_type == "MKT":
-                order_id = ibkr.place_market_order(symbol, quantity, action, contract_params)
-            elif order_type == "LMT" and order_in.limit_price is not None:
-                order_id = ibkr.place_limit_order(symbol, quantity, action, order_in.limit_price, contract_params)
-            elif order_type == "STP" and order_in.stop_price is not None:
-                order_id = ibkr.place_stop_order(symbol, quantity, action, order_in.stop_price, contract_params)
-            elif order_type == "BRACKET" and order_in.take_profit and order_in.stop_loss:
-                ibkr.place_bracket_order(
-                    symbol,
-                    quantity,
-                    action,
-                    order_in.take_profit,
-                    order_in.stop_loss,
-                    contract_params,
-                )
-            else:
-                raise HTTPException(status_code=400, detail="Invalid order parameters")
+            raise HTTPException(status_code=400, detail="Invalid order parameters")
+        if isinstance(order_id, dict):
+            broker_order_id = order_id.get("orderId")
+        elif order_id is not None:
+            broker_order_id = str(order_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -209,13 +181,13 @@ def place_order(
         action,
         quantity,
         order_type,
-        order_id,
+        broker_order_id,
         current_user.username,
     )
 
     order = Order(
         user_id=current_user.id,
-        ibkr_order_id=order_id,
+        ibkr_order_id=broker_order_id,
         symbol=symbol,
         asset_type=order_in.asset_type,
         exchange=order_in.exchange,
@@ -241,20 +213,19 @@ def place_order(
 def cancel_order(
     order_id: int,
     db: Session = Depends(get_db),
-    ibkr: IBKRClient = Depends(get_ibkr_client),
-    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    if app_settings.use_ibkr_webapi and webapi:
-        raise HTTPException(status_code=400, detail="Cancel not yet supported via Web API")
-    if not ibkr.is_connected():
-        raise HTTPException(status_code=503, detail="IBKR not connected")
-    ibkr.cancel_order(order_id)
+    if not alpaca or not alpaca.is_connected():
+        raise HTTPException(status_code=503, detail="Alpaca not connected")
     order = (
         db.query(Order)
         .filter(Order.user_id == current_user.id, Order.id == order_id)
         .first()
     )
+    if not order or not order.ibkr_order_id:
+        raise HTTPException(status_code=404, detail="Order not found or missing broker order id")
+    alpaca.cancel_order(str(order.ibkr_order_id))
     if order:
         order.status = "CANCELLED"
         db.commit()
@@ -266,27 +237,10 @@ def modify_order(
     order_id: int,
     new_params: OrderRequest,
     db: Session = Depends(get_db),
-    ibkr: IBKRClient = Depends(get_ibkr_client),
-    webapi: IBKRWebAPIClient | None = Depends(get_webapi_client),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    if app_settings.use_ibkr_webapi and webapi:
-        raise HTTPException(status_code=400, detail="Modify not yet supported via Web API")
-    if not ibkr.is_connected():
-        raise HTTPException(status_code=503, detail="IBKR not connected")
-    ibkr.modify_order(order_id, new_params.model_dump())
-    order = (
-        db.query(Order)
-        .filter(Order.user_id == current_user.id, Order.id == order_id)
-        .first()
-    )
-    if order:
-        order.quantity = new_params.quantity
-        order.limit_price = new_params.limit_price
-        order.stop_price = new_params.stop_price
-        order.status = order.status or "SUBMITTED"
-        db.commit()
-    return {"status": "modified", "order_id": order_id}
+    raise HTTPException(status_code=400, detail="Modify not supported for Alpaca orders (cancel & re-place)")
 
 
 @router.get("/orders", response_model=List[OrderOut])
@@ -304,34 +258,36 @@ def list_orders(
 
 @router.get("/orders/open")
 def open_orders(
-    ibkr: IBKRClient = Depends(get_ibkr_client),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    return ibkr.get_open_orders()
+    if not alpaca or not alpaca.is_connected():
+        raise HTTPException(status_code=503, detail="Alpaca not connected")
+    return {"orders": alpaca.get_orders(status="open")}
 
 
 @router.post("/positions/close")
 def close_position(
     body: ClosePositionRequest,
-    ibkr: IBKRClient = Depends(get_ibkr_client),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     symbol = validate_symbol(body.symbol.upper())
-    if not ibkr.is_connected():
-        raise HTTPException(status_code=503, detail="IBKR not connected")
-    ibkr.close_position(symbol)
+    if not alpaca or not alpaca.is_connected():
+        raise HTTPException(status_code=503, detail="Alpaca not connected")
+    alpaca.close_position(symbol)
     logger.info("position_close_requested symbol=%s user=%s", symbol, current_user.username)
     return {"status": "closing", "symbol": symbol}
 
 
 @router.post("/kill-switch")
 def kill_switch(
-    ibkr: IBKRClient = Depends(get_ibkr_client),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     risk_manager: RiskManager = Depends(get_risk_manager),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     risk_manager.trigger_emergency_stop()
-    if ibkr.is_connected():
-        ibkr.kill_switch()
+    if alpaca and alpaca.is_connected():
+        alpaca.cancel_all_orders()
     logger.critical("kill_switch_triggered user=%s", current_user.username)
     return {"status": "triggered"}

@@ -231,7 +231,10 @@ def get_default_universe() -> List[str]:
         from market.dynamic_universe import get_dynamic_universe
         universe = get_dynamic_universe()
         if universe and len(universe) >= 50:
-            return universe
+            # Sanity check: ensure we have enough real tickers (3+ chars)
+            long_symbols = [s for s in universe if len(s) >= 3]
+            if len(long_symbols) >= 50:
+                return universe
     except Exception:
         pass
 

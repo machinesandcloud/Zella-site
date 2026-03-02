@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
+from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, StopOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest
@@ -31,6 +31,7 @@ class AlpacaClient:
         api_key: str,
         secret_key: str,
         paper: bool = True,
+        data_feed: str = "iex",
     ) -> None:
         """
         Initialize Alpaca client.
@@ -43,6 +44,7 @@ class AlpacaClient:
         self.api_key = api_key
         self.secret_key = secret_key
         self.paper = paper
+        self.data_feed = data_feed
 
         # Trading client
         self.trading_client = TradingClient(
@@ -295,6 +297,93 @@ class AlpacaClient:
             logger.error(f"Error placing limit order: {e}")
             raise
 
+    def place_stop_order(
+        self,
+        symbol: str,
+        quantity: int,
+        side: str,
+        stop_price: float
+    ) -> Dict[str, Any]:
+        """
+        Place a stop order.
+
+        Args:
+            symbol: Stock symbol
+            quantity: Number of shares
+            side: "BUY" or "SELL"
+            stop_price: Stop price
+        """
+        try:
+            order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+
+            request = StopOrderRequest(
+                symbol=symbol,
+                qty=quantity,
+                side=order_side,
+                time_in_force=TimeInForce.DAY,
+                stop_price=stop_price
+            )
+
+            order = self.trading_client.submit_order(request)
+
+            logger.info(f"Stop order placed: {side} {quantity} {symbol} @ ${stop_price} - Order ID: {order.id}")
+
+            return {
+                "orderId": str(order.id),
+                "symbol": order.symbol,
+                "quantity": int(order.qty),
+                "side": order.side.value,
+                "orderType": "STOP",
+                "stopPrice": float(order.stop_price),
+                "status": order.status.value,
+                "filledQty": int(order.filled_qty or 0),
+            }
+        except Exception as e:
+            logger.error(f"Error placing stop order: {e}")
+            raise
+
+    def place_bracket_order(
+        self,
+        symbol: str,
+        quantity: int,
+        side: str,
+        take_profit: float,
+        stop_loss: float
+    ) -> Dict[str, Any]:
+        """
+        Place a bracket order (market entry + take profit + stop loss).
+        """
+        try:
+            order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+
+            request = MarketOrderRequest(
+                symbol=symbol,
+                qty=quantity,
+                side=order_side,
+                time_in_force=TimeInForce.DAY,
+                take_profit={"limit_price": take_profit},
+                stop_loss={"stop_price": stop_loss}
+            )
+
+            order = self.trading_client.submit_order(request)
+
+            logger.info(
+                f"Bracket order placed: {side} {quantity} {symbol} TP ${take_profit} SL ${stop_loss} - Order ID: {order.id}"
+            )
+
+            return {
+                "orderId": str(order.id),
+                "symbol": order.symbol,
+                "quantity": int(order.qty),
+                "side": order.side.value,
+                "orderType": "BRACKET",
+                "status": order.status.value,
+                "filledQty": int(order.filled_qty or 0),
+            }
+        except Exception as e:
+            logger.error(f"Error placing bracket order: {e}")
+            raise
+
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an order by ID."""
         try:
@@ -303,6 +392,26 @@ class AlpacaClient:
             return True
         except Exception as e:
             logger.error(f"Error cancelling order {order_id}: {e}")
+            return False
+
+    def cancel_all_orders(self) -> bool:
+        """Cancel all open orders."""
+        try:
+            self.trading_client.cancel_orders()
+            logger.info("All orders cancelled")
+            return True
+        except Exception as e:
+            logger.error(f"Error cancelling all orders: {e}")
+            return False
+
+    def close_position(self, symbol: str) -> bool:
+        """Close a position for a symbol."""
+        try:
+            self.trading_client.close_position(symbol)
+            logger.info(f"Position close submitted: {symbol}")
+            return True
+        except Exception as e:
+            logger.error(f"Error closing position {symbol}: {e}")
             return False
 
     def get_orders(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -359,7 +468,7 @@ class AlpacaClient:
             Quote with bid, ask, last price
         """
         try:
-            request = StockLatestQuoteRequest(symbol_or_symbols=symbol)
+            request = StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=self.data_feed)
             quotes = self.market_data_client.get_stock_latest_quote(request)
             quote = quotes[symbol]
 
@@ -409,7 +518,8 @@ class AlpacaClient:
                 symbol_or_symbols=symbol,
                 timeframe=tf,
                 limit=limit,
-                start=datetime.now() - timedelta(days=5)
+                start=datetime.now() - timedelta(days=5),
+                feed=self.data_feed
             )
 
             bars = self.market_data_client.get_stock_bars(request)

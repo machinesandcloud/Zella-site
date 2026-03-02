@@ -16,7 +16,7 @@ import TradeHistory from "./components/Dashboard/TradeHistory";
 import PerformanceMetrics from "./components/Dashboard/PerformanceMetrics";
 import AlpacaConnection from "./components/Settings/AlpacaConnection";
 import RiskSettings from "./components/Settings/RiskSettings";
-import { autoLogin, fetchAlpacaStatus, fetchIbkrDefaults, startHealthMonitoring, onConnectionChange } from "./services/api";
+import { autoLogin, fetchAlpacaStatus, startHealthMonitoring, onConnectionChange } from "./services/api";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import SystemHealth from "./components/Dashboard/SystemHealth";
 import BotLogs from "./components/AI/BotLogs";
@@ -39,19 +39,6 @@ const App = () => {
   const [tab, setTab] = useState(0);
   const [authRequired, setAuthRequired] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem("zella_token"));
-  const [ibkrDefaults, setIbkrDefaults] = useState<{
-    is_paper_trading: boolean;
-    use_mock_ibkr: boolean;
-    use_ibkr_webapi: boolean;
-    use_free_data: boolean;
-    use_alpaca?: boolean;
-  }>({
-    is_paper_trading: true,
-    use_mock_ibkr: true,
-    use_ibkr_webapi: false,
-    use_free_data: true,
-    use_alpaca: false
-  });
   const [alpacaStatus, setAlpacaStatus] = useState<{
     enabled: boolean;
     connected?: boolean;
@@ -178,20 +165,6 @@ const App = () => {
       .catch(() => undefined);
   }, [authRequired]);
 
-  // Fetch IBKR defaults after authenticated
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    fetchIbkrDefaults()
-      .then((data) => {
-        setIbkrDefaults(data);
-        setBackendConnected(true);
-      })
-      .catch((error) => {
-        console.warn("Backend not available, using defaults:", error.message);
-        setBackendConnected(false);
-      });
-  }, [isAuthenticated]);
-
   // Fetch Alpaca status after authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -267,8 +240,8 @@ const App = () => {
             </Stack>
             <Stack direction="row" spacing={1} alignItems="center">
               <Chip
-                label={ibkrDefaults.is_paper_trading ? "Paper" : "Live"}
-                color={ibkrDefaults.is_paper_trading ? "secondary" : "success"}
+                label={alpacaStatus?.mode === "LIVE" ? "Live" : "Paper"}
+                color={alpacaStatus?.mode === "LIVE" ? "success" : "secondary"}
                 size="small"
               />
               {alpacaStatus?.connected && (

@@ -14,7 +14,7 @@ class Order(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     trade_id: Mapped[Optional[int]] = mapped_column(ForeignKey("trades.id"))
-    ibkr_order_id: Mapped[Optional[int]] = mapped_column(Integer)
+    ibkr_order_id: Mapped[Optional[str]] = mapped_column(String(64))
     symbol: Mapped[str] = mapped_column(String(10), nullable=False)
     asset_type: Mapped[Optional[str]] = mapped_column(String(10), default="STK")
     exchange: Mapped[Optional[str]] = mapped_column(String(20))

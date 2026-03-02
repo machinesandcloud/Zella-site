@@ -1,7 +1,5 @@
 import logging
 from typing import Any, Dict, List, Optional
-
-from core.ibkr_client import IBKRClient
 from core.position_manager import PositionManager
 from core.risk_manager import RiskManager
 from core.signals import Signal
@@ -81,12 +79,12 @@ STRATEGY_REGISTRY = {
 class StrategyEngine:
     def __init__(
         self,
-        ibkr_client: IBKRClient,
+        broker_client: Any,
         risk_manager: RiskManager,
         position_manager: PositionManager,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.ibkr_client = ibkr_client
+        self.broker = broker_client
         self.risk_manager = risk_manager
         self.position_manager = position_manager
         self.active_strategies: Dict[str, BaseStrategy] = {}
@@ -138,24 +136,26 @@ class StrategyEngine:
     # Execution
     def execute_signal(self, signal: Signal) -> Optional[int]:
         self.logger.info("Executing signal: %s", signal)
+        if not self.broker:
+            raise ValueError("Broker client not configured")
         if signal.order_type == "MKT":
-            return self.ibkr_client.place_market_order(signal.symbol, signal.quantity, signal.action)
+            return self.broker.place_market_order(signal.symbol, signal.quantity, signal.action)
         if signal.order_type == "LMT":
             if signal.limit_price is None:
                 raise ValueError("limit_price required for limit order")
-            return self.ibkr_client.place_limit_order(
+            return self.broker.place_limit_order(
                 signal.symbol, signal.quantity, signal.action, signal.limit_price
             )
         if signal.order_type == "STP":
             if signal.stop_price is None:
                 raise ValueError("stop_price required for stop order")
-            return self.ibkr_client.place_stop_order(
+            return self.broker.place_stop_order(
                 signal.symbol, signal.quantity, signal.action, signal.stop_price
             )
         if signal.order_type == "BRACKET":
             if signal.take_profit is None or signal.stop_loss is None:
                 raise ValueError("take_profit and stop_loss required for bracket order")
-            self.ibkr_client.place_bracket_order(
+            self.broker.place_bracket_order(
                 signal.symbol,
                 signal.quantity,
                 signal.action,

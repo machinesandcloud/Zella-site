@@ -5,25 +5,24 @@ from sqlalchemy.orm import Session
 
 from api.routes.auth import get_current_user
 from core.db import get_db
-from core.ibkr_client import IBKRClient
+from core.alpaca_client import AlpacaClient
 from models import AccountSnapshot, Trade, User
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-def get_ibkr_client() -> IBKRClient:
+def get_alpaca_client() -> AlpacaClient | None:
     from main import app
-
-    return app.state.ibkr_client
+    return getattr(app.state, "alpaca_client", None)
 
 
 @router.get("/overview")
 def overview(
     db: Session = Depends(get_db),
-    ibkr: IBKRClient = Depends(get_ibkr_client),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    account_summary = ibkr.get_account_summary() if ibkr.is_connected() else {}
+    account_summary = alpaca.get_account_summary() if alpaca and alpaca.is_connected() else {}
     recent_trades = (
         db.query(Trade)
         .filter(Trade.user_id == current_user.id)

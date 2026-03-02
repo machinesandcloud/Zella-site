@@ -6,7 +6,7 @@ from core.auto_trader import AutoTrader
 from core.autonomous_engine import AutonomousEngine
 from api.routes.auth import get_current_user
 from core.risk_manager import RiskManager
-from core.ibkr_client import IBKRClient
+from core.alpaca_client import AlpacaClient
 from utils.market_hours import market_session
 from models import User
 
@@ -22,7 +22,7 @@ def get_market_data_provider():
     return getattr(app.state, "market_data_provider", None)
 
 
-def get_auto_trader() -> AutoTrader:
+def get_auto_trader() -> Optional[AutoTrader]:
     from main import app
 
     return app.state.auto_trader
@@ -34,10 +34,9 @@ def get_autonomous_engine() -> Optional[AutonomousEngine]:
     return getattr(app.state, "autonomous_engine", None)
 
 
-def get_ibkr_client() -> IBKRClient:
+def get_alpaca_client() -> AlpacaClient | None:
     from main import app
-
-    return app.state.ibkr_client
+    return getattr(app.state, "alpaca_client", None)
 
 
 def get_risk_manager() -> RiskManager:
@@ -54,18 +53,22 @@ def get_activity_log():
 
 @router.get("/scan")
 def scan_market(
-    auto_trader: AutoTrader = Depends(get_auto_trader),
+    auto_trader: Optional[AutoTrader] = Depends(get_auto_trader),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    if not auto_trader:
+        raise HTTPException(status_code=503, detail="Auto trader not initialized (check Alpaca configuration)")
     return {"ranked": auto_trader.scan_market()}
 
 
 @router.get("/top")
 def top_picks(
     limit: int = 5,
-    auto_trader: AutoTrader = Depends(get_auto_trader),
+    auto_trader: Optional[AutoTrader] = Depends(get_auto_trader),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    if not auto_trader:
+        raise HTTPException(status_code=503, detail="Auto trader not initialized (check Alpaca configuration)")
     return {"ranked": auto_trader.select_top(limit)}
 
 
@@ -74,12 +77,14 @@ def auto_trade(
     limit: int = 5,
     execute: bool = False,
     confirm_execute: bool = False,
-    auto_trader: AutoTrader = Depends(get_auto_trader),
-    ibkr: IBKRClient = Depends(get_ibkr_client),
+    auto_trader: Optional[AutoTrader] = Depends(get_auto_trader),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
     risk_manager: RiskManager = Depends(get_risk_manager),
     activity_log=Depends(get_activity_log),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    if not auto_trader:
+        raise HTTPException(status_code=503, detail="Auto trader not initialized (check Alpaca configuration)")
     picks = auto_trader.select_top(limit)
     executed = []
 
@@ -88,16 +93,16 @@ def auto_trade(
         activity_log.add("SCAN", "Auto-trade scan started", "INFO", {"limit": str(limit)})
         if not confirm_execute:
             raise HTTPException(status_code=400, detail="confirm_execute=true required")
-        if ibkr.get_trading_mode() != "PAPER":
+        if not alpaca or not alpaca.is_connected():
+            raise HTTPException(status_code=503, detail="Alpaca not connected")
+        if alpaca.get_trading_mode() != "PAPER":
             raise HTTPException(status_code=403, detail="Auto-trade only allowed in PAPER mode")
-        if not ibkr.is_connected():
-            raise HTTPException(status_code=503, detail="IBKR not connected")
         if not risk_manager.can_trade():
             raise HTTPException(status_code=403, detail="Trading halted by risk controls")
         if not market_session().get("regular"):
             raise HTTPException(status_code=403, detail="Auto-trade only during regular market hours")
 
-        account_summary = ibkr.get_account_summary()
+        account_summary = alpaca.get_account_summary()
         account_value = float(account_summary.get("NetLiquidation", 0) or 0)
         buying_power = float(account_summary.get("BuyingPower", 0) or 0)
 
@@ -116,7 +121,7 @@ def auto_trade(
                 continue
             if not risk_manager.check_buying_power(quantity * last_price, buying_power):
                 continue
-            order_id = ibkr.place_market_order(symbol, quantity, "BUY")
+            order_id = alpaca.place_market_order(symbol, quantity, "BUY")
             executed.append({"symbol": symbol, "quantity": quantity, "order_id": order_id})
             risk_manager.trades_today += 1
             activity_log.add(

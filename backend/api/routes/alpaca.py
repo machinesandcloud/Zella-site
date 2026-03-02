@@ -40,7 +40,8 @@ def ensure_alpaca_client() -> Optional[AlpacaClient]:
         client = AlpacaClient(
             api_key=settings.alpaca_api_key,
             secret_key=settings.alpaca_secret_key,
-            paper=settings.alpaca_paper
+            paper=settings.alpaca_paper,
+            data_feed=settings.alpaca_data_feed,
         )
         # Try a light connect; if it fails, still store client for retry later.
         if client.connect():
@@ -87,7 +88,8 @@ def connect_alpaca(
             new_client = AlpacaClient(
                 api_key=body.api_key,
                 secret_key=body.secret_key,
-                paper=body.paper if body.paper is not None else True
+                paper=body.paper if body.paper is not None else True,
+                data_feed=settings.alpaca_data_feed,
             )
 
             # Test connection
@@ -185,6 +187,7 @@ def status(
         "connected": connected,
         "mode": alpaca.get_trading_mode(),
         "paper_trading": alpaca.paper,
+        "data_feed": settings.alpaca_data_feed,
         "render_commit": os.getenv("RENDER_GIT_COMMIT", ""),
         "render_service": os.getenv("RENDER_SERVICE_ID", "")
     }

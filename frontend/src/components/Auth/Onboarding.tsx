@@ -2,7 +2,7 @@ import { Card, CardContent, List, ListItem, ListItemText, Typography } from "@mu
 
 const steps = [
   "Welcome tour",
-  "Connect IBKR paper trading",
+  "Connect Alpaca paper trading",
   "Configure risk settings",
   "Select strategies",
   "Complete paper trading tutorial",

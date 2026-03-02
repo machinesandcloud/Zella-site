@@ -47,7 +47,8 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         api_key: str,
         secret_key: str,
         universe: Optional[List[str]] = None,
-        cache_ttl: float = 1.5  # Fast refresh cycle (1.5s) - speed is everything
+        cache_ttl: float = 1.5,  # Fast refresh cycle (1.5s) - speed is everything
+        data_feed: str = "iex",
     ) -> None:
         """
         Initialize high-performance Alpaca market data provider.
@@ -61,6 +62,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         self.api_key = api_key
         self.secret_key = secret_key
         self.cache_ttl = cache_ttl
+        self.data_feed = data_feed
 
         # Use provided universe or default
         self._default_universe = universe if universe else get_default_universe()
@@ -80,6 +82,10 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         self._quote_cache: Dict[str, Dict[str, Any]] = {}
         self._cache_timestamp: float = 0
         self._cache_lock = threading.Lock()
+
+        # Last error tracking (for UI diagnostics)
+        self.last_error: Optional[str] = None
+        self.last_error_at: Optional[float] = None
 
         # Historical bars cache with short TTL for freshness
         self._bars_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
@@ -115,7 +121,8 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         try:
             self._stream_client = StockDataStream(
                 api_key=self.api_key,
-                secret_key=self.secret_key
+                secret_key=self.secret_key,
+                feed=self.data_feed
             )
 
             # Subscribe to trades for all universe symbols (instant price updates)
@@ -219,7 +226,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         """Fetch a single batch of snapshots - used for parallel execution"""
         quotes = {}
         try:
-            request = StockSnapshotRequest(symbol_or_symbols=batch)
+            request = StockSnapshotRequest(symbol_or_symbols=batch, feed=self.data_feed)
             snapshots = self.data_client.get_stock_snapshot(request)
 
             for symbol in batch:
@@ -404,7 +411,8 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                 symbol_or_symbols=symbol,
                 timeframe=timeframe,
                 start=start_date,
-                end=end_date
+                end=end_date,
+                feed=self.data_feed
             )
 
             bars_response = self.data_client.get_stock_bars(request)
@@ -434,6 +442,8 @@ class AlpacaMarketDataProvider(MarketDataProvider):
 
         except Exception as e:
             self._handle_rate_limit_error(e)
+            self.last_error = str(e)
+            self.last_error_at = time.time()
             logger.debug(f"Error fetching bars for {symbol}: {e}")
             return []
 
@@ -466,7 +476,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
 
         # Fallback to API call only if not in cache
         try:
-            request = StockLatestQuoteRequest(symbol_or_symbols=symbol)
+            request = StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=self.data_feed)
             quote = self.data_client.get_stock_latest_quote(request)
 
             if symbol not in quote:
