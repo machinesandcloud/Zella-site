@@ -1541,7 +1541,11 @@ class AutonomousEngine:
                     fail_reasons.append("insufficient data")
                 if filters.get("volume", {}).get("passed") == False:
                     actual = data.get("avg_volume", 0)
-                    required = filters.get("volume", {}).get("required", 0)
+                    required = (
+                        filters.get("volume", {}).get("threshold")
+                        if filters.get("volume", {}).get("threshold") is not None
+                        else filters.get("volume", {}).get("required", 0)
+                    )
                     fail_reasons.append(f"volume {actual:,.0f} < {required:,.0f}")
                 if filters.get("price", {}).get("passed") == False:
                     price = data.get("price", 0)
