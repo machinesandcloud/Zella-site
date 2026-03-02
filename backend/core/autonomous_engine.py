@@ -57,6 +57,7 @@ from core.strategy_engine import StrategyEngine
 from core.risk_manager import RiskManager
 from core.position_manager import PositionManager
 from market.market_data_provider import MarketDataProvider
+from market.short_interest_provider import ShortInterestProvider
 from ai.screener import MarketScreener
 from ai.ml_model import MLSignalModel
 from config.settings import settings
@@ -190,6 +191,7 @@ class AutonomousEngine:
         self.symbols_scanned: int = 0  # Count of symbols scanned
         self.all_evaluations: List[Dict[str, Any]] = []  # ALL stocks with pass/fail details
         self.filter_summary: Dict[str, int] = {}  # Summary of filter pass/fail counts
+        self.watchlist_candidates: List[Dict[str, Any]] = []  # Broad watchlist results
 
         # Day trading safeguards
         self.eod_liquidation_done_today: bool = False  # Track if EOD liquidation ran today
@@ -221,6 +223,14 @@ class AutonomousEngine:
         # Track SPY data for relative strength
         self._spy_data_cache: Optional[pd.DataFrame] = None
         self._spy_cache_time: Optional[datetime] = None
+        self._daily_data_cache: Dict[str, pd.DataFrame] = {}
+        self._daily_data_cache_time: Optional[datetime] = None
+        self._daily_data_cache_ttl_seconds = 15 * 60
+        self._short_interest_cache_time: Optional[datetime] = None
+        self._short_interest_cache_ttl_seconds = 12 * 60 * 60
+        self._short_interest_provider = ShortInterestProvider(
+            settings.polygon_api_key, base_url=settings.polygon_base_url
+        )
 
         # ML Model for screening
         self.ml_model = MLSignalModel()
@@ -232,6 +242,9 @@ class AutonomousEngine:
             max_price=settings.screener_max_price,
             min_volatility=settings.screener_min_volatility,
             min_relative_volume=settings.screener_min_relative_volume,
+            min_premarket_volume=settings.screener_min_premarket_volume,
+            require_premarket_volume=settings.screener_require_premarket_volume,
+            require_daily_trend=settings.screener_require_daily_trend,
         )
 
         # Initialize all available strategies
@@ -1486,6 +1499,62 @@ class AutonomousEngine:
             self.symbols_scanned = len(market_data)
             self.last_market_symbols = list(market_data.keys())
 
+            # Fetch daily bars for trend checks (cached to avoid rate limits)
+            daily_data: Dict[str, pd.DataFrame] = {}
+            try:
+                now = datetime.now()
+                refresh_daily = (
+                    self._daily_data_cache_time is None
+                    or (now - self._daily_data_cache_time).total_seconds() > self._daily_data_cache_ttl_seconds
+                )
+                daily_targets = list(market_data.keys()) if refresh_daily else [
+                    sym for sym in market_data.keys() if sym not in self._daily_data_cache
+                ]
+
+                if daily_targets:
+                    def fetch_daily_data(symbol: str) -> Optional[pd.DataFrame]:
+                        try:
+                            bars = self.market_data.get_historical_bars(symbol, "3 M", "1 day")
+                            if bars and len(bars) > 0:
+                                return pd.DataFrame(bars)
+                            return None
+                        except Exception:
+                            return None
+
+                    with LATENCY.timed("parallel_daily_fetch"):
+                        daily_results = self.perf_engine.parallel_processor.process_symbols_sync(
+                            daily_targets, fetch_daily_data
+                        )
+
+                    for symbol, df in daily_results.items():
+                        if df is not None:
+                            self._daily_data_cache[symbol] = df
+
+                    if refresh_daily:
+                        self._daily_data_cache_time = now
+
+                if self._daily_data_cache and self._daily_data_cache_time is None:
+                    self._daily_data_cache_time = now
+
+                daily_data = {
+                    sym: df for sym, df in self._daily_data_cache.items() if sym in market_data
+                }
+
+                self._add_decision(
+                    "THINKING",
+                    f"📅 Daily data cached: {len(daily_data)}/{len(market_data)} symbols",
+                    "INFO",
+                    {"symbols_with_daily": len(daily_data), "total_symbols": len(market_data)},
+                )
+            except Exception as e:
+                logger.debug(f"Daily data fetch skipped: {e}")
+
+            # Refresh short interest data (cached)
+            try:
+                await self._update_short_interest(list(market_data.keys()))
+            except Exception as e:
+                logger.debug(f"Short interest refresh skipped: {e}")
+
             # Fetch news catalysts for scanned symbols (async would be better)
             try:
                 await self._update_news_catalysts(list(market_data.keys())[:50])  # Top 50 symbols
@@ -1494,7 +1563,9 @@ class AutonomousEngine:
 
             # Use enhanced ML screener with DETAILED evaluation
             try:
-                passed_list, all_evaluations = self.screener.rank_with_details(market_data, current_hour, current_minute)
+                passed_list, all_evaluations = self.screener.rank_with_details(
+                    market_data, current_hour, current_minute, daily_data=daily_data
+                )
             except Exception as e:
                 logger.error(f"Screener error: {e}")
                 self.last_scanner_results = []
@@ -1522,10 +1593,41 @@ class AutonomousEngine:
                 "passed": len(passed_list),
                 "failed_data": sum(1 for e in all_evaluations if e.get("filters", {}).get("data_check", {}).get("passed") == False),
                 "failed_volume": sum(1 for e in all_evaluations if e.get("filters", {}).get("volume", {}).get("passed") == False),
+                "failed_premarket": sum(1 for e in all_evaluations if e.get("filters", {}).get("premarket_volume", {}).get("passed") == False),
                 "failed_price": sum(1 for e in all_evaluations if e.get("filters", {}).get("price", {}).get("passed") == False),
                 "failed_volatility": sum(1 for e in all_evaluations if e.get("filters", {}).get("volatility", {}).get("passed") == False),
+                "failed_daily_trend": sum(1 for e in all_evaluations if e.get("filters", {}).get("daily_trend", {}).get("passed") == False),
                 "failed_rvol": sum(1 for e in all_evaluations if e.get("filters", {}).get("relative_volume", {}).get("passed") == False),
             }
+
+            def is_watchlist_candidate(evaluation: Dict[str, Any]) -> bool:
+                filters = evaluation.get("filters", {})
+                premarket_filter = filters.get("premarket_volume", {})
+                premarket_ok = premarket_filter.get("passed") or premarket_filter.get("skipped", False)
+                return (
+                    filters.get("data_check", {}).get("passed") is True
+                    and filters.get("volume", {}).get("passed") is True
+                    and premarket_ok is True
+                    and filters.get("price", {}).get("passed") is True
+                    and filters.get("volatility", {}).get("passed") is True
+                )
+
+            watchlist_evals = [e for e in all_evaluations if is_watchlist_candidate(e)]
+            self.watchlist_candidates = [
+                {
+                    "symbol": e.get("symbol"),
+                    "price": e.get("data", {}).get("price", 0),
+                    "gap_percent": e.get("data", {}).get("gap_percent", 0),
+                    "relative_volume": e.get("data", {}).get("relative_volume", 0),
+                    "premarket_volume": e.get("data", {}).get("premarket_volume", 0),
+                    "news_catalyst": e.get("data", {}).get("news_catalyst"),
+                    "short_interest_pct": e.get("data", {}).get("short_interest_pct", 0),
+                    "short_interest_days_to_cover": e.get("data", {}).get("short_interest_days_to_cover", 0),
+                    "daily_trend": e.get("data", {}).get("daily_trend"),
+                }
+                for e in watchlist_evals
+            ]
+            self.filter_summary["watchlist"] = len(self.watchlist_candidates)
 
             # Log scan results
             pattern_count = sum(1 for e in passed_list if e.get("data", {}).get("pattern"))
@@ -1554,12 +1656,18 @@ class AutonomousEngine:
                         else filters.get("volume", {}).get("required", 0)
                     )
                     fail_reasons.append(f"volume {actual:,.0f} < {required:,.0f}")
+                if filters.get("premarket_volume", {}).get("passed") == False:
+                    actual = data.get("premarket_volume", 0)
+                    required = filters.get("premarket_volume", {}).get("threshold", 0)
+                    fail_reasons.append(f"premarket {actual:,.0f} < {required:,.0f}")
                 if filters.get("price", {}).get("passed") == False:
                     price = data.get("price", 0)
                     fail_reasons.append(f"price ${price:.2f} outside range")
                 if filters.get("volatility", {}).get("passed") == False:
                     atr_pct = data.get("atr_percent", 0)
                     fail_reasons.append(f"volatility {atr_pct:.1f}% too low")
+                if filters.get("daily_trend", {}).get("passed") == False:
+                    fail_reasons.append("daily trend below SMA")
                 if filters.get("relative_volume", {}).get("passed") == False:
                     rvol = data.get("relative_volume", 0)
                     fail_reasons.append(f"rel.vol {rvol:.1f}x too low")
@@ -1647,6 +1755,10 @@ class AutonomousEngine:
                     "pattern_score": e.get("scores", {}).get("pattern_score", 0),
                     "news_catalyst": e.get("data", {}).get("news_catalyst"),
                     "news_score": e.get("scores", {}).get("news_score", 0),
+                    "short_interest_pct": e.get("data", {}).get("short_interest_pct", 0),
+                    "short_interest_score": e.get("scores", {}).get("short_interest_score", 0),
+                    "short_interest_days_to_cover": e.get("data", {}).get("short_interest_days_to_cover", 0),
+                    "gap_percent": e.get("data", {}).get("gap_percent", 0),
                     "time_multiplier": e.get("scores", {}).get("time_multiplier", 1.0),
                 }
                 for e in passed_list[:20]
@@ -1654,10 +1766,11 @@ class AutonomousEngine:
 
             self._add_decision(
                 "SCAN",
-                f"Scanned {len(market_data)} symbols, found {len(passed_list)} opportunities",
+                f"Scanned {len(market_data)} symbols, watchlist {len(self.watchlist_candidates)}, found {len(passed_list)} opportunities",
                 "INFO",
                 {
                     "count": len(passed_list),
+                    "watchlist_count": len(self.watchlist_candidates),
                     "total_evaluated": len(all_evaluations),
                     "patterns_detected": pattern_count,
                     "news_catalysts": news_count,
@@ -1687,6 +1800,10 @@ class AutonomousEngine:
                     "pattern_score": e.get("scores", {}).get("pattern_score", 0),
                     "news_catalyst": e.get("data", {}).get("news_catalyst"),
                     "news_score": e.get("scores", {}).get("news_score", 0),
+                    "short_interest_pct": e.get("data", {}).get("short_interest_pct", 0),
+                    "short_interest_score": e.get("scores", {}).get("short_interest_score", 0),
+                    "short_interest_days_to_cover": e.get("data", {}).get("short_interest_days_to_cover", 0),
+                    "gap_percent": e.get("data", {}).get("gap_percent", 0),
                     "time_multiplier": e.get("scores", {}).get("time_multiplier", 1.0),
                 })
 
@@ -1695,6 +1812,45 @@ class AutonomousEngine:
         except Exception as e:
             logger.error(f"Error scanning market: {e}")
             return []
+
+    async def _update_short_interest(self, symbols: List[str]) -> None:
+        """Fetch and update short interest data for symbols."""
+        if not settings.polygon_api_key:
+            return
+
+        try:
+            now = datetime.now()
+            if (
+                self._short_interest_cache_time is not None
+                and (now - self._short_interest_cache_time).total_seconds() < self._short_interest_cache_ttl_seconds
+            ):
+                return
+
+            unique_symbols = list(dict.fromkeys([s.upper() for s in symbols if s]))[:200]
+            if not unique_symbols:
+                return
+
+            data = await self._short_interest_provider.fetch_short_interest(unique_symbols)
+            if data:
+                self.screener.set_short_interest_data(data)
+
+                try:
+                    data_file = Path("data/short_interest.json")
+                    data_file.parent.mkdir(parents=True, exist_ok=True)
+                    with open(data_file, "w") as f:
+                        json.dump(self.screener.short_interest, f, indent=2)
+                except Exception as e:
+                    logger.debug(f"Failed to persist short interest cache: {e}")
+
+            self._short_interest_cache_time = now
+            self._add_decision(
+                "THINKING",
+                f"🩳 Short interest updated: {len(data) if data else 0} symbols",
+                "INFO",
+                {"symbols_with_short_interest": len(data) if data else 0},
+            )
+        except Exception as e:
+            logger.debug(f"Short interest update skipped: {e}")
 
     async def _update_news_catalysts(self, symbols: List[str]) -> None:
         """Fetch and update news catalysts for symbols"""
@@ -2724,16 +2880,19 @@ class AutonomousEngine:
                 "multiplier": time_mult,
             },
             "scoring_weights": {
-                "ml_score": 0.30,
-                "momentum_score": 0.20,
-                "float_score": 0.15,
-                "pattern_score": 0.15,
-                "news_score": 0.10,
-                "atr_score": 0.10,
+                "ml_score": 0.23,
+                "momentum_score": 0.14,
+                "gap_score": 0.14,
+                "float_score": 0.09,
+                "pattern_score": 0.14,
+                "news_score": 0.09,
+                "atr_score": 0.12,
+                "short_interest_score": 0.05,
             },
             # NEW: Detailed evaluation data for every stock
             "all_evaluations": self.all_evaluations[:50],  # First 50 for performance
             "filter_summary": self.filter_summary,
+            "watchlist_candidates": self.watchlist_candidates[:100],
             # Active strategies list
             "active_strategies": list(self.all_strategies.keys()),
             # HIGH-PERFORMANCE: Latency metrics

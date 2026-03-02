@@ -9,7 +9,7 @@ Implements the key stock selection criteria from Warrior Trading:
 5. ATR-based volatility analysis
 """
 
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 import logging
 
@@ -17,7 +17,8 @@ import pandas as pd
 
 from ai.feature_engineering import latest_feature_vector
 from ai.ml_model import MLSignalModel
-from utils.indicators import atr, power_hour_multiplier, is_bull_flag, is_flat_top_breakout
+from utils.indicators import atr, power_hour_multiplier, is_bull_flag, is_flat_top_breakout, sma
+from utils.market_hours import market_session
 
 logger = logging.getLogger("market_screener")
 
@@ -72,10 +73,13 @@ class MarketScreener:
         max_price: float = 500.0,  # Focus on tradeable range
         min_volatility: float = 0.002,  # Lower volatility threshold
         min_relative_volume: float = 1.0,  # Allow stocks at normal volume
+        min_premarket_volume: float = 50000,  # Require some premarket liquidity for gappers
         max_float_millions: float = 100.0,  # Warrior Trading: float < 100M
         enable_float_filter: bool = True,
         enable_pattern_detection: bool = True,
         enable_power_hour_boost: bool = True,
+        require_premarket_volume: bool = True,
+        require_daily_trend: bool = True,
     ) -> None:
         self.model = model
         self.min_avg_volume = min_avg_volume
@@ -83,17 +87,108 @@ class MarketScreener:
         self.max_price = max_price
         self.min_volatility = min_volatility
         self.min_relative_volume = min_relative_volume
+        self.min_premarket_volume = min_premarket_volume
         self.max_float_millions = max_float_millions
         self.enable_float_filter = enable_float_filter
         self.enable_pattern_detection = enable_pattern_detection
         self.enable_power_hour_boost = enable_power_hour_boost
+        self.require_premarket_volume = require_premarket_volume
+        self.require_daily_trend = require_daily_trend
 
         # News catalyst cache (populated externally)
         self.news_catalysts: Dict[str, Dict] = {}
+        self.short_interest: Dict[str, Dict[str, float]] = {}
+        self._load_short_interest()
 
     def set_news_catalysts(self, catalysts: Dict[str, Dict]) -> None:
         """Update news catalyst data for symbols"""
         self.news_catalysts = catalysts
+
+    def _load_short_interest(self) -> None:
+        """Load short interest data from data/short_interest.json if present."""
+        try:
+            from pathlib import Path
+            import json
+
+            data_file = Path("data/short_interest.json")
+            if data_file.exists():
+                with open(data_file, "r") as f:
+                    payload = json.load(f)
+                    if isinstance(payload, dict):
+                        normalized: Dict[str, Dict[str, float]] = {}
+                        for key, value in payload.items():
+                            if value is None:
+                                continue
+                            symbol = str(key).upper()
+                            if isinstance(value, dict):
+                                normalized[symbol] = {
+                                    "short_interest_pct": float(value.get("short_interest_pct", 0.0) or 0.0),
+                                    "short_interest": float(value.get("short_interest", 0.0) or 0.0),
+                                    "days_to_cover": float(value.get("days_to_cover", 0.0) or 0.0),
+                                }
+                            else:
+                                normalized[symbol] = {"short_interest_pct": float(value)}
+                        self.short_interest = normalized
+        except Exception as e:
+            logger.debug(f"Failed to load short interest data: {e}")
+
+    def set_short_interest_data(self, data: Dict[str, Dict[str, float]]) -> None:
+        """Update short interest data from provider."""
+        for symbol, entry in data.items():
+            if not symbol:
+                continue
+            short_interest_shares = float(entry.get("short_interest", 0.0) or 0.0)
+            short_interest_pct = float(entry.get("short_interest_pct", 0.0) or 0.0)
+            if short_interest_pct <= 0 and short_interest_shares:
+                float_millions = self.get_float(symbol.upper())
+                if float_millions:
+                    short_interest_pct = (short_interest_shares / (float_millions * 1_000_000)) * 100
+            self.short_interest[symbol.upper()] = {
+                "short_interest_pct": short_interest_pct,
+                "short_interest": short_interest_shares,
+                "days_to_cover": float(entry.get("days_to_cover", 0.0) or 0.0),
+            }
+
+    def _short_interest_score(self, symbol: str) -> tuple[float, float, float]:
+        """Return (short_interest_pct, score 0-1, days_to_cover)."""
+        entry = self.short_interest.get(symbol, {})
+        pct = float(entry.get("short_interest_pct", 0.0) or 0.0)
+        days_to_cover = float(entry.get("days_to_cover", 0.0) or 0.0)
+
+        if pct <= 0 and entry.get("short_interest"):
+            float_millions = self.get_float(symbol)
+            if float_millions:
+                pct = (float(entry.get("short_interest")) / (float_millions * 1_000_000)) * 100
+
+        score = 0.0
+        if pct > 0:
+            # Score starts at 10% SI and maxes near 40%
+            score = min(max((pct - 10.0) / 30.0, 0.0), 1.0)
+        elif days_to_cover > 0:
+            # Use days-to-cover as a fallback signal (1-6 days -> 0-1 scale)
+            score = min(max((days_to_cover - 1.0) / 5.0, 0.0), 1.0)
+
+        return pct, score, days_to_cover
+
+    def _daily_trend_metrics(self, daily_df: Optional[pd.DataFrame]) -> Dict[str, Any]:
+        """Compute daily trend metrics using SMA20/50."""
+        if daily_df is None:
+            return {"available": False}
+        df_clean = daily_df.dropna(subset=["open", "high", "low", "close", "volume"])
+        if len(df_clean) < 50:
+            return {"available": False}
+        close = df_clean["close"]
+        sma20 = sma(close, 20).iloc[-1]
+        sma50 = sma(close, 50).iloc[-1]
+        last_close = float(close.iloc[-1])
+        trend_ok = last_close >= sma20 and sma20 >= sma50
+        return {
+            "available": True,
+            "last_close": last_close,
+            "sma20": float(sma20),
+            "sma50": float(sma50),
+            "trend_ok": trend_ok,
+        }
 
     def calculate_gap(self, df: pd.DataFrame) -> Dict[str, float]:
         """
@@ -170,10 +265,13 @@ class MarketScreener:
         today_cum_volume = 0.0
         avg_cum_volume = 0.0
         rvol_tod = 0.0
+        premarket_volume = 0.0
 
         if "date" in df and "volume" in df and len(df) > 0:
             try:
-                date_key = df["date"].astype(str).str.slice(0, 10)
+                ts = pd.to_datetime(df["date"], utc=True, errors="coerce")
+                ts_et = ts.dt.tz_convert("America/New_York")
+                date_key = ts_et.dt.date
                 daily_groups = df.groupby(date_key)
                 daily_volumes = daily_groups["volume"].sum()
                 if len(daily_volumes) > 0:
@@ -185,6 +283,12 @@ class MarketScreener:
                     today_df = daily_groups.get_group(last_date)
                     bar_index = max(len(today_df) - 1, 0)
                     today_cum_volume = float(today_df["volume"].iloc[: bar_index + 1].sum())
+
+                    # Premarket volume (ET)
+                    ts_today = ts_et[date_key == last_date]
+                    if len(ts_today) == len(today_df):
+                        premarket_mask = ts_today.dt.time < datetime.strptime("09:30", "%H:%M").time()
+                        premarket_volume = float(today_df.loc[premarket_mask, "volume"].sum())
 
                     prev_dates = [d for d in daily_volumes.index[:-1]]
                     if prev_dates:
@@ -215,6 +319,7 @@ class MarketScreener:
             "today_cum_volume": today_cum_volume,
             "avg_cum_volume": avg_cum_volume,
             "rvol_tod": rvol_tod,
+            "premarket_volume": premarket_volume,
         }
 
     def evaluate_symbol_detailed(
@@ -223,7 +328,8 @@ class MarketScreener:
         df: pd.DataFrame,
         current_hour: Optional[int] = None,
         current_minute: Optional[int] = None,
-    ) -> Dict[str, any]:
+        daily_df: Optional[pd.DataFrame] = None,
+    ) -> Dict[str, Any]:
         """
         Evaluate a symbol and return DETAILED results including pass/fail for each filter.
         This is used for UI display to show why each stock was included or excluded.
@@ -237,6 +343,7 @@ class MarketScreener:
         }
 
         df_clean = df.dropna(subset=["open", "high", "low", "close", "volume"])
+        has_timestamp = "date" in df_clean.columns
 
         # Check minimum data
         if len(df_clean) < 20:
@@ -252,9 +359,15 @@ class MarketScreener:
         avg_volume = volumes["avg_daily_volume"]
         last_volume = volumes["last_volume"]
         relative_volume = volumes["rvol_tod"]
+        premarket_volume = volumes["premarket_volume"]
 
         # Calculate gap - KEY day trading indicator
         gap_info = self.calculate_gap(df_clean)
+
+        # ATR metrics (for logging + scoring)
+        atr_series = atr(df_clean, 14)
+        current_atr = float(atr_series.iloc[-1]) if len(atr_series) > 0 else 0.0
+        atr_percent = (current_atr / last_price) * 100 if last_price > 0 else 0.0
 
         # Store basic data
         result["data"]["price"] = round(last_price, 2)
@@ -265,10 +378,13 @@ class MarketScreener:
         result["data"]["rvol_tod"] = round(relative_volume, 2)
         result["data"]["today_volume"] = int(volumes["today_cum_volume"])
         result["data"]["avg_cum_volume"] = int(volumes["avg_cum_volume"])
+        result["data"]["premarket_volume"] = int(premarket_volume)
         result["data"]["volatility"] = round(features.get("volatility", 0), 4)
         result["data"]["gap_percent"] = gap_info["gap_percent"]
         result["data"]["gap_direction"] = gap_info["gap_direction"]
         result["data"]["is_gapper"] = gap_info["is_gapper"]
+        result["data"]["atr"] = round(current_atr, 2)
+        result["data"]["atr_percent"] = round(atr_percent, 2)
 
         # Volume Filter
         vol_passed = avg_volume >= self.min_avg_volume
@@ -281,6 +397,23 @@ class MarketScreener:
         if not vol_passed:
             result["rejection_reason"] = f"Low volume ({int(avg_volume):,} < {int(self.min_avg_volume):,})"
             return result
+
+        # Premarket Volume Filter (for gappers or during premarket)
+        session = market_session()
+        premarket_required = has_timestamp and (session.get("premarket", False) or gap_info.get("is_gapper", False))
+        if self.require_premarket_volume and premarket_required:
+            premarket_passed = premarket_volume >= self.min_premarket_volume
+            result["filters"]["premarket_volume"] = {
+                "passed": premarket_passed,
+                "value": int(premarket_volume),
+                "threshold": int(self.min_premarket_volume),
+                "reason": f"Premarket {int(premarket_volume):,} {'≥' if premarket_passed else '<'} {int(self.min_premarket_volume):,}",
+            }
+            if not premarket_passed:
+                result["rejection_reason"] = f"Low premarket volume ({int(premarket_volume):,} < {int(self.min_premarket_volume):,})"
+                return result
+        else:
+            result["filters"]["premarket_volume"] = {"passed": True, "skipped": True}
 
         # Price Filter
         price_passed = self.min_price <= last_price <= self.max_price
@@ -305,6 +438,29 @@ class MarketScreener:
         if not vol_check_passed:
             result["rejection_reason"] = f"Low volatility ({features['volatility']:.4f} < {self.min_volatility})"
             return result
+
+        # Daily Trend Filter (SMA20/50 on daily bars)
+        daily_metrics = self._daily_trend_metrics(daily_df)
+        if self.require_daily_trend and daily_metrics.get("available"):
+            trend_passed = daily_metrics.get("trend_ok", False)
+            bypass = False
+            if not trend_passed and (gap_info.get("is_significant_gap") or symbol in self.news_catalysts):
+                trend_passed = True
+                bypass = True
+            result["filters"]["daily_trend"] = {
+                "passed": trend_passed,
+                "bypass": bypass,
+                "last_close": round(daily_metrics.get("last_close", 0), 2),
+                "sma20": round(daily_metrics.get("sma20", 0), 2),
+                "sma50": round(daily_metrics.get("sma50", 0), 2),
+                "reason": "Trend OK" if trend_passed else "Below SMA trend",
+            }
+            result["data"]["daily_trend"] = result["filters"]["daily_trend"]
+            if not trend_passed:
+                result["rejection_reason"] = "Weak daily trend"
+                return result
+        else:
+            result["filters"]["daily_trend"] = {"passed": True, "skipped": True}
 
         # Relative Volume Filter (gappers get a pass - they're hot plays even with normal volume)
         rvol_passed = relative_volume >= self.min_relative_volume
@@ -338,9 +494,6 @@ class MarketScreener:
         ml_score = self.model.predict(features)
         momentum_score = float((df_clean["close"].iloc[-1] - df_clean["close"].iloc[-5]) / df_clean["close"].iloc[-5])
 
-        atr_series = atr(df_clean, 14)
-        current_atr = atr_series.iloc[-1] if len(atr_series) > 0 else 0
-        atr_percent = (current_atr / last_price) * 100 if last_price > 0 else 0
         atr_score = min(atr_percent / 5.0, 0.2)
 
         pattern_score = 0.0
@@ -372,6 +525,8 @@ class MarketScreener:
                 news_score = 0.1
             news_catalyst = catalyst_type
 
+        short_interest_pct, short_interest_score, short_interest_days = self._short_interest_score(symbol)
+
         if current_hour is None:
             current_hour = datetime.now().hour
         if current_minute is None:
@@ -392,24 +547,25 @@ class MarketScreener:
             gap_score = 0.05  # Small gap
 
         # Adjusted scoring with gap as a factor
-        # ML: 25%, Momentum: 15%, Gap: 15%, Float: 10%, Pattern: 15%, News: 10%, ATR: 10%
+        # ML: 23%, Momentum: 14%, Gap: 14%, Float: 9%, Pattern: 14%, News: 9%, ATR: 12%, Short Interest: 5%
         base_score = (
-            (ml_score * 0.25) +
-            (momentum_score * 0.15) +
-            (gap_score * 0.15) +
-            (float_score * 0.10) +
-            (pattern_score * 0.15) +
-            (news_score * 0.10) +
-            (atr_score * 0.10)
+            (ml_score * 0.23) +
+            (momentum_score * 0.14) +
+            (gap_score * 0.14) +
+            (float_score * 0.09) +
+            (pattern_score * 0.14) +
+            (news_score * 0.09) +
+            (atr_score * 0.12) +
+            (short_interest_score * 0.05)
         )
         combined_score = base_score * time_multiplier
 
         # Store all scores
         result["data"]["float_millions"] = float_millions
-        result["data"]["atr"] = round(current_atr, 2)
-        result["data"]["atr_percent"] = round(atr_percent, 2)
         result["data"]["pattern"] = detected_pattern
         result["data"]["news_catalyst"] = news_catalyst
+        result["data"]["short_interest_pct"] = round(short_interest_pct, 2)
+        result["data"]["short_interest_days_to_cover"] = round(short_interest_days, 2)
 
         result["scores"] = {
             "ml_score": round(ml_score, 3),
@@ -419,6 +575,7 @@ class MarketScreener:
             "pattern_score": round(pattern_score, 3),
             "news_score": round(news_score, 3),
             "atr_score": round(atr_score, 3),
+            "short_interest_score": round(short_interest_score, 3),
             "time_multiplier": round(time_multiplier, 2),
             "combined_score": round(combined_score, 3),
         }
@@ -430,6 +587,7 @@ class MarketScreener:
         market_data: Dict[str, pd.DataFrame],
         current_hour: Optional[int] = None,
         current_minute: Optional[int] = None,
+        daily_data: Optional[Dict[str, pd.DataFrame]] = None,
     ) -> tuple:
         """
         Rank all symbols and return both passed and failed evaluations.
@@ -439,7 +597,10 @@ class MarketScreener:
         passed = []
 
         for symbol, df in market_data.items():
-            evaluation = self.evaluate_symbol_detailed(symbol, df, current_hour, current_minute)
+            daily_df = daily_data.get(symbol) if daily_data else None
+            evaluation = self.evaluate_symbol_detailed(
+                symbol, df, current_hour, current_minute, daily_df=daily_df
+            )
             all_evaluations.append(evaluation)
             if evaluation["passed"]:
                 passed.append(evaluation)
@@ -455,6 +616,7 @@ class MarketScreener:
         df: pd.DataFrame,
         current_hour: Optional[int] = None,
         current_minute: Optional[int] = None,
+        daily_df: Optional[pd.DataFrame] = None,
     ) -> Optional[Dict[str, Union[float, str]]]:
         """
         Score a symbol based on Warrior Trading criteria
@@ -470,6 +632,7 @@ class MarketScreener:
         df_clean = df.dropna(subset=["open", "high", "low", "close", "volume"])
         if len(df_clean) < 20:
             return None
+        has_timestamp = "date" in df_clean.columns
 
         features = latest_feature_vector(df_clean)
         last_price = float(df_clean["close"].iloc[-1])
@@ -478,9 +641,17 @@ class MarketScreener:
         avg_volume = volumes["avg_daily_volume"]
         last_volume = volumes["last_volume"]
         relative_volume = volumes["rvol_tod"]
+        premarket_volume = volumes["premarket_volume"]
 
         # Calculate gap
         gap_info = self.calculate_gap(df_clean)
+
+        # Premarket volume filter (only if timestamps exist and we're in premarket or a gapper)
+        session = market_session()
+        premarket_required = has_timestamp and (session.get("premarket", False) or gap_info.get("is_gapper", False))
+        if self.require_premarket_volume and premarket_required:
+            if premarket_volume < self.min_premarket_volume:
+                return None
 
         # Basic filters
         if avg_volume < self.min_avg_volume:
@@ -489,6 +660,16 @@ class MarketScreener:
             return None
         if features["volatility"] < self.min_volatility:
             return None
+
+        # Daily Trend Filter (SMA20/50 on daily bars)
+        daily_metrics = self._daily_trend_metrics(daily_df)
+        if self.require_daily_trend and daily_metrics.get("available"):
+            trend_passed = daily_metrics.get("trend_ok", False)
+            if not trend_passed and (gap_info.get("is_significant_gap") or symbol in self.news_catalysts):
+                trend_passed = True
+            if not trend_passed:
+                return None
+
         # Gappers (5%+) bypass relative volume requirement
         if relative_volume < self.min_relative_volume and not gap_info.get("is_significant_gap", False):
             return None
@@ -549,6 +730,8 @@ class MarketScreener:
                 news_score = 0.1
             news_catalyst = catalyst_type
 
+        short_interest_pct, short_interest_score, short_interest_days = self._short_interest_score(symbol)
+
         # Power Hour Multiplier (9:30-10:30 AM boost)
         time_multiplier = 1.0
         if self.enable_power_hour_boost:
@@ -571,15 +754,16 @@ class MarketScreener:
             gap_score = 0.05  # Small gap
 
         # Combined Score with gap included
-        # ML: 25%, Momentum: 15%, Gap: 15%, Float: 10%, Pattern: 15%, News: 10%, ATR: 10%
+        # ML: 23%, Momentum: 14%, Gap: 14%, Float: 9%, Pattern: 14%, News: 9%, ATR: 12%, Short Interest: 5%
         base_score = (
-            (ml_score * 0.25) +
-            (momentum_score * 0.15) +
-            (gap_score * 0.15) +
-            (float_score * 0.10) +
-            (pattern_score * 0.15) +
-            (news_score * 0.10) +
-            (atr_score * 0.10)
+            (ml_score * 0.23) +
+            (momentum_score * 0.14) +
+            (gap_score * 0.14) +
+            (float_score * 0.09) +
+            (pattern_score * 0.14) +
+            (news_score * 0.09) +
+            (atr_score * 0.12) +
+            (short_interest_score * 0.05)
         )
 
         # Apply time multiplier
@@ -602,6 +786,9 @@ class MarketScreener:
             "pattern_score": pattern_score,
             "news_catalyst": news_catalyst,
             "news_score": news_score,
+            "short_interest_pct": short_interest_pct,
+            "short_interest_score": short_interest_score,
+            "short_interest_days_to_cover": short_interest_days,
             "time_multiplier": time_multiplier,
             # Gap fields - KEY day trading indicator
             "gap_percent": gap_info["gap_percent"],
@@ -615,6 +802,7 @@ class MarketScreener:
         market_data: Dict[str, pd.DataFrame],
         current_hour: Optional[int] = None,
         current_minute: Optional[int] = None,
+        daily_data: Optional[Dict[str, pd.DataFrame]] = None,
     ) -> List[Dict[str, Union[float, str]]]:
         """
         Rank all symbols by Warrior Trading criteria
@@ -623,7 +811,8 @@ class MarketScreener:
         """
         results: List[Dict[str, Union[float, str]]] = []
         for symbol, df in market_data.items():
-            scored = self.score_symbol(symbol, df, current_hour, current_minute)
+            daily_df = daily_data.get(symbol) if daily_data else None
+            scored = self.score_symbol(symbol, df, current_hour, current_minute, daily_df=daily_df)
             if scored:
                 results.append(scored)
 

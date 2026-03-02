@@ -240,6 +240,9 @@ async def on_startup() -> None:
                 "max_price": app_settings.screener_max_price,
                 "min_volatility": app_settings.screener_min_volatility,
                 "min_relative_volume": app_settings.screener_min_relative_volume,
+                "min_premarket_volume": app_settings.screener_min_premarket_volume,
+                "require_premarket_volume": app_settings.screener_require_premarket_volume,
+                "require_daily_trend": app_settings.screener_require_daily_trend,
             },
         )
     else:

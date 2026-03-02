@@ -58,12 +58,19 @@ class Settings(BaseSettings):
     alpaca_paper: bool = True  # True for paper trading, False for live
     alpaca_data_feed: str = "iex"  # "iex" for free accounts, "sip" for paid
 
+    # Market data add-ons
+    polygon_api_key: str = ""
+    polygon_base_url: str = "https://api.polygon.io"
+
     # Screener defaults - lowered for pre-market and early morning trading
-    screener_min_avg_volume: float = 100000  # Lowered from 500k to allow more stocks
+    screener_min_avg_volume: float = 200000  # Balanced liquidity threshold
     screener_min_price: float = 1.0  # Allow penny stocks
     screener_max_price: float = 500.0  # Focus on tradeable range
     screener_min_volatility: float = 0.002  # Lower volatility threshold
-    screener_min_relative_volume: float = 1.0  # Allow stocks at normal volume
+    screener_min_relative_volume: float = 1.5  # Balanced relative volume threshold
+    screener_min_premarket_volume: float = 25000  # Premarket liquidity threshold for gappers
+    screener_require_premarket_volume: bool = True  # Enforce premarket volume on gappers/premarket
+    screener_require_daily_trend: bool = True  # Enforce daily SMA20/50 trend filter
     screener_debug: bool = False  # Include full screener debug metrics in logs/WS
 
     class Config:

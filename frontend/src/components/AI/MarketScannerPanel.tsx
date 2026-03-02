@@ -58,8 +58,10 @@ interface StockEvaluation {
   filters: {
     data_check?: FilterDetail;
     volume?: FilterDetail;
+    premarket_volume?: FilterDetail;
     price?: FilterDetail;
     volatility?: FilterDetail;
+    daily_trend?: FilterDetail;
     relative_volume?: FilterDetail;
   };
   data: {
@@ -67,12 +69,23 @@ interface StockEvaluation {
     avg_volume?: number;
     last_volume?: number;
     relative_volume?: number;
+    premarket_volume?: number;
     volatility?: number;
     float_millions?: number | null;
     atr?: number;
     atr_percent?: number;
     pattern?: string | null;
     news_catalyst?: string | null;
+    gap_percent?: number;
+    short_interest_pct?: number;
+    short_interest_days_to_cover?: number;
+    daily_trend?: {
+      passed?: boolean;
+      bypass?: boolean;
+      last_close?: number;
+      sma20?: number;
+      sma50?: number;
+    };
   };
   scores?: {
     ml_score: number;
@@ -91,9 +104,30 @@ interface FilterSummary {
   passed: number;
   failed_data: number;
   failed_volume: number;
+  failed_premarket?: number;
   failed_price: number;
   failed_volatility: number;
+  failed_daily_trend?: number;
   failed_rvol: number;
+  watchlist?: number;
+}
+
+interface WatchlistCandidate {
+  symbol: string;
+  price?: number;
+  gap_percent?: number;
+  relative_volume?: number;
+  premarket_volume?: number;
+  news_catalyst?: string | null;
+  short_interest_pct?: number;
+  short_interest_days_to_cover?: number;
+  daily_trend?: {
+    passed?: boolean;
+    bypass?: boolean;
+    last_close?: number;
+    sma20?: number;
+    sma50?: number;
+  };
 }
 
 interface ScannerStatus {
@@ -103,6 +137,7 @@ interface ScannerStatus {
   all_evaluations: StockEvaluation[];
   filter_summary: FilterSummary;
   scanner_results: any[];
+  watchlist_candidates?: WatchlistCandidate[];
   active_strategies: string[];
   power_hour: {
     active: boolean;
@@ -119,6 +154,7 @@ const MarketScannerPanel = () => {
   const [scanning, setScanning] = useState(false);
   const [viewTab, setViewTab] = useState(0);
   const [filterView, setFilterView] = useState<"all" | "passed" | "failed">("all");
+  const [candidateView, setCandidateView] = useState<"trade" | "watchlist">("trade");
   const [scanMessage, setScanMessage] = useState<string | null>(null);
 
   const load = async () => {
@@ -186,6 +222,8 @@ const MarketScannerPanel = () => {
 
   const passedCount = status.all_evaluations?.filter(e => e.passed).length || 0;
   const failedCount = status.all_evaluations?.filter(e => !e.passed).length || 0;
+  const tradeCandidates = status.scanner_results || [];
+  const watchlistCandidates = status.watchlist_candidates || [];
 
   const FilterIcon = ({ passed }: { passed: boolean }) => (
     passed ?
@@ -281,7 +319,7 @@ const MarketScannerPanel = () => {
                   <Typography variant="caption" color="text.secondary">Data</Typography>
                 </Box>
               </Tooltip>
-              <Tooltip title="Failed: Average volume < 500K">
+              <Tooltip title="Failed: Average volume below threshold">
                 <Box sx={{ textAlign: "center", minWidth: 70 }}>
                   <Typography variant="body1" fontWeight="bold" color="error.main">
                     -{status.filter_summary.failed_volume || 0}
@@ -289,7 +327,15 @@ const MarketScannerPanel = () => {
                   <Typography variant="caption" color="text.secondary">Volume</Typography>
                 </Box>
               </Tooltip>
-              <Tooltip title="Failed: Price outside $5-$1000 range">
+              <Tooltip title="Failed: Premarket volume below threshold">
+                <Box sx={{ textAlign: "center", minWidth: 80 }}>
+                  <Typography variant="body1" fontWeight="bold" color="error.main">
+                    -{status.filter_summary.failed_premarket || 0}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">Premarket</Typography>
+                </Box>
+              </Tooltip>
+              <Tooltip title="Failed: Price outside configured range">
                 <Box sx={{ textAlign: "center", minWidth: 70 }}>
                   <Typography variant="body1" fontWeight="bold" color="error.main">
                     -{status.filter_summary.failed_price || 0}
@@ -305,7 +351,15 @@ const MarketScannerPanel = () => {
                   <Typography variant="caption" color="text.secondary">Volatility</Typography>
                 </Box>
               </Tooltip>
-              <Tooltip title="Failed: Relative volume < 2x">
+              <Tooltip title="Failed: Daily trend below SMA filters">
+                <Box sx={{ textAlign: "center", minWidth: 70 }}>
+                  <Typography variant="body1" fontWeight="bold" color="error.main">
+                    -{status.filter_summary.failed_daily_trend || 0}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">Trend</Typography>
+                </Box>
+              </Tooltip>
+              <Tooltip title="Failed: Relative volume below threshold">
                 <Box sx={{ textAlign: "center", minWidth: 70 }}>
                   <Typography variant="body1" fontWeight="bold" color="error.main">
                     -{status.filter_summary.failed_rvol || 0}
@@ -321,6 +375,12 @@ const MarketScannerPanel = () => {
                   {status.filter_summary.passed}
                 </Typography>
                 <Typography variant="caption" color="success.main">Passed All</Typography>
+              </Box>
+              <Box sx={{ textAlign: "center", minWidth: 90, p: 1, borderRadius: 1, bgcolor: "rgba(25, 118, 210, 0.08)" }}>
+                <Typography variant="h5" fontWeight="bold" color="primary.main">
+                  {status.filter_summary.watchlist || 0}
+                </Typography>
+                <Typography variant="caption" color="primary.main">Watchlist</Typography>
               </Box>
             </Stack>
           </Box>
@@ -339,7 +399,7 @@ const MarketScannerPanel = () => {
           <Tab
             label={
               <Stack direction="row" spacing={1} alignItems="center">
-                <span>Top Opportunities</span>
+                <span>Candidates</span>
                 <Chip label={passedCount} size="small" color="success" sx={{ height: 20 }} />
               </Stack>
             }
@@ -393,7 +453,7 @@ const MarketScannerPanel = () => {
                       <TableCell sx={{ fontWeight: "bold" }}>Status</TableCell>
                       <TableCell sx={{ fontWeight: "bold" }}>Price</TableCell>
                       <TableCell sx={{ fontWeight: "bold" }}>
-                        <Tooltip title="Average Volume Filter (≥500K)">
+                        <Tooltip title="Average Volume Filter (threshold)">
                           <Stack direction="row" alignItems="center" spacing={0.5}>
                             <VolumeUp sx={{ fontSize: 14 }} />
                             <span>Vol</span>
@@ -401,7 +461,7 @@ const MarketScannerPanel = () => {
                         </Tooltip>
                       </TableCell>
                       <TableCell sx={{ fontWeight: "bold" }}>
-                        <Tooltip title="Price Filter ($5-$1000)">
+                        <Tooltip title="Price Filter (range)">
                           <Stack direction="row" alignItems="center" spacing={0.5}>
                             <AttachMoney sx={{ fontSize: 14 }} />
                             <span>Price</span>
@@ -409,7 +469,7 @@ const MarketScannerPanel = () => {
                         </Tooltip>
                       </TableCell>
                       <TableCell sx={{ fontWeight: "bold" }}>
-                        <Tooltip title="Volatility Filter (≥0.5%)">
+                        <Tooltip title="Volatility Filter (threshold)">
                           <Stack direction="row" alignItems="center" spacing={0.5}>
                             <Speed sx={{ fontSize: 14 }} />
                             <span>Vol%</span>
@@ -417,7 +477,7 @@ const MarketScannerPanel = () => {
                         </Tooltip>
                       </TableCell>
                       <TableCell sx={{ fontWeight: "bold" }}>
-                        <Tooltip title="Relative Volume (≥2x avg)">
+                        <Tooltip title="Relative Volume (≥ threshold)">
                           <Stack direction="row" alignItems="center" spacing={0.5}>
                             <TrendingUp sx={{ fontSize: 14 }} />
                             <span>RVol</span>
@@ -502,8 +562,8 @@ const MarketScannerPanel = () => {
                           <Typography
                             variant="caption"
                             sx={{ ml: 0.5 }}
-                            color={evaluation.data?.relative_volume && evaluation.data.relative_volume >= 2 ? "warning.main" : "text.secondary"}
-                            fontWeight={evaluation.data?.relative_volume && evaluation.data.relative_volume >= 2 ? "bold" : "normal"}
+                            color={evaluation.data?.relative_volume && evaluation.data.relative_volume >= 1.5 ? "warning.main" : "text.secondary"}
+                            fontWeight={evaluation.data?.relative_volume && evaluation.data.relative_volume >= 1.5 ? "bold" : "normal"}
                           >
                             {evaluation.data?.relative_volume?.toFixed(1) || "-"}x
                           </Typography>
@@ -550,95 +610,198 @@ const MarketScannerPanel = () => {
         {/* Tab 1: Top Opportunities */}
         {viewTab === 1 && (
           <>
-            <Typography variant="subtitle2" sx={{ mb: 2 }}>
-              Stocks that passed all filters, ranked by combined score
-            </Typography>
-            {status.scanner_results?.length > 0 ? (
-              <TableContainer component={Paper} sx={{ bgcolor: "transparent", maxHeight: 400 }}>
-                <Table size="small" stickyHeader>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ fontWeight: "bold" }}>#</TableCell>
-                      <TableCell sx={{ fontWeight: "bold" }}>Symbol</TableCell>
-                      <TableCell sx={{ fontWeight: "bold" }}>Price</TableCell>
-                      <TableCell sx={{ fontWeight: "bold" }}>Combined</TableCell>
-                      <TableCell sx={{ fontWeight: "bold" }}>ML</TableCell>
-                      <TableCell sx={{ fontWeight: "bold" }}>Momentum</TableCell>
-                      <TableCell sx={{ fontWeight: "bold" }}>RVol</TableCell>
-                      <TableCell sx={{ fontWeight: "bold" }}>ATR%</TableCell>
-                      <TableCell sx={{ fontWeight: "bold" }}>Signals</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {status.scanner_results.map((result, idx) => (
-                      <TableRow key={result.symbol} hover>
-                        <TableCell>
-                          <Chip
-                            label={idx + 1}
-                            size="small"
-                            color={idx === 0 ? "success" : idx < 3 ? "warning" : "default"}
-                            sx={{ height: 20, minWidth: 24 }}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Typography fontWeight="bold">{result.symbol}</Typography>
-                        </TableCell>
-                        <TableCell>${result.last_price?.toFixed(2)}</TableCell>
-                        <TableCell>
-                          <Stack direction="row" alignItems="center" spacing={1}>
-                            <LinearProgress
-                              variant="determinate"
-                              value={Math.min(result.combined_score * 100, 100)}
-                              sx={{
-                                width: 50,
-                                height: 6,
-                                borderRadius: 3,
-                                bgcolor: "rgba(255,255,255,0.1)",
-                                "& .MuiLinearProgress-bar": {
-                                  borderRadius: 3,
-                                  bgcolor: result.combined_score > 0.5 ? "success.main" : "warning.main"
-                                }
-                              }}
-                            />
-                            <Typography variant="caption" fontWeight="bold">
-                              {(result.combined_score * 100).toFixed(0)}%
-                            </Typography>
-                          </Stack>
-                        </TableCell>
-                        <TableCell>{(result.ml_score * 100).toFixed(0)}%</TableCell>
-                        <TableCell>
-                          <Typography color={result.momentum_score > 0 ? "success.main" : "error.main"}>
-                            {(result.momentum_score * 100).toFixed(1)}%
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography fontWeight={result.relative_volume >= 3 ? "bold" : "normal"} color={result.relative_volume >= 3 ? "warning.main" : "inherit"}>
-                            {result.relative_volume?.toFixed(1)}x
-                          </Typography>
-                        </TableCell>
-                        <TableCell>{result.atr_percent?.toFixed(1)}%</TableCell>
-                        <TableCell>
-                          <Stack direction="row" spacing={0.5}>
-                            {result.pattern && (
-                              <Chip label={result.pattern.replace("_", " ")} size="small" color="success" sx={{ height: 18, fontSize: "0.55rem" }} />
-                            )}
-                            {result.news_catalyst && (
-                              <Chip label={result.news_catalyst} size="small" color="warning" sx={{ height: 18, fontSize: "0.55rem" }} />
-                            )}
-                            {result.time_multiplier > 1 && (
-                              <Chip icon={<Whatshot />} label={`${result.time_multiplier}x`} size="small" sx={{ height: 18, fontSize: "0.55rem" }} />
-                            )}
-                          </Stack>
-                        </TableCell>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+              <Typography variant="subtitle2">
+                {candidateView === "trade"
+                  ? "Stocks that passed all filters, ranked by combined score"
+                  : "Broad watchlist candidates that passed core liquidity checks"}
+              </Typography>
+              <ToggleButtonGroup
+                value={candidateView}
+                exclusive
+                onChange={(_, v) => v && setCandidateView(v)}
+                size="small"
+              >
+                <ToggleButton value="trade">
+                  <Badge badgeContent={tradeCandidates.length} color="success" max={999}>
+                    Trade Candidates
+                  </Badge>
+                </ToggleButton>
+                <ToggleButton value="watchlist">
+                  <Badge badgeContent={watchlistCandidates.length} color="primary" max={999}>
+                    Watchlist
+                  </Badge>
+                </ToggleButton>
+              </ToggleButtonGroup>
+            </Stack>
+
+            {candidateView === "trade" ? (
+              tradeCandidates.length > 0 ? (
+                <TableContainer component={Paper} sx={{ bgcolor: "transparent", maxHeight: 400 }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: "bold" }}>#</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Symbol</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Price</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Combined</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>ML</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Momentum</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>RVol</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>ATR%</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Signals</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                    </TableHead>
+                    <TableBody>
+                      {tradeCandidates.map((result, idx) => (
+                        <TableRow key={result.symbol} hover>
+                          <TableCell>
+                            <Chip
+                              label={idx + 1}
+                              size="small"
+                              color={idx === 0 ? "success" : idx < 3 ? "warning" : "default"}
+                              sx={{ height: 20, minWidth: 24 }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Typography fontWeight="bold">{result.symbol}</Typography>
+                          </TableCell>
+                          <TableCell>${result.last_price?.toFixed(2)}</TableCell>
+                          <TableCell>
+                            <Stack direction="row" alignItems="center" spacing={1}>
+                              <LinearProgress
+                                variant="determinate"
+                                value={Math.min(result.combined_score * 100, 100)}
+                                sx={{
+                                  width: 50,
+                                  height: 6,
+                                  borderRadius: 3,
+                                  bgcolor: "rgba(255,255,255,0.1)",
+                                  "& .MuiLinearProgress-bar": {
+                                    borderRadius: 3,
+                                    bgcolor: result.combined_score > 0.5 ? "success.main" : "warning.main"
+                                  }
+                                }}
+                              />
+                              <Typography variant="caption" fontWeight="bold">
+                                {(result.combined_score * 100).toFixed(0)}%
+                              </Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell>{(result.ml_score * 100).toFixed(0)}%</TableCell>
+                          <TableCell>
+                            <Typography color={result.momentum_score > 0 ? "success.main" : "error.main"}>
+                              {(result.momentum_score * 100).toFixed(1)}%
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography fontWeight={result.relative_volume >= 3 ? "bold" : "normal"} color={result.relative_volume >= 3 ? "warning.main" : "inherit"}>
+                              {result.relative_volume?.toFixed(1)}x
+                            </Typography>
+                          </TableCell>
+                          <TableCell>{result.atr_percent?.toFixed(1)}%</TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={0.5}>
+                              {result.pattern && (
+                                <Chip label={result.pattern.replace("_", " ")} size="small" color="success" sx={{ height: 18, fontSize: "0.55rem" }} />
+                              )}
+                              {result.news_catalyst && (
+                                <Chip label={result.news_catalyst} size="small" color="warning" sx={{ height: 18, fontSize: "0.55rem" }} />
+                              )}
+                              {result.time_multiplier > 1 && (
+                                <Chip icon={<Whatshot />} label={`${result.time_multiplier}x`} size="small" sx={{ height: 18, fontSize: "0.55rem" }} />
+                              )}
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              ) : (
+                <Alert severity="info">
+                  No trade candidates yet. The scanner will identify stocks matching all criteria.
+                </Alert>
+              )
             ) : (
-              <Alert severity="info">
-                No opportunities found yet. The scanner will identify stocks matching all criteria.
-              </Alert>
+              watchlistCandidates.length > 0 ? (
+                <TableContainer component={Paper} sx={{ bgcolor: "transparent", maxHeight: 400 }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: "bold" }}>#</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Symbol</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Price</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Gap%</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>RVol</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Premkt Vol</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Short%</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>DTC</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Trend</TableCell>
+                        <TableCell sx={{ fontWeight: "bold" }}>Signals</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {watchlistCandidates.map((result, idx) => (
+                        <TableRow key={result.symbol} hover>
+                          <TableCell>
+                            <Chip
+                              label={idx + 1}
+                              size="small"
+                              color={idx < 5 ? "primary" : "default"}
+                              sx={{ height: 20, minWidth: 24 }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Typography fontWeight="bold">{result.symbol}</Typography>
+                          </TableCell>
+                          <TableCell>${result.price?.toFixed(2) || "-"}</TableCell>
+                          <TableCell>
+                            <Typography color={Math.abs(result.gap_percent || 0) >= 5 ? "warning.main" : "text.secondary"}>
+                              {result.gap_percent?.toFixed(1) ?? "-"}%
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            {result.relative_volume?.toFixed(1) ?? "-"}x
+                          </TableCell>
+                          <TableCell>
+                            {result.premarket_volume ? `${(result.premarket_volume / 1000).toFixed(0)}k` : "-"}
+                          </TableCell>
+                          <TableCell>
+                            {result.short_interest_pct ? `${result.short_interest_pct.toFixed(1)}%` : "-"}
+                          </TableCell>
+                          <TableCell>
+                            {result.short_interest_days_to_cover ? result.short_interest_days_to_cover.toFixed(1) : "-"}
+                          </TableCell>
+                          <TableCell>
+                            {result.daily_trend
+                              ? (
+                                <Chip
+                                  label={result.daily_trend.passed ? "Trend OK" : "Below SMA"}
+                                  size="small"
+                                  color={result.daily_trend.passed ? "success" : "warning"}
+                                  sx={{ height: 18, fontSize: "0.55rem" }}
+                                />
+                              )
+                              : "-"}
+                          </TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={0.5}>
+                              {result.news_catalyst && (
+                                <Chip label={result.news_catalyst} size="small" color="warning" sx={{ height: 18, fontSize: "0.55rem" }} />
+                              )}
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              ) : (
+                <Alert severity="info">
+                  No watchlist candidates yet. The scanner will populate broad candidates as data comes in.
+                </Alert>
+              )
             )}
           </>
         )}

@@ -423,8 +423,25 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                                 "pattern": r.get("pattern"),
                                 "news_catalyst": r.get("news_catalyst"),
                                 "float_millions": r.get("float_millions"),
+                                "short_interest_pct": r.get("short_interest_pct", 0),
+                                "short_interest_days_to_cover": r.get("short_interest_days_to_cover", 0),
+                                "gap_percent": r.get("gap_percent", 0),
                             }
                             for r in (engine.last_scanner_results or [])
+                        ],
+                        "watchlist_candidates": [
+                            {
+                                "symbol": r.get("symbol"),
+                                "price": r.get("price", 0),
+                                "gap_percent": r.get("gap_percent", 0),
+                                "relative_volume": r.get("relative_volume", 0),
+                                "premarket_volume": r.get("premarket_volume", 0),
+                                "news_catalyst": r.get("news_catalyst"),
+                                "short_interest_pct": r.get("short_interest_pct", 0),
+                                "short_interest_days_to_cover": r.get("short_interest_days_to_cover", 0),
+                                "daily_trend": r.get("daily_trend"),
+                            }
+                            for r in (engine.watchlist_candidates or [])[:100]
                         ],
                         # ALL evaluated stocks (including those that failed filters)
                         "all_evaluations": [
