@@ -272,13 +272,17 @@ async def trigger_manual_scan(
     try:
         # Run scan directly (bypass market hours check for testing)
         opportunities = await engine._scan_market()
-        analyzed = await engine._analyze_opportunities(opportunities)
+        analyzed = await engine._analyze_opportunities(
+            opportunities,
+            analyze_symbols=engine.last_market_symbols,
+            allowed_symbols={o.get("symbol") for o in opportunities if o.get("symbol")},
+        )
 
         return {
             "status": "completed",
             "symbols_scanned": engine.symbols_scanned,
             "opportunities_found": len(opportunities),
-            "analyzed": len(analyzed),
+            "analyzed": engine.last_strategy_analyzed_count,
             "filter_summary": engine.filter_summary,
             "top_picks": [e.get("symbol") for e in opportunities[:5]],
         }

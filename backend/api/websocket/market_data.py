@@ -380,6 +380,7 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                         "risk_posture": engine.risk_posture,
                         "last_scan": current_scan_time,
                         "symbols_scanned": engine.symbols_scanned,
+                        "symbols_analyzed": engine.last_strategy_analyzed_count,
                         "opportunities_found": len(engine.last_scanner_results),
                         "active_positions": len(engine.broker.get_positions()) if engine.broker.is_connected() else 0,
                         "top_picks": [

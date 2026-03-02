@@ -185,6 +185,8 @@ class AutonomousEngine:
         # Scanner results (for UI display)
         self.last_scanner_results: List[Dict[str, Any]] = []  # Raw screener output
         self.last_analyzed_opportunities: List[Dict[str, Any]] = []  # After strategy analysis
+        self.last_strategy_analyzed_count: int = 0  # Total symbols analyzed by strategies
+        self.last_market_symbols: List[str] = []  # Last symbols with market data
         self.symbols_scanned: int = 0  # Count of symbols scanned
         self.all_evaluations: List[Dict[str, Any]] = []  # ALL stocks with pass/fail details
         self.filter_summary: Dict[str, int] = {}  # Summary of filter pass/fail counts
@@ -913,7 +915,11 @@ class AutonomousEngine:
 
                     # 2. Analyze each opportunity with ALL strategies
                     try:
-                        analyzed = await self._analyze_opportunities(opportunities)
+                        analyzed = await self._analyze_opportunities(
+                            opportunities,
+                            analyze_symbols=self.last_market_symbols,
+                            allowed_symbols={o.get("symbol") for o in opportunities if o.get("symbol")},
+                        )
                     except Exception as analyze_error:
                         logger.error(f"❌ Analysis failed: {analyze_error}")
                         self._add_decision(
@@ -927,12 +933,12 @@ class AutonomousEngine:
                     # Log scan results so user can see activity
                     self._add_decision(
                         "SCAN",
-                        f"Scanned {self.symbols_scanned} symbols - Found {len(opportunities)} opportunities, {len(analyzed)} analyzed",
+                        f"Scanned {self.symbols_scanned} symbols - Found {len(opportunities)} opportunities, {self.last_strategy_analyzed_count} analyzed",
                         "INFO",
                         {
                             "symbols_scanned": self.symbols_scanned,
                             "opportunities": len(opportunities),
-                            "analyzed": len(analyzed),
+                            "analyzed": self.last_strategy_analyzed_count,
                             "market_open": is_market_open,
                             "top_symbols": [o.get("symbol") for o in opportunities[:5]]
                         }
@@ -972,7 +978,7 @@ class AutonomousEngine:
                                 "SYSTEM",
                                 f"Broker not connected - scanning only ({len(opportunities)} opportunities found)",
                                 "WARNING",
-                                {"opportunities": len(opportunities), "analyzed": len(analyzed), "broker_connected": False}
+                                {"opportunities": len(opportunities), "analyzed": self.last_strategy_analyzed_count, "broker_connected": False}
                             )
                             logger.warning("⚠️ Broker not connected - cannot execute trades")
                         elif is_past_new_trade_cutoff():
@@ -999,7 +1005,7 @@ class AutonomousEngine:
                             "SCAN",
                             f"Market closed - scan only mode ({len(opportunities)} opportunities)",
                             "INFO",
-                            {"opportunities": len(opportunities), "analyzed": len(analyzed)}
+                            {"opportunities": len(opportunities), "analyzed": self.last_strategy_analyzed_count}
                         )
 
                     # Scan complete summary - always show what happened
@@ -1014,9 +1020,9 @@ class AutonomousEngine:
                     elif len(analyzed) > 0:
                         self._add_decision(
                             "THINKING",
-                            f"💭 Scan #{loop_count} complete ({scan_duration:.1f}s): {len(analyzed)} analyzed, none meet criteria",
+                            f"💭 Scan #{loop_count} complete ({scan_duration:.1f}s): {self.last_strategy_analyzed_count} analyzed, none meet criteria",
                             "INFO",
-                            {"analyzed": len(analyzed), "duration": scan_duration}
+                            {"analyzed": self.last_strategy_analyzed_count, "duration": scan_duration}
                         )
                     else:
                         self._add_decision(
@@ -1478,6 +1484,7 @@ class AutonomousEngine:
 
             # Record scan count as soon as we have valid market data
             self.symbols_scanned = len(market_data)
+            self.last_market_symbols = list(market_data.keys())
 
             # Fetch news catalysts for scanned symbols (async would be better)
             try:
@@ -1719,7 +1726,12 @@ class AutonomousEngine:
         if catalysts:
             logger.info(f"Found {len(catalysts)} news catalysts: {list(catalysts.keys())}")
 
-    async def _analyze_opportunities(self, opportunities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def _analyze_opportunities(
+        self,
+        opportunities: List[Dict[str, Any]],
+        analyze_symbols: Optional[List[str]] = None,
+        allowed_symbols: Optional[Set[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Analyze each opportunity with ALL available strategies.
 
@@ -1728,9 +1740,14 @@ class AutonomousEngine:
         import time as time_module
         analyze_start = time_module.perf_counter()
         analyzed = []
+        analyzed_symbols = 0
 
-        for opp in opportunities:
-            symbol = opp.get("symbol")
+        opp_by_symbol = {o.get("symbol"): o for o in opportunities if o.get("symbol")}
+        symbols_to_analyze = analyze_symbols if analyze_symbols is not None else list(opp_by_symbol.keys())
+        allowed = allowed_symbols if allowed_symbols is not None else set(symbols_to_analyze)
+
+        for symbol in symbols_to_analyze:
+            opp = opp_by_symbol.get(symbol, {"symbol": symbol})
             if not symbol:
                 continue
 
@@ -1746,6 +1763,8 @@ class AutonomousEngine:
 
                     df = pd.DataFrame(bars)
                     current_price = df['close'].iloc[-1] if len(df) > 0 else 0
+
+                    analyzed_symbols += 1
 
                 # Test ALL strategies
                 strategy_signals = []
@@ -1778,7 +1797,9 @@ class AutonomousEngine:
                         logger.debug(f"Strategy {strat_name} failed for {symbol}: {e}")
 
                 # Aggregate signals
-                if strategy_signals:
+                should_output = symbol in allowed
+
+                if strategy_signals and should_output:
                     buy_signals = [s for s in strategy_signals if s["action"] == "BUY"]
                     sell_signals = [s for s in strategy_signals if s["action"] == "SELL"]
 
@@ -1845,7 +1866,7 @@ class AutonomousEngine:
                         })
                 else:
                     # Log when no strategies fire - user wants to see this
-                    if len(opportunities) <= 20:  # Only log for smaller sets to avoid spam
+                    if should_output and len(opportunities) <= 20:  # Only log for smaller sets to avoid spam
                         self._add_decision(
                             "THINKING",
                             f"📊 {symbol} @ ${current_price:.2f}: No strategy signals (0/{len(self.all_strategies)} strategies)",
@@ -1878,11 +1899,15 @@ class AutonomousEngine:
             }
             for a in analyzed[:15]
         ]
+        self.last_strategy_analyzed_count = analyzed_symbols
 
         # Record total analysis time
         analyze_elapsed_ms = (time_module.perf_counter() - analyze_start) * 1000
         LATENCY.record("analyze_opportunities_total", analyze_elapsed_ms)
-        logger.debug(f"Analysis completed in {analyze_elapsed_ms:.1f}ms for {len(opportunities)} opportunities")
+        logger.debug(
+            f"Analysis completed in {analyze_elapsed_ms:.1f}ms for "
+            f"{analyzed_symbols}/{len(opportunities)} opportunities"
+        )
 
         return analyzed
 
