@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     screener_max_price: float = 500.0  # Focus on tradeable range
     screener_min_volatility: float = 0.002  # Lower volatility threshold
     screener_min_relative_volume: float = 1.0  # Allow stocks at normal volume
+    screener_debug: bool = False  # Include full screener debug metrics in logs/WS
 
     class Config:
         env_file = ".env"

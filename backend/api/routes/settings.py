@@ -64,4 +64,5 @@ def get_alpaca_debug(
         "has_secret_key": bool(app_settings.alpaca_secret_key),
         "alpaca_paper": app_settings.alpaca_paper,
         "alpaca_data_feed": app_settings.alpaca_data_feed,
+        "screener_debug": app_settings.screener_debug,
     }

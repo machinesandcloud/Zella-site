@@ -8,6 +8,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from market.fake_stream import DEFAULT_SYMBOLS, FakeMarketDataStream
+from config.settings import settings
 
 router = APIRouter()
 logger = logging.getLogger("websocket_market_data")
@@ -432,7 +433,7 @@ async def bot_activity_ws(websocket: WebSocket) -> None:
                                 "passed": e.get("passed", False),
                                 "filters": e.get("filters", {}),
                                 "scores": e.get("scores", {}),
-                                "data": {
+                                "data": e.get("data", {}) if settings.screener_debug else {
                                     "price": e.get("data", {}).get("price", 0),
                                     "volume": e.get("data", {}).get("avg_volume", 0),
                                     "relative_volume": e.get("data", {}).get("relative_volume", 0),

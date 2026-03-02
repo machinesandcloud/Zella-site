@@ -1575,7 +1575,13 @@ class AutonomousEngine:
                         "volume": data.get("avg_volume", 0),
                         "rvol": data.get("relative_volume", 0),
                         "atr_pct": data.get("atr_percent", 0),
-                        "reasons": fail_reasons
+                        "reasons": fail_reasons,
+                        **({
+                            "debug": {
+                                "data": data,
+                                "filters": filters,
+                            }
+                        } if settings.screener_debug else {})
                     }
                 )
 
@@ -1612,7 +1618,13 @@ class AutonomousEngine:
                         "relative_volume": data.get("relative_volume", 0),
                         "atr_percent": data.get("atr_percent", 0),
                         "pattern": data.get("pattern"),
-                        "news": data.get("news_catalyst")
+                        "news": data.get("news_catalyst"),
+                        **({
+                            "debug": {
+                                "data": data,
+                                "scores": scores,
+                            }
+                        } if settings.screener_debug else {})
                     }
                 )
 
