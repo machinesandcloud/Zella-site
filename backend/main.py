@@ -115,6 +115,8 @@ async def server_self_ping():
 
     # Use Render's URL or hardcoded production URL
     server_url = os.environ.get("RENDER_EXTERNAL_URL", "https://zella-site.onrender.com")
+    port = os.environ.get("PORT", "8000")
+    local_url = f"http://127.0.0.1:{port}"
     ping_count = 0
 
     while True:
@@ -123,16 +125,105 @@ async def server_self_ping():
             ping_count += 1
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{server_url}/health", timeout=aiohttp.ClientTimeout(total=15)) as response:
-                    if response.status == 200:
-                        # Log every 10th ping to reduce noise but confirm it's working
-                        if ping_count % 10 == 0:
-                            logger.info(f"✓ Self-ping #{ping_count} OK - server alive")
-                    else:
-                        logger.warning(f"Self-ping returned status {response.status}")
+                async def ping(url: str) -> bool:
+                    try:
+                        async with session.get(f"{url}/health", timeout=aiohttp.ClientTimeout(total=15)) as response:
+                            return response.status == 200
+                    except Exception:
+                        return False
+
+                ok_external = await ping(server_url)
+                ok_local = await ping(local_url)
+
+                if ok_external or ok_local:
+                    if ping_count % 10 == 0:
+                        logger.info(f"✓ Self-ping #{ping_count} OK - server alive")
+                else:
+                    logger.warning("Self-ping failed for both external and local health checks")
         except Exception as e:
             logger.warning(f"Self-ping failed: {e} - will retry")
             await asyncio.sleep(5)
+
+
+async def resilience_watchdog():
+    """
+    Background watchdog to keep core services running.
+    Ensures Alpaca connection, market data provider, and autonomous engine stay alive.
+    """
+    import asyncio as _asyncio
+
+    while True:
+        try:
+            await _asyncio.sleep(20)
+
+            # Ensure Alpaca client connection
+            if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
+                if not hasattr(app.state, "alpaca_client") or app.state.alpaca_client is None:
+                    logger.warning("Alpaca client missing - recreating")
+                    app.state.alpaca_client = AlpacaClient(
+                        api_key=app_settings.alpaca_api_key,
+                        secret_key=app_settings.alpaca_secret_key,
+                        paper=app_settings.alpaca_paper,
+                        data_feed=app_settings.alpaca_data_feed,
+                    )
+                if app.state.alpaca_client and not app.state.alpaca_client.is_connected():
+                    app.state.alpaca_client.ensure_connected()
+
+            # Ensure market data provider
+            if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
+                if not hasattr(app.state, "market_data_provider") or app.state.market_data_provider is None:
+                    logger.warning("Market data provider missing - recreating")
+                    app.state.market_data_provider = AlpacaMarketDataProvider(
+                        api_key=app_settings.alpaca_api_key,
+                        secret_key=app_settings.alpaca_secret_key,
+                        universe=get_default_universe(),
+                        data_feed=app_settings.alpaca_data_feed,
+                    )
+
+            # Ensure auto trader
+            if getattr(app.state, "market_data_provider", None) and getattr(app.state, "auto_trader", None) is None:
+                app.state.auto_trader = AutoTrader(
+                    app.state.market_data_provider,
+                    app.state.strategy_engine,
+                    screener_config={
+                        "min_avg_volume": app_settings.screener_min_avg_volume,
+                        "min_price": app_settings.screener_min_price,
+                        "max_price": app_settings.screener_max_price,
+                        "min_volatility": app_settings.screener_min_volatility,
+                        "min_relative_volume": app_settings.screener_min_relative_volume,
+                        "min_premarket_volume": app_settings.screener_min_premarket_volume,
+                        "require_premarket_volume": app_settings.screener_require_premarket_volume,
+                        "require_daily_trend": app_settings.screener_require_daily_trend,
+                    },
+                )
+
+            # Ensure autonomous engine
+            if getattr(app.state, "market_data_provider", None):
+                if not hasattr(app.state, "autonomous_engine") or app.state.autonomous_engine is None:
+                    logger.warning("Autonomous engine missing - recreating")
+                    app.state.autonomous_engine = AutonomousEngine(
+                        market_data_provider=app.state.market_data_provider,
+                        strategy_engine=app.state.strategy_engine,
+                        risk_manager=app.state.risk_manager,
+                        position_manager=app.state.position_manager,
+                        broker_client=app.state.alpaca_client,
+                        config={
+                            "enabled": True,
+                            "mode": "FULL_AUTO",
+                            "risk_posture": "BALANCED",
+                            "scan_interval": 30,
+                            "max_positions": 5,
+                            "enabled_strategies": "ALL",
+                        },
+                    )
+
+                engine = app.state.autonomous_engine
+                if engine and not engine.running and engine.enabled:
+                    logger.warning("Autonomous engine stopped - restarting")
+                    await engine.start()
+        except Exception as e:
+            logger.warning(f"Resilience watchdog error: {e}")
+            await _asyncio.sleep(5)
 
 
 @app.middleware("http")
@@ -290,12 +381,21 @@ async def on_startup() -> None:
         logger.error("Autonomous engine not started: market data provider is missing (check Alpaca keys)")
 
     # Start server self-ping to prevent Render idle timeout (critical for 24/7 operation)
-    asyncio.create_task(server_self_ping())
+    app.state.keepalive_task = asyncio.create_task(server_self_ping())
     logger.info("✓ Started server self-ping keepalive task (30s interval)")
+
+    # Start resilience watchdog to auto-heal connections and background services
+    app.state.resilience_task = asyncio.create_task(resilience_watchdog())
+    logger.info("✓ Started resilience watchdog task (20s interval)")
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    if hasattr(app.state, "keepalive_task") and app.state.keepalive_task:
+        app.state.keepalive_task.cancel()
+    if hasattr(app.state, "resilience_task") and app.state.resilience_task:
+        app.state.resilience_task.cancel()
+
     # Stop autonomous engine if running
     if hasattr(app.state, "autonomous_engine") and app.state.autonomous_engine:
         logger.info("Stopping Autonomous Trading Engine...")

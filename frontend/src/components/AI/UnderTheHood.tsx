@@ -892,6 +892,7 @@ const UnderTheHood = () => {
   const [expandedOpportunity, setExpandedOpportunity] = useState<string | null>(null);
   const [priceHistory, setPriceHistory] = useState<Record<string, number[]>>({});
   const wsRef = useRef<WebSocket | null>(null);
+  const lastMessageAtRef = useRef<number>(Date.now());
 
   const getWebSocketUrl = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -937,6 +938,7 @@ const UnderTheHood = () => {
         try {
           const message = JSON.parse(event.data);
           if (message.type === "status" && message.data) {
+            lastMessageAtRef.current = Date.now();
             setBotState(prev => ({
               ...prev,
               ...message.data,
@@ -973,6 +975,19 @@ const UnderTheHood = () => {
       wsRef.current?.close();
     };
   }, [getWebSocketUrl]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const elapsed = Date.now() - lastMessageAtRef.current;
+      if (elapsed > 60000) {
+        console.warn("[UnderTheHood WS] Stale connection detected, reconnecting...");
+        ws.close();
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, []);
 
   const getCategoryForStrategy = (strategyName: string) => {
     for (const [category, data] of Object.entries(STRATEGY_CATEGORIES)) {

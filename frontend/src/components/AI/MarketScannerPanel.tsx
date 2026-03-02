@@ -157,6 +157,19 @@ const MarketScannerPanel = () => {
   const [candidateView, setCandidateView] = useState<"trade" | "watchlist">("trade");
   const [scanMessage, setScanMessage] = useState<string | null>(null);
 
+  const CANDIDATE_VIEW_KEY = "zella_scanner_candidate_view";
+
+  useEffect(() => {
+    const stored = localStorage.getItem(CANDIDATE_VIEW_KEY);
+    if (stored === "trade" || stored === "watchlist") {
+      setCandidateView(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(CANDIDATE_VIEW_KEY, candidateView);
+  }, [candidateView]);
+
   const load = async () => {
     setRefreshing(true);
     try {

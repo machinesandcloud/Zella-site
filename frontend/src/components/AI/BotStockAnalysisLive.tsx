@@ -125,6 +125,7 @@ const BotStockAnalysisLive = () => {
   const [showAllEvaluations, setShowAllEvaluations] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastMessageAtRef = useRef<number>(Date.now());
 
   const getWebSocketUrl = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -157,6 +158,7 @@ const BotStockAnalysisLive = () => {
 
           // Backend sends type: "status" with data object
           if (message.type === "status" && message.data) {
+            lastMessageAtRef.current = Date.now();
             const { analyzed_opportunities, scanner_results, all_evaluations, filter_summary } = message.data;
 
             if (analyzed_opportunities) setOpportunities(analyzed_opportunities);
@@ -209,6 +211,19 @@ const BotStockAnalysisLive = () => {
   useEffect(() => {
     connect();
     return () => disconnect();
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const elapsed = Date.now() - lastMessageAtRef.current;
+      if (elapsed > 60000) {
+        console.warn("[BotStockAnalysis WS] Stale connection detected, reconnecting...");
+        ws.close();
+      }
+    }, 15000);
+    return () => clearInterval(interval);
   }, []);
 
   const passedCount = evaluations.filter(e => e.passed).length;

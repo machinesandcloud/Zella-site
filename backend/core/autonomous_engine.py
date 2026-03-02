@@ -169,6 +169,9 @@ class AutonomousEngine:
         # CRITICAL: Store background task references to prevent garbage collection
         # Tasks stored in local variables may be GC'd before they run!
         self._background_tasks: List[asyncio.Task] = []
+        self._task_registry: Dict[str, asyncio.Task] = {}
+        self._task_backoff: Dict[str, int] = {}
+        self._task_factories: Dict[str, Any] = {}
 
         # CRITICAL: Thread locks for concurrent access
         self._state_lock = RLock()  # Protects: daily_pnl, decisions, active_symbols
@@ -724,34 +727,35 @@ class AutonomousEngine:
             except (asyncio.CancelledError, asyncio.InvalidStateError):
                 pass
 
+        def start_task(name: str, coro_factory):
+            task = asyncio.create_task(coro_factory())
+            task.add_done_callback(lambda t: log_task_exception(t, name))
+            self._task_registry[name] = task
+            self._background_tasks.append(task)
+
         # Clear any old tasks
         self._background_tasks = []
+        self._task_registry = {}
+        self._task_backoff = {}
 
         # Main trading loop - CRITICAL - store reference to prevent GC!
         logger.info("📍 Creating background tasks (storing references to prevent GC)...")
 
-        main_task = asyncio.create_task(self._main_trading_loop())
-        main_task.add_done_callback(lambda t: log_task_exception(t, "main_trading_loop"))
-        self._background_tasks.append(main_task)
+        self._task_factories = {
+            "main_trading_loop": self._main_trading_loop,
+            "eod_liquidation_monitor": self._eod_liquidation_monitor,
+            "connection_keepalive": self._connection_keepalive,
+            "position_monitor": self._position_monitor,
+            "latency_monitor": self._latency_monitor,
+            "periodic_state_save": self._periodic_state_save,
+            "position_reconciliation": self._position_reconciliation_loop,
+        }
 
-        # Other background tasks - ALL stored to prevent GC
-        eod_task = asyncio.create_task(self._eod_liquidation_monitor())
-        self._background_tasks.append(eod_task)
+        for name, factory in self._task_factories.items():
+            start_task(name, factory)
 
-        keepalive_task = asyncio.create_task(self._connection_keepalive())
-        self._background_tasks.append(keepalive_task)
-
-        position_task = asyncio.create_task(self._position_monitor())
-        self._background_tasks.append(position_task)
-
-        latency_task = asyncio.create_task(self._latency_monitor())
-        self._background_tasks.append(latency_task)
-
-        save_task = asyncio.create_task(self._periodic_state_save())
-        self._background_tasks.append(save_task)
-
-        reconcile_task = asyncio.create_task(self._position_reconciliation_loop())
-        self._background_tasks.append(reconcile_task)
+        # Supervisor task to restart failed tasks
+        start_task("task_supervisor", self._task_supervisor)
 
         logger.info(f"✅ {len(self._background_tasks)} background tasks created and stored")
 
@@ -804,7 +808,12 @@ class AutonomousEngine:
 
                     logger.warning(f"Connection lost - reconnecting (attempt {reconnect_attempts})...")
 
-                    if self.broker.connect():
+                    if hasattr(self.broker, "ensure_connected"):
+                        connected = self.broker.ensure_connected()
+                    else:
+                        connected = self.broker.connect()
+
+                    if connected:
                         logger.info("✓ Reconnected successfully")
                         self._add_decision("SYSTEM", "Reconnected to broker", "INFO", {"attempts": reconnect_attempts})
                         reconnect_attempts = 0  # Reset on success
@@ -839,6 +848,48 @@ class AutonomousEngine:
                 logger.error(f"Error in periodic state save: {e}")
                 await asyncio.sleep(30)
 
+    async def _task_supervisor(self):
+        """
+        Restart failed background tasks to keep the engine running continuously.
+        """
+        while self.running:
+            try:
+                await asyncio.sleep(10)
+                for name, task in list(self._task_registry.items()):
+                    if name == "task_supervisor":
+                        continue
+                    if task.done():
+                        exc = None
+                        try:
+                            exc = task.exception()
+                        except Exception:
+                            exc = None
+
+                        backoff = min(self._task_backoff.get(name, 1) * 2, 60)
+                        self._task_backoff[name] = backoff
+
+                        logger.error(f"⚠️ Background task {name} stopped - restarting in {backoff}s")
+                        self._add_decision(
+                            "SYSTEM",
+                            f"Restarting task {name} in {backoff}s",
+                            "WARNING",
+                            {"task": name, "error": str(exc) if exc else None, "backoff_seconds": backoff}
+                        )
+
+                        await asyncio.sleep(backoff)
+
+                        factory = self._task_factories.get(name)
+                        if factory and self.running:
+                            new_task = asyncio.create_task(factory())
+                            new_task.add_done_callback(lambda t, n=name: logger.error(f"❌ Task {n} failed again") if t.exception() else None)
+                            self._task_registry[name] = new_task
+                            self._background_tasks.append(new_task)
+                        else:
+                            logger.error(f"No factory found to restart task {name}")
+
+            except Exception as e:
+                logger.error(f"Task supervisor error: {e}")
+                await asyncio.sleep(10)
     async def _position_reconciliation_loop(self):
         """
         Periodically reconcile our position tracking with broker's actual positions.
@@ -959,6 +1010,32 @@ class AutonomousEngine:
 
                     # 3. Rank and select best opportunities
                     top_picks = self._rank_opportunities(analyzed)
+                    ranked_full = sorted(
+                        analyzed,
+                        key=lambda x: (x.get("num_strategies", 0), x.get("confidence", 0)),
+                        reverse=True
+                    )
+                    picked_symbols = {t.get("symbol") for t in top_picks if t.get("symbol")}
+
+                    # Log signals that were not selected for execution
+                    if ranked_full:
+                        max_logs = len(ranked_full) if settings.screener_debug else min(len(ranked_full), 25)
+                        for idx, opp in enumerate(ranked_full[:max_logs], start=1):
+                            symbol = opp.get("symbol")
+                            if not symbol or symbol in picked_symbols:
+                                continue
+                            self._add_decision(
+                                "SKIPPED",
+                                f"⏭️ {symbol}: Signal not selected (rank {idx}/{len(ranked_full)})",
+                                "INFO",
+                                {
+                                    "symbol": symbol,
+                                    "rank": idx,
+                                    "total_signals": len(ranked_full),
+                                    "num_strategies": opp.get("num_strategies", 0),
+                                    "confidence": round(opp.get("confidence", 0), 3),
+                                }
+                            )
 
                     # =====================================================
                     # CRITICAL: EOD LIQUIDATION CHECK (redundant - for safety)
@@ -994,6 +1071,16 @@ class AutonomousEngine:
                                 {"opportunities": len(opportunities), "analyzed": self.last_strategy_analyzed_count, "broker_connected": False}
                             )
                             logger.warning("⚠️ Broker not connected - cannot execute trades")
+                            for opp in top_picks[:10]:
+                                symbol = opp.get("symbol")
+                                if not symbol:
+                                    continue
+                                self._add_decision(
+                                    "SKIPPED",
+                                    f"⏸️ {symbol}: Signal ready but broker not connected",
+                                    "WARNING",
+                                    {"symbol": symbol, "reason": "broker_not_connected"}
+                                )
                         elif is_past_new_trade_cutoff():
                             mins_left = minutes_until_close()
                             self._add_decision(
@@ -1003,6 +1090,16 @@ class AutonomousEngine:
                                 {"minutes_to_close": mins_left}
                             )
                             logger.info(f"⏰ Past trade cutoff (3:30 PM) - {mins_left} mins until close, no new trades")
+                            for opp in top_picks[:10]:
+                                symbol = opp.get("symbol")
+                                if not symbol:
+                                    continue
+                                self._add_decision(
+                                    "SKIPPED",
+                                    f"⏸️ {symbol}: Signal blocked by trade cutoff",
+                                    "INFO",
+                                    {"symbol": symbol, "reason": "trade_cutoff", "minutes_to_close": mins_left}
+                                )
                         elif self.daily_pnl <= self.daily_pnl_limit:
                             self._add_decision(
                                 "DAILY_LIMIT",
@@ -1011,6 +1108,16 @@ class AutonomousEngine:
                                 {"daily_pnl": self.daily_pnl, "limit": self.daily_pnl_limit}
                             )
                             logger.warning(f"🛑 Daily loss limit reached: ${self.daily_pnl:.2f}")
+                            for opp in top_picks[:10]:
+                                symbol = opp.get("symbol")
+                                if not symbol:
+                                    continue
+                                self._add_decision(
+                                    "SKIPPED",
+                                    f"⏸️ {symbol}: Signal blocked by daily loss limit",
+                                    "WARNING",
+                                    {"symbol": symbol, "reason": "daily_loss_limit"}
+                                )
                         else:
                             await self._execute_trades(top_picks)
                     elif not is_market_open and opportunities:
@@ -1020,6 +1127,16 @@ class AutonomousEngine:
                             "INFO",
                             {"opportunities": len(opportunities), "analyzed": self.last_strategy_analyzed_count}
                         )
+                        for opp in top_picks[:10]:
+                            symbol = opp.get("symbol")
+                            if not symbol:
+                                continue
+                            self._add_decision(
+                                "SKIPPED",
+                                f"⏸️ {symbol}: Signal noted but market is closed",
+                                "INFO",
+                                {"symbol": symbol, "reason": "market_closed"}
+                            )
 
                     # Scan complete summary - always show what happened
                     scan_duration = (datetime.now() - scan_start).total_seconds()
