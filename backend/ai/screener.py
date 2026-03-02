@@ -106,15 +106,18 @@ class MarketScreener:
         - Gap down 2%+ = bearish momentum or short opportunity
         - Gap 5%+ = significant move, high priority
         """
-        if len(df) < 2:
-            return {"gap_percent": 0.0, "gap_direction": "FLAT", "is_gapper": False}
+        if "open" not in df or "close" not in df or len(df) < 2:
+            return {"gap_percent": 0.0, "gap_direction": "FLAT", "is_gapper": False, "is_significant_gap": False}
 
         # Get today's first bar and previous day's last bar
-        today_open = float(df["open"].iloc[-1])
-        prev_close = float(df["close"].iloc[-2])
+        try:
+            today_open = float(df["open"].iloc[-1])
+            prev_close = float(df["close"].iloc[-2])
+        except Exception:
+            return {"gap_percent": 0.0, "gap_direction": "FLAT", "is_gapper": False, "is_significant_gap": False}
 
         if prev_close == 0:
-            return {"gap_percent": 0.0, "gap_direction": "FLAT", "is_gapper": False}
+            return {"gap_percent": 0.0, "gap_direction": "FLAT", "is_gapper": False, "is_significant_gap": False}
 
         gap_percent = ((today_open - prev_close) / prev_close) * 100
 
@@ -188,23 +191,25 @@ class MarketScreener:
             "rejection_reason": None,
         }
 
+        df_clean = df.dropna(subset=["open", "high", "low", "close", "volume"])
+
         # Check minimum data
-        if len(df) < 20:
+        if len(df_clean) < 20:
             result["rejection_reason"] = "Insufficient data (< 20 bars)"
             result["filters"]["data_check"] = {"passed": False, "reason": "< 20 bars"}
             return result
-        result["filters"]["data_check"] = {"passed": True, "value": len(df)}
+        result["filters"]["data_check"] = {"passed": True, "value": len(df_clean)}
 
-        features = latest_feature_vector(df)
-        last_price = float(df["close"].iloc[-1])
-        volumes = self._volume_metrics(df)
+        features = latest_feature_vector(df_clean)
+        last_price = float(df_clean["close"].iloc[-1])
+        volumes = self._volume_metrics(df_clean)
         avg_volume_bar = volumes["avg_volume_bar"]
         avg_volume = volumes["avg_daily_volume"]
         last_volume = volumes["last_volume"]
         relative_volume = last_volume / avg_volume_bar if avg_volume_bar else 0.0
 
         # Calculate gap - KEY day trading indicator
-        gap_info = self.calculate_gap(df)
+        gap_info = self.calculate_gap(df_clean)
 
         # Store basic data
         result["data"]["price"] = round(last_price, 2)
@@ -283,9 +288,9 @@ class MarketScreener:
                 float_score = max(0, (self.max_float_millions - float_millions) / self.max_float_millions) * 0.3
 
         ml_score = self.model.predict(features)
-        momentum_score = float((df["close"].iloc[-1] - df["close"].iloc[-5]) / df["close"].iloc[-5])
+        momentum_score = float((df_clean["close"].iloc[-1] - df_clean["close"].iloc[-5]) / df_clean["close"].iloc[-5])
 
-        atr_series = atr(df, 14)
+        atr_series = atr(df_clean, 14)
         current_atr = atr_series.iloc[-1] if len(atr_series) > 0 else 0
         atr_percent = (current_atr / last_price) * 100 if last_price > 0 else 0
         atr_score = min(atr_percent / 5.0, 0.2)
@@ -293,8 +298,8 @@ class MarketScreener:
         pattern_score = 0.0
         detected_pattern = None
         if self.enable_pattern_detection:
-            bull_flag = is_bull_flag(df)
-            flat_top = is_flat_top_breakout(df)
+            bull_flag = is_bull_flag(df_clean)
+            flat_top = is_flat_top_breakout(df_clean)
             if bull_flag.get("detected"):
                 pattern_score = 0.25
                 detected_pattern = "BULL_FLAG"
@@ -414,19 +419,20 @@ class MarketScreener:
         - News catalyst boost
         - Float score
         """
-        if len(df) < 20:
+        df_clean = df.dropna(subset=["open", "high", "low", "close", "volume"])
+        if len(df_clean) < 20:
             return None
 
-        features = latest_feature_vector(df)
-        last_price = float(df["close"].iloc[-1])
-        volumes = self._volume_metrics(df)
+        features = latest_feature_vector(df_clean)
+        last_price = float(df_clean["close"].iloc[-1])
+        volumes = self._volume_metrics(df_clean)
         avg_volume_bar = volumes["avg_volume_bar"]
         avg_volume = volumes["avg_daily_volume"]
         last_volume = volumes["last_volume"]
         relative_volume = last_volume / avg_volume_bar if avg_volume_bar else 0.0
 
         # Calculate gap
-        gap_info = self.calculate_gap(df)
+        gap_info = self.calculate_gap(df_clean)
 
         # Basic filters
         if avg_volume < self.min_avg_volume:
@@ -454,10 +460,10 @@ class MarketScreener:
         ml_score = self.model.predict(features)
 
         # Momentum Score (5-bar momentum)
-        momentum_score = float((df["close"].iloc[-1] - df["close"].iloc[-5]) / df["close"].iloc[-5])
+        momentum_score = float((df_clean["close"].iloc[-1] - df_clean["close"].iloc[-5]) / df_clean["close"].iloc[-5])
 
         # ATR Score (higher ATR = more tradeable for day trading)
-        atr_series = atr(df, 14)
+        atr_series = atr(df_clean, 14)
         current_atr = atr_series.iloc[-1] if len(atr_series) > 0 else 0
         atr_percent = (current_atr / last_price) * 100 if last_price > 0 else 0
         atr_score = min(atr_percent / 5.0, 0.2)  # Cap at 0.2, reward up to 5% ATR
@@ -466,8 +472,8 @@ class MarketScreener:
         pattern_score = 0.0
         detected_pattern = None
         if self.enable_pattern_detection:
-            bull_flag = is_bull_flag(df)
-            flat_top = is_flat_top_breakout(df)
+            bull_flag = is_bull_flag(df_clean)
+            flat_top = is_flat_top_breakout(df_clean)
 
             if bull_flag.get("detected"):
                 pattern_score = 0.25
