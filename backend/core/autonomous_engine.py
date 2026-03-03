@@ -124,6 +124,9 @@ from core.edge_engine import get_edge_engine, EdgeEngine
 
 logger = logging.getLogger("autonomous_engine")
 
+# Persistent decision log (last N decisions)
+DECISION_LOG_FILE = Path("data/decision_log.json")
+
 
 class AutonomousEngine:
     """
@@ -157,6 +160,10 @@ class AutonomousEngine:
         self.mode = self.config.get("mode", "FULL_AUTO")  # ASSISTED, SEMI_AUTO, FULL_AUTO, GOD_MODE
         self.risk_posture = self.config.get("risk_posture", "BALANCED")  # DEFENSIVE, BALANCED, AGGRESSIVE
         self.scan_interval = self.config.get("scan_interval", 1)  # seconds between scans (1s for real-time day trading)
+        self.scan_watchdog_threshold = self.config.get("scan_watchdog_threshold", 60)  # seconds before restarting scan loop
+        self.last_scan_heartbeat: Optional[datetime] = None
+        self.max_decisions = self.config.get("max_decision_logs", 100)
+        self._last_decision_flush: Optional[datetime] = None
         self.max_positions = self.config.get("max_positions", 5)
         self.enabled_strategies = self.config.get("enabled_strategies", "ALL")
 
@@ -416,6 +423,18 @@ class AutonomousEngine:
                             {"decisions_recovered": len(self.decisions), "active_symbols": len(self.active_symbols)}
                         )
 
+            # Load persisted decision log (if larger than state snapshot)
+            if DECISION_LOG_FILE.exists():
+                try:
+                    with open(DECISION_LOG_FILE, "r") as f:
+                        persisted = json.load(f)
+                    if isinstance(persisted, list) and len(persisted) > len(self.decisions):
+                        self.decisions = persisted
+                    if len(self.decisions) > self.max_decisions:
+                        self.decisions = self.decisions[: self.max_decisions]
+                except Exception as e:
+                    logger.debug(f"Failed to load decision log: {e}")
+
         except Exception as e:
             logger.error(f"Error loading state: {e}")
 
@@ -471,7 +490,7 @@ class AutonomousEngine:
                 "last_liquidation_date": self.last_liquidation_date,
 
                 # Decision history (keep last 50 for context)
-                "decisions": self.decisions[:50],
+                "decisions": self.decisions[:100],
 
                 # Active tracking
                 "active_symbols": list(self.active_symbols),
@@ -489,6 +508,9 @@ class AutonomousEngine:
 
             with open(self.state_file, 'w') as f:
                 json.dump(state, f, indent=2)
+
+            # Persist decisions for UI continuity
+            self._persist_decisions()
 
         except Exception as e:
             logger.error(f"Error saving state: {e}")
@@ -764,6 +786,7 @@ class AutonomousEngine:
             "latency_monitor": self._latency_monitor,
             "periodic_state_save": self._periodic_state_save,
             "position_reconciliation": self._position_reconciliation_loop,
+            "scan_watchdog": self._scan_watchdog,
         }
 
         for name, factory in self._task_factories.items():
@@ -905,6 +928,50 @@ class AutonomousEngine:
             except Exception as e:
                 logger.error(f"Task supervisor error: {e}")
                 await asyncio.sleep(10)
+
+    async def _scan_watchdog(self):
+        """
+        Watchdog to detect stalled scanning loops and restart the main trading loop.
+        """
+        while self.running:
+            try:
+                await asyncio.sleep(15)
+                if not self.running:
+                    continue
+                if not self.last_scan_heartbeat:
+                    continue
+
+                stale_seconds = (datetime.utcnow() - self.last_scan_heartbeat).total_seconds()
+                threshold = max(self.scan_watchdog_threshold, self.scan_interval * 4)
+                if stale_seconds > threshold:
+                    self._add_decision(
+                        "SYSTEM",
+                        f"⚠️ Scan stalled ({int(stale_seconds)}s) - restarting main loop",
+                        "WARNING",
+                        {"stale_seconds": int(stale_seconds), "threshold": int(threshold)},
+                    )
+                    await self._restart_task("main_trading_loop", f"stale {int(stale_seconds)}s")
+                    # Reset heartbeat to avoid restart loops
+                    self.last_scan_heartbeat = datetime.utcnow()
+            except Exception as e:
+                logger.error(f"Scan watchdog error: {e}")
+                await asyncio.sleep(10)
+
+    async def _restart_task(self, name: str, reason: str):
+        """Cancel and restart a background task."""
+        try:
+            task = self._task_registry.get(name)
+            if task and not task.done():
+                task.cancel()
+            factory = self._task_factories.get(name)
+            if factory and self.running:
+                new_task = asyncio.create_task(factory())
+                new_task.add_done_callback(lambda t, n=name: logger.error(f"❌ Task {n} failed again") if t.exception() else None)
+                self._task_registry[name] = new_task
+                self._background_tasks.append(new_task)
+                logger.warning(f"🔁 Restarted task {name} ({reason})")
+        except Exception as e:
+            logger.error(f"Failed to restart task {name}: {e}")
     async def _position_reconciliation_loop(self):
         """
         Periodically reconcile our position tracking with broker's actual positions.
@@ -953,6 +1020,7 @@ class AutonomousEngine:
                 try:
                     loop_count += 1
                     scan_start = datetime.now()
+                    self.last_scan_heartbeat = datetime.utcnow()
 
                     # Log every iteration so user can see activity
                     self._add_decision(
@@ -1179,6 +1247,7 @@ class AutonomousEngine:
 
                     # Reset error counter on success
                     consecutive_errors = 0
+                    self.last_scan_heartbeat = datetime.utcnow()
 
                     # 5. Wait for next scan
                     logger.info(f"⏳ Waiting {current_scan_interval}s for next scan...")
@@ -2956,11 +3025,9 @@ class AutonomousEngine:
         return self.broker.is_connected()
 
     def _is_market_hours(self) -> bool:
-        """Check if we're in regular market hours"""
-        now = datetime.now().time()
-        market_open = time(9, 30)
-        market_close = time(16, 0)
-        return market_open <= now <= market_close
+        """Check if we're in regular market hours (ET)"""
+        session = market_session()
+        return session.get("regular", False)
 
     def _add_decision(self, decision_type: str, message: str, category: str, details: Dict[str, Any]):
         """Add decision to log - THREAD SAFE
@@ -2983,9 +3050,24 @@ class AutonomousEngine:
         with self._state_lock:
             self.decisions.insert(0, decision)  # Add to front
 
-            # Keep last 100 decisions
-            if len(self.decisions) > 100:
-                self.decisions = self.decisions[:100]
+            # Keep last N decisions
+            if len(self.decisions) > self.max_decisions:
+                self.decisions = self.decisions[: self.max_decisions]
+
+        # Persist decisions with a light throttle to avoid excessive IO
+        now = datetime.utcnow()
+        if not self._last_decision_flush or (now - self._last_decision_flush).total_seconds() >= 5:
+            self._persist_decisions()
+            self._last_decision_flush = now
+
+    def _persist_decisions(self) -> None:
+        """Persist recent decisions to disk for UI continuity."""
+        try:
+            DECISION_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(DECISION_LOG_FILE, "w") as f:
+                json.dump(self.decisions[: self.max_decisions], f, indent=2)
+        except Exception as e:
+            logger.debug(f"Failed to persist decisions: {e}")
 
     def get_status(self) -> Dict[str, Any]:
         """Get current engine status with detailed scanner information"""

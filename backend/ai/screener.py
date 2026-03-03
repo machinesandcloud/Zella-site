@@ -686,9 +686,19 @@ class MarketScreener:
 
         for symbol, df in market_data.items():
             daily_df = daily_data.get(symbol) if daily_data else None
-            evaluation = self.evaluate_symbol_detailed(
-                symbol, df, current_hour, current_minute, daily_df=daily_df
-            )
+            try:
+                evaluation = self.evaluate_symbol_detailed(
+                    symbol, df, current_hour, current_minute, daily_df=daily_df
+                )
+            except Exception as e:
+                logger.warning(f"Screener evaluation failed for {symbol}: {e}")
+                evaluation = {
+                    "symbol": symbol,
+                    "passed": False,
+                    "filters": {"data_check": {"passed": False, "reason": "evaluation_error"}},
+                    "data": {},
+                    "rejection_reason": f"Evaluation error: {str(e)}",
+                }
             all_evaluations.append(evaluation)
             if evaluation["passed"]:
                 passed.append(evaluation)
@@ -913,9 +923,12 @@ class MarketScreener:
         results: List[Dict[str, Union[float, str]]] = []
         for symbol, df in market_data.items():
             daily_df = daily_data.get(symbol) if daily_data else None
-            scored = self.score_symbol(symbol, df, current_hour, current_minute, daily_df=daily_df)
-            if scored:
-                results.append(scored)
+            try:
+                scored = self.score_symbol(symbol, df, current_hour, current_minute, daily_df=daily_df)
+                if scored:
+                    results.append(scored)
+            except Exception as e:
+                logger.debug(f"Screener score failed for {symbol}: {e}")
 
         # Sort by combined score (highest first)
         ranked = sorted(results, key=lambda x: x["combined_score"], reverse=True)
