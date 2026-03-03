@@ -367,10 +367,10 @@ async def on_startup() -> None:
 
             logger.info("🚀 Auto-starting Autonomous Trading Engine...")
             try:
-                await app.state.autonomous_engine.start()
-                logger.info("✅ Autonomous Engine start() completed - main loop running in background")
+                app.state.engine_start_task = asyncio.create_task(app.state.autonomous_engine.start())
+                logger.info("✅ Autonomous Engine start() scheduled - main loop will run in background")
             except Exception as e:
-                logger.error(f"❌ Failed to start autonomous engine: {e}")
+                logger.error(f"❌ Failed to schedule autonomous engine start: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -399,6 +399,8 @@ async def on_shutdown() -> None:
         app.state.keepalive_task.cancel()
     if hasattr(app.state, "resilience_task") and app.state.resilience_task:
         app.state.resilience_task.cancel()
+    if hasattr(app.state, "engine_start_task") and app.state.engine_start_task:
+        app.state.engine_start_task.cancel()
 
     # Stop autonomous engine if running
     if hasattr(app.state, "autonomous_engine") and app.state.autonomous_engine:
