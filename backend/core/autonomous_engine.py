@@ -105,6 +105,7 @@ from utils.market_hours import (
     minutes_until_close,
     is_opening_range,
     minutes_since_open,
+    market_session,
 )
 from core.pro_trade_filters import ProTradeValidator
 from core.elite_trade_system import (
