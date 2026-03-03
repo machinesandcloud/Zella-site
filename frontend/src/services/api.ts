@@ -61,6 +61,7 @@ const api = axios.create({
 // Extend config type to track retries
 interface RetryConfig extends InternalAxiosRequestConfig {
   __retryCount?: number;
+  __skipRetry?: boolean;
 }
 
 api.interceptors.request.use((config) => {
@@ -84,7 +85,7 @@ api.interceptors.response.use(
     }
 
     // Check if we should retry
-    if (!config || !isRetryableError(error)) {
+    if (!config || config.__skipRetry || !isRetryableError(error)) {
       return Promise.reject(error);
     }
 
@@ -311,7 +312,10 @@ export const liquidateAllPositions = async () => {
 };
 
 export const getAutonomousStatus = async () => {
-  const { data } = await api.get("/api/ai/autonomous/status");
+  const { data } = await api.get("/api/ai/autonomous/status", {
+    timeout: 5000,
+    __skipRetry: true
+  } as RetryConfig);
   return data;
 };
 

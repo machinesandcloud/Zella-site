@@ -229,6 +229,8 @@ class AutonomousEngine:
         self._daily_data_cache: Dict[str, pd.DataFrame] = {}
         self._daily_data_cache_time: Optional[datetime] = None
         self._daily_data_cache_ttl_seconds = 15 * 60
+        self._positions_cache_count: int = 0
+        self._positions_cache_time: Optional[datetime] = None
         self._short_interest_cache_time: Optional[datetime] = None
         self._short_interest_cache_ttl_seconds = 12 * 60 * 60
         self._short_interest_provider = ShortInterestProvider(
@@ -1207,6 +1209,8 @@ class AutonomousEngine:
         while self.running:
             try:
                 positions = self.broker.get_positions()
+                self._positions_cache_count = len(positions)
+                self._positions_cache_time = datetime.now()
 
                 for position in positions:
                     symbol = position.get("symbol")
@@ -2976,6 +2980,8 @@ class AutonomousEngine:
         now = datetime.now()
         in_power_hour = is_power_hour(now.hour, now.minute)
         time_mult = power_hour_multiplier(now.hour, now.minute)
+        cached_positions = self._positions_cache_count
+        cache_age = (datetime.now() - self._positions_cache_time).total_seconds() if self._positions_cache_time else None
 
         return {
             "enabled": self.enabled,
@@ -2983,7 +2989,8 @@ class AutonomousEngine:
             "mode": self.mode,
             "risk_posture": self.risk_posture,
             "last_scan": self.last_scan_time.isoformat() if self.last_scan_time else None,
-            "active_positions": len(self.broker.get_positions()) if self.broker.is_connected() else 0,
+            "active_positions": cached_positions,
+            "positions_cache_age": cache_age,
             "decisions": self.decisions[:20],  # Last 20 decisions
             "strategy_performance": self.strategy_performance,
             "num_strategies": len(self.all_strategies),

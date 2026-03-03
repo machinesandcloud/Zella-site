@@ -81,27 +81,38 @@ const AutopilotControl = () => {
   const [strategyPerf, setStrategyPerf] = useState<StrategyPerformance | null>(null);
   const [expandedStrategies, setExpandedStrategies] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const STATUS_CACHE_KEY = "zella_autonomous_status";
 
   const loadStatus = async () => {
     setRefreshing(true);
     try {
       const data = await getAutonomousStatus();
       setStatus(data);
+      localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify(data));
     } catch (error: any) {
       console.error("Error loading autonomous status:", error);
-      // Set demo status on ANY error - don't show annoying notifications repeatedly
-      setStatus({
-        enabled: false,
-        running: false,
-        mode: "FULL_AUTO",
-        risk_posture: "BALANCED",
-        last_scan: null,
-        active_positions: 0,
-        decisions: [],
-        strategy_performance: {},
-        num_strategies: 0,
-        connected: false
-      });
+      const cached = localStorage.getItem(STATUS_CACHE_KEY);
+      if (cached) {
+        try {
+          setStatus(JSON.parse(cached));
+        } catch {
+          setStatus(null);
+        }
+      } else {
+        // Set demo status on ANY error - don't show annoying notifications repeatedly
+        setStatus({
+          enabled: false,
+          running: false,
+          mode: "FULL_AUTO",
+          risk_posture: "BALANCED",
+          last_scan: null,
+          active_positions: 0,
+          decisions: [],
+          strategy_performance: {},
+          num_strategies: 0,
+          connected: false
+        });
+      }
     } finally {
       setRefreshing(false);
       setLoading(false);
@@ -118,6 +129,16 @@ const AutopilotControl = () => {
   };
 
   useEffect(() => {
+    const cached = localStorage.getItem(STATUS_CACHE_KEY);
+    if (cached) {
+      try {
+        setStatus(JSON.parse(cached));
+        setLoading(false);
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
     loadStatus();
     loadStrategyPerformance();
 
