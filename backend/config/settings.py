@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     screener_require_daily_trend: bool = True  # Enforce daily SMA20/50 trend filter
     screener_debug: bool = False  # Include full screener debug metrics in logs/WS
 
+    # Autonomous engine resilience
+    autonomous_auto_resume: bool = True  # Auto-resume engine on restart/reconnect
+
     class Config:
         env_file = ".env"
         case_sensitive = False

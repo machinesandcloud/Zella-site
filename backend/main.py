@@ -218,9 +218,13 @@ async def resilience_watchdog():
                     )
 
                 engine = app.state.autonomous_engine
-                if engine and not engine.running and engine.enabled:
-                    logger.warning("Autonomous engine stopped - restarting")
-                    await engine.start()
+                if engine and not engine.running:
+                    if not engine.enabled and app_settings.autonomous_auto_resume:
+                        engine.enabled = True
+                        logger.warning("Autonomous engine auto-resume enabled - setting enabled=True")
+                    if engine.enabled:
+                        logger.warning("Autonomous engine stopped - restarting")
+                        await engine.start()
         except Exception as e:
             logger.warning(f"Resilience watchdog error: {e}")
             await _asyncio.sleep(5)

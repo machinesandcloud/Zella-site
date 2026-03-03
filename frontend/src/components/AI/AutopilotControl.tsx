@@ -272,7 +272,7 @@ const AutopilotControl = () => {
         {/* Connection Warning */}
         {!status.connected && (
           <Alert severity="warning" sx={{ mb: 3 }}>
-            Not connected to broker. Autonomous trading requires an active broker connection.
+            Not connected to broker. You can still run scan-only mode, but trades won’t execute until the broker reconnects.
           </Alert>
         )}
 
@@ -304,7 +304,7 @@ const AutopilotControl = () => {
                 <Switch
                   checked={isRunning}
                   onChange={handleToggleEngine}
-                  disabled={!status.connected}
+                  disabled={!status}
                   size="medium"
                   color="success"
                 />
