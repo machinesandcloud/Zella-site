@@ -16,7 +16,7 @@ import TradeHistory from "./components/Dashboard/TradeHistory";
 import PerformanceMetrics from "./components/Dashboard/PerformanceMetrics";
 import AlpacaConnection from "./components/Settings/AlpacaConnection";
 import RiskSettings from "./components/Settings/RiskSettings";
-import { autoLogin, fetchAlpacaStatus, startHealthMonitoring, onConnectionChange } from "./services/api";
+import { autoLogin, fetchAlpacaStatus, startHealthMonitoring, stopHealthMonitoring, onConnectionChange, forceHealthCheck } from "./services/api";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import SystemHealth from "./components/Dashboard/SystemHealth";
 import BotLogs from "./components/AI/BotLogs";
@@ -34,6 +34,7 @@ const NAV = [
 // Backend wake-up configuration for Render
 const MAX_WAKE_RETRIES = 6;
 const WAKE_RETRY_INTERVAL = 10000;
+const RECONNECT_RETRY_INTERVAL = 10000;
 
 const App = () => {
   const [tab, setTab] = useState(0);
@@ -70,13 +71,16 @@ const App = () => {
     };
   }, []);
 
-  // Connection health monitoring - starts after authenticated
+  // Start health monitoring once on mount
   useEffect(() => {
-    if (!isAuthenticated) return;
-
-    // Start health monitoring
     startHealthMonitoring();
+    return () => {
+      stopHealthMonitoring();
+    };
+  }, []);
 
+  // Connection health monitoring - subscribe to connection changes
+  useEffect(() => {
     // Listen for connection changes
     const unsubscribe = onConnectionChange((connected) => {
       setBackendConnected(connected);
@@ -99,7 +103,7 @@ const App = () => {
     return () => {
       unsubscribe();
     };
-  }, [isAuthenticated, backendConnected]);
+  }, [backendConnected]);
 
   // Auto-login with retry logic for Render cold starts
   useEffect(() => {
@@ -107,7 +111,7 @@ const App = () => {
     if (token) {
       setIsAuthenticated(true);
       setIsWakingUp(false);
-      setBackendConnected(true);
+      void forceHealthCheck();
       return;
     }
 
@@ -150,19 +154,78 @@ const App = () => {
     };
   }, []);
 
+  // Auto-reconnect loop when backend is disconnected
+  useEffect(() => {
+    if (backendConnected) {
+      setIsWakingUp(false);
+      return;
+    }
+
+    let cancelled = false;
+    let attempt = 0;
+
+    const attemptReconnect = async () => {
+      if (cancelled) return;
+      attempt += 1;
+      setWakeAttempt(attempt);
+      setIsWakingUp(true);
+
+      await forceHealthCheck();
+
+      if (!isAuthenticated) {
+        try {
+          const data = await autoLogin();
+          if (data?.access_token) {
+            localStorage.setItem("zella_token", data.access_token);
+            setIsAuthenticated(true);
+            window.dispatchEvent(new CustomEvent("auth:login"));
+          }
+        } catch {
+          // Ignore and retry
+        }
+      }
+
+      if (!cancelled && !backendConnected) {
+        setTimeout(attemptReconnect, RECONNECT_RETRY_INTERVAL);
+      }
+    };
+
+    attemptReconnect();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backendConnected, isAuthenticated]);
+
   // Re-authenticate when auth is required
   useEffect(() => {
     if (!authRequired) return;
-    autoLogin()
-      .then((data) => {
+    let cancelled = false;
+
+    const retryLogin = async () => {
+      try {
+        const data = await autoLogin();
+        if (cancelled) return;
         if (data?.access_token) {
           localStorage.setItem("zella_token", data.access_token);
           setAuthRequired(false);
           setIsAuthenticated(true);
           window.dispatchEvent(new CustomEvent("auth:login"));
+        } else if (!cancelled) {
+          setTimeout(retryLogin, RECONNECT_RETRY_INTERVAL);
         }
-      })
-      .catch(() => undefined);
+      } catch {
+        if (!cancelled) {
+          setTimeout(retryLogin, RECONNECT_RETRY_INTERVAL);
+        }
+      }
+    };
+
+    retryLogin();
+
+    return () => {
+      cancelled = true;
+    };
   }, [authRequired]);
 
   // Fetch Alpaca status after authenticated
@@ -302,7 +365,23 @@ const App = () => {
               <Button
                 size="small"
                 variant="outlined"
-                onClick={() => window.location.reload()}
+                onClick={async () => {
+                  setIsWakingUp(true);
+                  setWakeAttempt(0);
+                  await forceHealthCheck();
+                  if (!isAuthenticated) {
+                    try {
+                      const data = await autoLogin();
+                      if (data?.access_token) {
+                        localStorage.setItem("zella_token", data.access_token);
+                        setIsAuthenticated(true);
+                        window.dispatchEvent(new CustomEvent("auth:login"));
+                      }
+                    } catch {
+                      // Ignore; background retry loop will continue
+                    }
+                  }
+                }}
                 sx={{ ml: 1, textTransform: "none" }}
               >
                 Retry

@@ -222,7 +222,7 @@ async def resilience_watchdog():
                             "enabled": True,
                             "mode": "FULL_AUTO",
                             "risk_posture": "BALANCED",
-                            "scan_interval": 30,
+                            "scan_interval": 1,
                             "max_positions": 5,
                             "enabled_strategies": "ALL",
                         },
@@ -381,7 +381,7 @@ async def on_startup() -> None:
                     "enabled": True,  # Auto-enable for real-time scanning
                     "mode": "FULL_AUTO",
                     "risk_posture": "BALANCED",
-                    "scan_interval": 30,  # 30s for real-time updates
+                    "scan_interval": 1,  # 1s for real-time updates
                     "max_positions": 5,
                     "enabled_strategies": "ALL"
                 }

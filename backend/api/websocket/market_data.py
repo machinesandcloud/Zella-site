@@ -160,31 +160,46 @@ async def market_data_ws(websocket: WebSocket) -> None:
         while True:
             provider = _get_market_provider()
             batch = []
-            for symbol in symbols:
-                snapshot = provider.get_market_snapshot(symbol) or {}
-                price = snapshot.get("price", 0)
-                # Only include symbols with real prices
-                if price > 0:
-                    batch.append({
-                        "symbol": symbol,
-                        "price": price,
-                        "bid": snapshot.get("bid", 0),
-                        "ask": snapshot.get("ask", 0),
-                        "bid_size": snapshot.get("bid_size", 0),
-                        "ask_size": snapshot.get("ask_size", 0),
-                        "volume": snapshot.get("volume", 0),
-                    })
+            data_source = "real"
+
+            if not provider:
+                data_source = "unavailable"
+            else:
+                try:
+                    for symbol in symbols:
+                        snapshot = provider.get_market_snapshot(symbol) or {}
+                        price = snapshot.get("price", 0)
+                        # Only include symbols with real prices
+                        if price > 0:
+                            batch.append({
+                                "symbol": symbol,
+                                "price": price,
+                                "bid": snapshot.get("bid", 0),
+                                "ask": snapshot.get("ask", 0),
+                                "bid_size": snapshot.get("bid_size", 0),
+                                "ask_size": snapshot.get("ask_size", 0),
+                                "volume": snapshot.get("volume", 0),
+                            })
+                except Exception as e:
+                    logger.debug(f"Market data provider error: {e}")
+                    data_source = "unavailable"
+                    batch = []
 
             # Send all updates in a single message for efficiency
             message = {
                 "channel": "market-data",
                 "type": "batch",
                 "data": batch,
+                "data_source": data_source,
                 "symbols_requested": len(symbols),
                 "symbols_with_data": len(batch),
                 "timestamp": datetime.utcnow().isoformat(),
             }
-            await websocket.send_json(message)
+            try:
+                await websocket.send_json(message)
+            except Exception as e:
+                logger.debug(f"market-data WS send failed: {e}")
+                break
             await asyncio.sleep(interval)
     except WebSocketDisconnect:
         return
@@ -259,16 +274,24 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
                         symbols = new_symbols[:50]
                 last_symbols_update = now
 
-            # Use batch fetching if available (MUCH faster - single API call)
-            if hasattr(provider, 'get_batch_snapshots'):
-                snapshots = provider.get_batch_snapshots(symbols)
+            snapshots = {}
+            if not provider:
+                data_source = "unavailable"
             else:
-                # Fallback to individual fetching (slower)
-                snapshots = {}
-                for symbol in symbols:
-                    snap = provider.get_market_snapshot(symbol)
-                    if snap:
-                        snapshots[symbol] = snap
+                try:
+                    # Use batch fetching if available (MUCH faster - single API call)
+                    if hasattr(provider, 'get_batch_snapshots'):
+                        snapshots = provider.get_batch_snapshots(symbols)
+                    else:
+                        # Fallback to individual fetching (slower)
+                        for symbol in symbols:
+                            snap = provider.get_market_snapshot(symbol)
+                            if snap:
+                                snapshots[symbol] = snap
+                except Exception as e:
+                    logger.debug(f"Live ticker provider error: {e}")
+                    data_source = "unavailable"
+                    snapshots = {}
 
             # Process all snapshots
             for symbol in symbols:
@@ -321,15 +344,19 @@ async def live_ticker_ws(websocket: WebSocket) -> None:
             if not tickers:
                 data_source = "unavailable"
 
-            await websocket.send_json({
-                "channel": "live-ticker",
-                "type": "update",
-                "data": tickers,
-                "data_source": data_source,
-                "symbols_requested": len(symbols),
-                "symbols_with_data": len(tickers),
-                "timestamp": datetime.utcnow().isoformat(),
-            })
+            try:
+                await websocket.send_json({
+                    "channel": "live-ticker",
+                    "type": "update",
+                    "data": tickers,
+                    "data_source": data_source,
+                    "symbols_requested": len(symbols),
+                    "symbols_with_data": len(tickers),
+                    "timestamp": datetime.utcnow().isoformat(),
+                })
+            except Exception as e:
+                logger.debug(f"live-ticker WS send failed: {e}")
+                break
 
             await asyncio.sleep(1.0)  # 1 second between updates (Yahoo has rate limits)
     except WebSocketDisconnect:
