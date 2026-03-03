@@ -34,6 +34,7 @@ from .after_hours_liquidity_trap import AfterHoursLiquidityTrapStrategy
 from .closing_bell_liquidity_grab import ClosingBellLiquidityGrabStrategy
 from .bull_flag import BullFlagStrategy
 from .flat_top_breakout import FlatTopBreakoutStrategy
+from .abcd_pattern import ABCDPatternStrategy
 
 __all__ = [
     "BaseStrategy",
@@ -72,4 +73,5 @@ __all__ = [
     "ClosingBellLiquidityGrabStrategy",
     "BullFlagStrategy",
     "FlatTopBreakoutStrategy",
+    "ABCDPatternStrategy",
 ]

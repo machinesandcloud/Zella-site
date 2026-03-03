@@ -19,6 +19,7 @@ logger = logging.getLogger("dynamic_universe")
 
 # File to store the dynamic universe
 DYNAMIC_UNIVERSE_FILE = Path("data/dynamic_universe.json")
+UNIVERSE_VERSION = 3
 
 # Update settings
 UPDATE_AFTER_MARKET_OPEN = time(9, 35)  # 9:35 AM ET (5 mins after open)
@@ -48,6 +49,7 @@ class DynamicUniverseManager:
         self.secret_key = alpaca_secret_key
         self._universe: List[str] = []
         self._last_update: Optional[datetime] = None
+        self._file_version = UNIVERSE_VERSION
         self._lock = threading.Lock()
 
         # Load existing universe or initialize
@@ -65,6 +67,7 @@ class DynamicUniverseManager:
                 with open(DYNAMIC_UNIVERSE_FILE, 'r') as f:
                     data = json.load(f)
                     self._universe = data.get("symbols", [])
+                    self._file_version = data.get("version", 1)
                     last_update_str = data.get("last_update")
                     if last_update_str:
                         self._last_update = datetime.fromisoformat(last_update_str)
@@ -85,7 +88,8 @@ class DynamicUniverseManager:
                 json.dump({
                     "symbols": self._universe,
                     "last_update": self._last_update.isoformat() if self._last_update else None,
-                    "count": len(self._universe)
+                    "count": len(self._universe),
+                    "version": UNIVERSE_VERSION,
                 }, f, indent=2)
             logger.info(f"Saved dynamic universe: {len(self._universe)} symbols")
         except Exception as e:
@@ -98,6 +102,8 @@ class DynamicUniverseManager:
         Updates daily after market open (9:35 AM ET) on business days.
         """
         if not self._last_update:
+            return True
+        if getattr(self, "_file_version", UNIVERSE_VERSION) != UNIVERSE_VERSION:
             return True
 
         now_et = datetime.now(ET_TIMEZONE)
@@ -144,15 +150,25 @@ class DynamicUniverseManager:
         Fetch the most liquid stocks from market data.
 
         Strategy:
-        1. Get most active stocks by volume from Alpaca
-        2. Filter for tradeable, liquid stocks
-        3. Combine with core stocks
-        4. Return top 100
+        1. Use historical daily liquidity + screener criteria to build a high-quality list
+        2. Fallback to Alpaca tradeable/shortable list
+        3. Fallback to Yahoo most-active list
+        4. Fallback to curated list
+        5. Combine with core stocks and return top 100
         """
         most_active = []
 
-        # Method 1: Try Alpaca API
+        # Method 1: Historical liquidity + criteria from Alpaca daily bars
         if self.api_key and self.secret_key:
+            try:
+                most_active = self._fetch_from_alpaca_history()
+                if most_active:
+                    logger.info(f"Got {len(most_active)} stocks from Alpaca historical liquidity")
+            except Exception as e:
+                logger.warning(f"Alpaca historical fetch failed: {e}")
+
+        # Method 2: Try Alpaca API (tradeable/shortable)
+        if not most_active and self.api_key and self.secret_key:
             try:
                 most_active = self._fetch_from_alpaca()
                 if most_active:
@@ -160,7 +176,7 @@ class DynamicUniverseManager:
             except Exception as e:
                 logger.warning(f"Alpaca fetch failed: {e}")
 
-        # Method 2: Try free Yahoo Finance screener
+        # Method 3: Try free Yahoo Finance screener
         if not most_active:
             try:
                 most_active = self._fetch_from_yahoo()
@@ -169,16 +185,203 @@ class DynamicUniverseManager:
             except Exception as e:
                 logger.warning(f"Yahoo fetch failed: {e}")
 
-        # Method 3: Use curated list based on known high-volume stocks
+        # Method 4: Use curated list based on known high-volume stocks
         if not most_active:
             most_active = self._get_curated_high_volume()
             logger.info(f"Using curated high-volume list: {len(most_active)} stocks")
 
-        # Always include core stocks
-        final_universe = list(set(CORE_STOCKS + most_active))
+        # Always include core stocks first, then fill with highest-liquidity list
+        final_universe = self._dedupe_preserve_order(CORE_STOCKS + most_active)
 
         # Limit to 100 stocks
         return final_universe[:100]
+
+    @staticmethod
+    def _dedupe_preserve_order(symbols: List[str]) -> List[str]:
+        seen = set()
+        ordered = []
+        for symbol in symbols:
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            ordered.append(symbol)
+        return ordered
+
+    @staticmethod
+    def _extract_bar_value(bar: Any, field: str) -> Optional[float]:
+        if isinstance(bar, dict):
+            return bar.get(field)
+        return getattr(bar, field, None)
+
+    @staticmethod
+    def _normalize_bars(bars: Any) -> List[Any]:
+        if bars is None:
+            return []
+        if isinstance(bars, list):
+            return bars
+        try:
+            import pandas as pd
+            if isinstance(bars, pd.DataFrame):
+                if bars.empty:
+                    return []
+                return bars.sort_index().to_dict("records")
+        except Exception:
+            pass
+        try:
+            return list(bars)
+        except Exception:
+            return []
+
+    def _fetch_from_alpaca_history(self) -> List[str]:
+        """
+        Build universe using historical daily liquidity and screener criteria.
+        Uses 20-day averages to approximate "historically high volume" names.
+        """
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        from market.universe import get_full_500_universe
+        from config.settings import settings
+
+        symbols = get_full_500_universe()
+        if not symbols:
+            return []
+
+        client = StockHistoricalDataClient(self.api_key, self.secret_key)
+        end = datetime.now()
+        start = end - timedelta(days=90)
+
+        results: List[Dict[str, Any]] = []
+        liquidity_pool: List[Dict[str, Any]] = []
+        evaluated = 0
+
+        batch_size = 200
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            request = StockBarsRequest(
+                symbol_or_symbols=batch,
+                timeframe=TimeFrame.Day,
+                start=start,
+                end=end,
+                feed=settings.alpaca_data_feed,
+            )
+            bars_response = client.get_stock_bars(request)
+            if hasattr(bars_response, "data"):
+                bars_data = bars_response.data
+                items_iter = bars_data.items()
+            elif hasattr(bars_response, "df"):
+                bars_data = bars_response.df
+                items_iter = bars_data.groupby(level=0)
+            else:
+                bars_data = bars_response
+                items_iter = bars_data.items() if hasattr(bars_data, "items") else []
+
+            for symbol, bars in items_iter:
+                normalized = self._normalize_bars(bars)
+                if len(normalized) < 20:
+                    continue
+
+                evaluated += 1
+
+                recent = normalized[-20:]
+                volume_sum = 0.0
+                dollar_sum = 0.0
+                range_sum = 0.0
+                valid_count = 0
+                range_count = 0
+
+                for bar in recent:
+                    close = self._extract_bar_value(bar, "close")
+                    volume = self._extract_bar_value(bar, "volume")
+                    high = self._extract_bar_value(bar, "high")
+                    low = self._extract_bar_value(bar, "low")
+                    if close is None or close == 0 or volume is None:
+                        continue
+                    valid_count += 1
+                    volume_sum += float(volume)
+                    dollar_sum += float(volume) * float(close)
+                    if high is not None and low is not None:
+                        range_sum += (float(high) - float(low)) / float(close)
+                        range_count += 1
+
+                if valid_count < 10:
+                    continue
+
+                avg_volume = volume_sum / valid_count
+                avg_dollar_volume = dollar_sum / valid_count
+                avg_range_pct = (range_sum / range_count) if range_count else 0.0
+
+                last_close = None
+                for bar in reversed(normalized):
+                    close = self._extract_bar_value(bar, "close")
+                    if close is not None and close != 0:
+                        last_close = float(close)
+                        break
+                if last_close is None:
+                    continue
+
+                # SMA20/50 trend check
+                closes = [
+                    float(self._extract_bar_value(bar, "close"))
+                    for bar in normalized
+                    if self._extract_bar_value(bar, "close")
+                ]
+                if len(closes) >= 50:
+                    sma20 = sum(closes[-20:]) / 20
+                    sma50 = sum(closes[-50:]) / 50
+                    trend_ok = last_close >= sma20 >= sma50
+                else:
+                    trend_ok = False
+
+                entry = {
+                    "symbol": symbol,
+                    "avg_volume": avg_volume,
+                    "avg_dollar_volume": avg_dollar_volume,
+                    "last_close": last_close,
+                }
+                liquidity_pool.append(entry)
+
+                # Apply screener-style criteria
+                if avg_volume < settings.screener_min_avg_volume:
+                    continue
+                if not (settings.screener_min_price <= last_close <= settings.screener_max_price):
+                    continue
+                if avg_range_pct < settings.screener_min_volatility:
+                    continue
+                if settings.screener_require_daily_trend and not trend_ok:
+                    continue
+
+                results.append(entry)
+
+        # Sort by dollar volume first, then volume
+        results.sort(key=lambda r: (r["avg_dollar_volume"], r["avg_volume"]), reverse=True)
+        liquidity_pool.sort(key=lambda r: (r["avg_dollar_volume"], r["avg_volume"]), reverse=True)
+
+        logger.info(
+            "Historical universe filter: %d/%d symbols passed criteria",
+            len(results),
+            evaluated,
+        )
+
+        target = 150
+        if len(results) < target and liquidity_pool:
+            seen = {r["symbol"] for r in results}
+            backfill = []
+            for entry in liquidity_pool:
+                if entry["symbol"] in seen:
+                    continue
+                backfill.append(entry)
+                if len(results) + len(backfill) >= target:
+                    break
+            if backfill:
+                logger.info(
+                    "Backfilled %d high-liquidity symbols to reach %d target",
+                    len(backfill),
+                    target,
+                )
+            results.extend(backfill)
+
+        return [r["symbol"] for r in results[:target]]
 
     def _fetch_from_alpaca(self) -> List[str]:
         """Fetch most active stocks from Alpaca"""

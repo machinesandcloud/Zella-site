@@ -64,13 +64,24 @@ class Settings(BaseSettings):
 
     # Screener defaults - lowered for pre-market and early morning trading
     screener_min_avg_volume: float = 200000  # Balanced liquidity threshold
+    screener_min_avg_volume_low_float: float = 100000  # Low float names trade on lower averages
+    screener_min_avg_volume_mid_float: float = 300000  # Mid float liquidity target
+    screener_min_avg_volume_large_float: float = 1000000  # Large float should be very liquid
     screener_min_price: float = 1.0  # Allow penny stocks
     screener_max_price: float = 500.0  # Focus on tradeable range
     screener_min_volatility: float = 0.002  # Lower volatility threshold
     screener_min_relative_volume: float = 1.5  # Balanced relative volume threshold
+    screener_min_relative_volume_low_float: float = 2.0  # Low float momentum needs higher rvol
+    screener_min_relative_volume_mid_float: float = 1.5
+    screener_min_relative_volume_large_float: float = 1.2  # Large caps can move on lower rvol
     screener_min_premarket_volume: float = 25000  # Premarket liquidity threshold for gappers
     screener_require_premarket_volume: bool = True  # Enforce premarket volume on gappers/premarket
     screener_require_daily_trend: bool = True  # Enforce daily SMA20/50 trend filter
+    screener_low_float_max: float = 20.0  # Book: low float < 20M
+    screener_mid_float_max: float = 500.0  # Book: mid float 20-500M
+    screener_in_play_min_rvol: float = 2.0  # In-play threshold for relative volume
+    screener_in_play_gap_percent: float = 2.0  # In-play gap threshold
+    screener_in_play_volume_multiplier: float = 0.5  # Allow lower avg volume when in-play
     screener_debug: bool = False  # Include full screener debug metrics in logs/WS
 
     # Autonomous engine resilience

@@ -181,6 +181,112 @@ def is_flat_top_breakout(df: pd.DataFrame, lookback: int = 10, tolerance: float 
     return {"detected": False}
 
 
+def is_abcd_pattern(
+    df: pd.DataFrame,
+    lookback: int = 40,
+    min_leg_pct: float = 0.03,
+    retrace_min: float = 0.3,
+    retrace_max: float = 0.7,
+    extension_min: float = 0.8,
+    extension_max: float = 1.3,
+) -> dict:
+    """
+    Detect ABCD pattern (bullish or bearish).
+
+    ABCD Bull:
+      A -> B impulsive move, B -> C pullback, C -> D continuation.
+    ABCD Bear:
+      A -> B selloff, B -> C bounce, C -> D continuation lower.
+    """
+    if df is None or len(df) < lookback:
+        return {"detected": False}
+
+    recent = df.tail(lookback)
+    lows = recent["low"].values
+    highs = recent["high"].values
+    closes = recent["close"].values
+
+    half = lookback // 2
+
+    # Bullish ABCD
+    a_idx = int(lows[:half].argmin())
+    b_idx = a_idx + 1 + int(highs[a_idx + 1 :].argmax()) if a_idx + 1 < len(highs) else None
+    if b_idx is not None and b_idx + 1 < len(lows):
+        c_idx = b_idx + 1 + int(lows[b_idx + 1 :].argmin())
+    else:
+        c_idx = None
+
+    if b_idx is not None and c_idx is not None and a_idx < b_idx < c_idx:
+        a_low = lows[a_idx]
+        b_high = highs[b_idx]
+        c_low = lows[c_idx]
+        d_close = closes[-1]
+
+        ab_move = (b_high - a_low) / a_low if a_low > 0 else 0.0
+        bc_retrace = (b_high - c_low) / (b_high - a_low) if b_high > a_low else 1.0
+        cd_ext = (d_close - c_low) / (b_high - a_low) if b_high > a_low else 0.0
+
+        if (
+            ab_move >= min_leg_pct
+            and retrace_min <= bc_retrace <= retrace_max
+            and extension_min <= cd_ext <= extension_max
+            and d_close >= b_high * 0.995
+        ):
+            ratio = (d_close - c_low) / (b_high - a_low) if b_high > a_low else 0.0
+            confidence = max(0.5, min(0.9, 1.0 - abs(1.0 - ratio)))
+            return {
+                "detected": True,
+                "pattern": "ABCD_BULL",
+                "a": float(a_low),
+                "b": float(b_high),
+                "c": float(c_low),
+                "d": float(d_close),
+                "confidence": confidence,
+                "entry_level": float(b_high),
+                "stop_level": float(c_low),
+            }
+
+    # Bearish ABCD
+    a_idx = int(highs[:half].argmax())
+    b_idx = a_idx + 1 + int(lows[a_idx + 1 :].argmin()) if a_idx + 1 < len(lows) else None
+    if b_idx is not None and b_idx + 1 < len(highs):
+        c_idx = b_idx + 1 + int(highs[b_idx + 1 :].argmax())
+    else:
+        c_idx = None
+
+    if b_idx is not None and c_idx is not None and a_idx < b_idx < c_idx:
+        a_high = highs[a_idx]
+        b_low = lows[b_idx]
+        c_high = highs[c_idx]
+        d_close = closes[-1]
+
+        ab_move = (a_high - b_low) / a_high if a_high > 0 else 0.0
+        bc_retrace = (c_high - b_low) / (a_high - b_low) if a_high > b_low else 1.0
+        cd_ext = (c_high - d_close) / (a_high - b_low) if a_high > b_low else 0.0
+
+        if (
+            ab_move >= min_leg_pct
+            and retrace_min <= bc_retrace <= retrace_max
+            and extension_min <= cd_ext <= extension_max
+            and d_close <= b_low * 1.005
+        ):
+            ratio = (c_high - d_close) / (a_high - b_low) if a_high > b_low else 0.0
+            confidence = max(0.5, min(0.9, 1.0 - abs(1.0 - ratio)))
+            return {
+                "detected": True,
+                "pattern": "ABCD_BEAR",
+                "a": float(a_high),
+                "b": float(b_low),
+                "c": float(c_high),
+                "d": float(d_close),
+                "confidence": confidence,
+                "entry_level": float(b_low),
+                "stop_level": float(c_high),
+            }
+
+    return {"detected": False}
+
+
 def calculate_position_size_atr(
     account_value: float,
     risk_percent: float,

@@ -37,6 +37,7 @@ from strategies.open_interest_fakeout import OpenInterestFakeoutStrategy
 from strategies.premarket_vwap_reclaim import PremarketVWAPReclaimStrategy
 from strategies.after_hours_liquidity_trap import AfterHoursLiquidityTrapStrategy
 from strategies.closing_bell_liquidity_grab import ClosingBellLiquidityGrabStrategy
+from strategies.abcd_pattern import ABCDPatternStrategy
 
 
 STRATEGY_REGISTRY = {
@@ -73,6 +74,7 @@ STRATEGY_REGISTRY = {
     "premarket_vwap_reclaim": PremarketVWAPReclaimStrategy,
     "after_hours_liquidity_trap": AfterHoursLiquidityTrapStrategy,
     "closing_bell_liquidity_grab": ClosingBellLiquidityGrabStrategy,
+    "abcd_pattern": ABCDPatternStrategy,
 }
 
 

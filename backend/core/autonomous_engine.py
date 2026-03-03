@@ -89,6 +89,7 @@ from strategies import (
     PremarketVWAPReclaimStrategy,
     BullFlagStrategy,
     FlatTopBreakoutStrategy,
+    ABCDPatternStrategy,
 )
 from utils.indicators import (
     atr,
@@ -243,11 +244,22 @@ class AutonomousEngine:
         self.screener = MarketScreener(
             self.ml_model,
             min_avg_volume=settings.screener_min_avg_volume,
+            min_avg_volume_low_float=settings.screener_min_avg_volume_low_float,
+            min_avg_volume_mid_float=settings.screener_min_avg_volume_mid_float,
+            min_avg_volume_large_float=settings.screener_min_avg_volume_large_float,
             min_price=settings.screener_min_price,
             max_price=settings.screener_max_price,
             min_volatility=settings.screener_min_volatility,
             min_relative_volume=settings.screener_min_relative_volume,
+            min_relative_volume_low_float=settings.screener_min_relative_volume_low_float,
+            min_relative_volume_mid_float=settings.screener_min_relative_volume_mid_float,
+            min_relative_volume_large_float=settings.screener_min_relative_volume_large_float,
             min_premarket_volume=settings.screener_min_premarket_volume,
+            low_float_max=settings.screener_low_float_max,
+            mid_float_max=settings.screener_mid_float_max,
+            in_play_min_rvol=settings.screener_in_play_min_rvol,
+            in_play_gap_percent=settings.screener_in_play_gap_percent,
+            in_play_volume_multiplier=settings.screener_in_play_volume_multiplier,
             require_premarket_volume=settings.screener_require_premarket_volume,
             require_daily_trend=settings.screener_require_daily_trend,
         )
@@ -310,6 +322,7 @@ class AutonomousEngine:
         strategies = {
             # === WARRIOR TRADING CORE PATTERNS (Priority) ===
             "bull_flag": BullFlagStrategy(atr_config),  # Primary momentum pattern
+            "abcd_pattern": ABCDPatternStrategy(atr_config),  # ABCD continuation pattern
             "flat_top_breakout": FlatTopBreakoutStrategy(atr_config),  # Key resistance breakout
             "orb": ORBStrategy(default_config),  # Opening Range Breakout
 

@@ -17,7 +17,7 @@ import pandas as pd
 
 from ai.feature_engineering import latest_feature_vector
 from ai.ml_model import MLSignalModel
-from utils.indicators import atr, power_hour_multiplier, is_bull_flag, is_flat_top_breakout, sma
+from utils.indicators import atr, power_hour_multiplier, is_bull_flag, is_flat_top_breakout, is_abcd_pattern, sma
 from utils.market_hours import market_session
 
 logger = logging.getLogger("market_screener")
@@ -73,8 +73,19 @@ class MarketScreener:
         max_price: float = 500.0,  # Focus on tradeable range
         min_volatility: float = 0.002,  # Lower volatility threshold
         min_relative_volume: float = 1.0,  # Allow stocks at normal volume
+        min_avg_volume_low_float: Optional[float] = None,
+        min_avg_volume_mid_float: Optional[float] = None,
+        min_avg_volume_large_float: Optional[float] = None,
+        min_relative_volume_low_float: Optional[float] = None,
+        min_relative_volume_mid_float: Optional[float] = None,
+        min_relative_volume_large_float: Optional[float] = None,
         min_premarket_volume: float = 50000,  # Require some premarket liquidity for gappers
         max_float_millions: float = 100.0,  # Warrior Trading: float < 100M
+        low_float_max: float = 20.0,
+        mid_float_max: float = 500.0,
+        in_play_min_rvol: float = 2.0,
+        in_play_gap_percent: float = 2.0,
+        in_play_volume_multiplier: float = 0.5,
         enable_float_filter: bool = True,
         enable_pattern_detection: bool = True,
         enable_power_hour_boost: bool = True,
@@ -87,8 +98,25 @@ class MarketScreener:
         self.max_price = max_price
         self.min_volatility = min_volatility
         self.min_relative_volume = min_relative_volume
+        self.min_avg_volume_low_float = min_avg_volume_low_float if min_avg_volume_low_float is not None else min_avg_volume
+        self.min_avg_volume_mid_float = min_avg_volume_mid_float if min_avg_volume_mid_float is not None else min_avg_volume
+        self.min_avg_volume_large_float = min_avg_volume_large_float if min_avg_volume_large_float is not None else min_avg_volume
+        self.min_relative_volume_low_float = (
+            min_relative_volume_low_float if min_relative_volume_low_float is not None else min_relative_volume
+        )
+        self.min_relative_volume_mid_float = (
+            min_relative_volume_mid_float if min_relative_volume_mid_float is not None else min_relative_volume
+        )
+        self.min_relative_volume_large_float = (
+            min_relative_volume_large_float if min_relative_volume_large_float is not None else min_relative_volume
+        )
         self.min_premarket_volume = min_premarket_volume
         self.max_float_millions = max_float_millions
+        self.low_float_max = low_float_max
+        self.mid_float_max = mid_float_max
+        self.in_play_min_rvol = in_play_min_rvol
+        self.in_play_gap_percent = in_play_gap_percent
+        self.in_play_volume_multiplier = in_play_volume_multiplier
         self.enable_float_filter = enable_float_filter
         self.enable_pattern_detection = enable_pattern_detection
         self.enable_power_hour_boost = enable_power_hour_boost
@@ -254,6 +282,43 @@ class MarketScreener:
         """
         return LOW_FLOAT_STOCKS.get(symbol)
 
+    def _float_bucket(self, float_millions: Optional[float]) -> str:
+        if float_millions is None:
+            return "UNKNOWN"
+        if float_millions <= self.low_float_max:
+            return "LOW"
+        if float_millions <= self.mid_float_max:
+            return "MID"
+        return "LARGE"
+
+    def _thresholds_for_float(self, float_millions: Optional[float]) -> tuple[float, float, str]:
+        bucket = self._float_bucket(float_millions)
+        if bucket == "LOW":
+            return self.min_avg_volume_low_float, self.min_relative_volume_low_float, bucket
+        if bucket == "MID":
+            return self.min_avg_volume_mid_float, self.min_relative_volume_mid_float, bucket
+        if bucket == "LARGE":
+            return self.min_avg_volume_large_float, self.min_relative_volume_large_float, bucket
+        return self.min_avg_volume, self.min_relative_volume, bucket
+
+    def _in_play_flags(
+        self,
+        symbol: str,
+        gap_info: Dict[str, Any],
+        relative_volume: float,
+        premarket_volume: float,
+    ) -> tuple[bool, str]:
+        reasons = []
+        if symbol in self.news_catalysts:
+            reasons.append("CATALYST")
+        if gap_info.get("is_gapper") and abs(gap_info.get("gap_percent", 0.0)) >= self.in_play_gap_percent:
+            reasons.append("GAP")
+        if relative_volume >= self.in_play_min_rvol:
+            reasons.append("RVOL")
+        if premarket_volume >= self.min_premarket_volume:
+            reasons.append("PREMARKET")
+        return (len(reasons) > 0, ", ".join(reasons))
+
     def _volume_metrics(self, df: pd.DataFrame) -> Dict[str, float]:
         """Compute volume metrics consistently for 5m bars."""
         bars_per_day = 78  # 6.5 trading hours * 12 (5-min bars)
@@ -369,6 +434,11 @@ class MarketScreener:
         current_atr = float(atr_series.iloc[-1]) if len(atr_series) > 0 else 0.0
         atr_percent = (current_atr / last_price) * 100 if last_price > 0 else 0.0
 
+        float_millions = self.get_float(symbol)
+        volume_floor, rvol_floor, float_bucket = self._thresholds_for_float(float_millions)
+        in_play, in_play_reason = self._in_play_flags(symbol, gap_info, relative_volume, premarket_volume)
+        in_play_volume_floor = volume_floor * self.in_play_volume_multiplier
+
         # Store basic data
         result["data"]["price"] = round(last_price, 2)
         result["data"]["avg_volume"] = int(avg_volume)
@@ -385,17 +455,29 @@ class MarketScreener:
         result["data"]["is_gapper"] = gap_info["is_gapper"]
         result["data"]["atr"] = round(current_atr, 2)
         result["data"]["atr_percent"] = round(atr_percent, 2)
+        result["data"]["float_bucket"] = float_bucket
+        result["data"]["in_play"] = in_play
+        result["data"]["in_play_reason"] = in_play_reason
+        result["data"]["volume_floor"] = int(volume_floor)
+        result["data"]["rvol_floor"] = round(rvol_floor, 2)
 
         # Volume Filter
-        vol_passed = avg_volume >= self.min_avg_volume
+        vol_passed = avg_volume >= volume_floor
+        if not vol_passed and in_play:
+            vol_passed = avg_volume >= in_play_volume_floor
         result["filters"]["volume"] = {
             "passed": vol_passed,
             "value": int(avg_volume),
-            "threshold": int(self.min_avg_volume),
-            "reason": f"Avg vol {int(avg_volume):,} {'≥' if vol_passed else '<'} {int(self.min_avg_volume):,}"
+            "threshold": int(volume_floor),
+            "in_play_floor": int(in_play_volume_floor),
+            "in_play": in_play,
+            "reason": (
+                f"Avg vol {int(avg_volume):,} {'≥' if vol_passed else '<'} {int(volume_floor):,}"
+                + (f" (in-play floor {int(in_play_volume_floor):,})" if in_play else "")
+            ),
         }
         if not vol_passed:
-            result["rejection_reason"] = f"Low volume ({int(avg_volume):,} < {int(self.min_avg_volume):,})"
+            result["rejection_reason"] = f"Low volume ({int(avg_volume):,} < {int(volume_floor):,})"
             return result
 
         # Premarket Volume Filter (for gappers or during premarket)
@@ -463,29 +545,31 @@ class MarketScreener:
             result["filters"]["daily_trend"] = {"passed": True, "skipped": True}
 
         # Relative Volume Filter (gappers get a pass - they're hot plays even with normal volume)
-        rvol_passed = relative_volume >= self.min_relative_volume
-        # Significant gappers (5%+) bypass relative volume requirement
-        # This is a KEY day trading principle - gapping stocks are in play
-        gapper_bypass = gap_info.get("is_significant_gap", False)
-        effective_rvol_passed = rvol_passed or gapper_bypass
+        rvol_passed = relative_volume >= rvol_floor
+        gapper_bypass = gap_info.get("is_gapper", False) and abs(gap_info.get("gap_percent", 0.0)) >= self.in_play_gap_percent
+        catalyst_bypass = symbol in self.news_catalysts
+        effective_rvol_passed = rvol_passed or gapper_bypass or catalyst_bypass
 
         result["filters"]["relative_volume"] = {
             "passed": effective_rvol_passed,
             "value": round(relative_volume, 2),
-            "threshold": self.min_relative_volume,
+            "threshold": rvol_floor,
             "gapper_bypass": gapper_bypass,
-            "reason": f"RVol(ToD) {relative_volume:.1f}x {'≥' if rvol_passed else '<'} {self.min_relative_volume}x" +
-                      (f" (GAPPER BYPASS: {gap_info['gap_percent']}%)" if gapper_bypass and not rvol_passed else "")
+            "catalyst_bypass": catalyst_bypass,
+            "reason": (
+                f"RVol(ToD) {relative_volume:.1f}x {'≥' if rvol_passed else '<'} {rvol_floor}x"
+                + (f" (GAP BYPASS: {gap_info['gap_percent']}%)" if gapper_bypass and not rvol_passed else "")
+                + (" (CATALYST BYPASS)" if catalyst_bypass and not rvol_passed else "")
+            ),
         }
         if not effective_rvol_passed:
-            result["rejection_reason"] = f"Low relative volume ({relative_volume:.1f}x < {self.min_relative_volume}x)"
+            result["rejection_reason"] = f"Low relative volume ({relative_volume:.1f}x < {rvol_floor}x)"
             return result
 
         # If we get here, all filters passed!
         result["passed"] = True
 
         # Calculate scores (same logic as score_symbol)
-        float_millions = self.get_float(symbol)
         float_score = 0.0
         if self.enable_float_filter and float_millions is not None:
             if float_millions <= self.max_float_millions:
@@ -501,12 +585,16 @@ class MarketScreener:
         if self.enable_pattern_detection:
             bull_flag = is_bull_flag(df_clean)
             flat_top = is_flat_top_breakout(df_clean)
+            abcd = is_abcd_pattern(df_clean)
+            candidates = []
             if bull_flag.get("detected"):
-                pattern_score = 0.25
-                detected_pattern = "BULL_FLAG"
-            elif flat_top.get("detected"):
-                pattern_score = 0.2
-                detected_pattern = "FLAT_TOP"
+                candidates.append(("BULL_FLAG", 0.25, bull_flag))
+            if flat_top.get("detected"):
+                candidates.append(("FLAT_TOP", 0.2, flat_top))
+            if abcd.get("detected"):
+                candidates.append((abcd.get("pattern", "ABCD"), 0.22, abcd))
+            if candidates:
+                detected_pattern, pattern_score, _ = max(candidates, key=lambda x: x[1])
 
         news_score = 0.0
         news_catalyst = None
@@ -646,6 +734,11 @@ class MarketScreener:
         # Calculate gap
         gap_info = self.calculate_gap(df_clean)
 
+        float_millions = self.get_float(symbol)
+        volume_floor, rvol_floor, float_bucket = self._thresholds_for_float(float_millions)
+        in_play, in_play_reason = self._in_play_flags(symbol, gap_info, relative_volume, premarket_volume)
+        in_play_volume_floor = volume_floor * self.in_play_volume_multiplier
+
         # Premarket volume filter (only if timestamps exist and we're in premarket or a gapper)
         session = market_session()
         premarket_required = has_timestamp and (session.get("premarket", False) or gap_info.get("is_gapper", False))
@@ -654,7 +747,7 @@ class MarketScreener:
                 return None
 
         # Basic filters
-        if avg_volume < self.min_avg_volume:
+        if avg_volume < volume_floor and not (in_play and avg_volume >= in_play_volume_floor):
             return None
         if not (self.min_price <= last_price <= self.max_price):
             return None
@@ -670,12 +763,14 @@ class MarketScreener:
             if not trend_passed:
                 return None
 
-        # Gappers (5%+) bypass relative volume requirement
-        if relative_volume < self.min_relative_volume and not gap_info.get("is_significant_gap", False):
+        rvol_passed = relative_volume >= rvol_floor
+        gapper_bypass = gap_info.get("is_gapper", False) and abs(gap_info.get("gap_percent", 0.0)) >= self.in_play_gap_percent
+        catalyst_bypass = symbol in self.news_catalysts
+        # Gappers/catalysts bypass relative volume requirement
+        if not (rvol_passed or gapper_bypass or catalyst_bypass):
             return None
 
         # Float filter (Warrior Trading: prefer float < 100M)
-        float_millions = self.get_float(symbol)
         float_score = 0.0
         if self.enable_float_filter and float_millions is not None:
             if float_millions <= self.max_float_millions:
@@ -703,13 +798,16 @@ class MarketScreener:
         if self.enable_pattern_detection:
             bull_flag = is_bull_flag(df_clean)
             flat_top = is_flat_top_breakout(df_clean)
-
+            abcd = is_abcd_pattern(df_clean)
+            candidates = []
             if bull_flag.get("detected"):
-                pattern_score = 0.25
-                detected_pattern = "BULL_FLAG"
-            elif flat_top.get("detected"):
-                pattern_score = 0.2
-                detected_pattern = "FLAT_TOP"
+                candidates.append(("BULL_FLAG", 0.25))
+            if flat_top.get("detected"):
+                candidates.append(("FLAT_TOP", 0.2))
+            if abcd.get("detected"):
+                candidates.append((abcd.get("pattern", "ABCD"), 0.22))
+            if candidates:
+                detected_pattern, pattern_score = max(candidates, key=lambda x: x[1])
 
         # News Catalyst Score
         news_score = 0.0
@@ -777,6 +875,9 @@ class MarketScreener:
             "last_price": last_price,
             "avg_volume": avg_volume,
             "relative_volume": relative_volume,
+            "float_bucket": float_bucket,
+            "in_play": in_play,
+            "in_play_reason": in_play_reason,
             # Enhanced fields
             "float_millions": float_millions,
             "float_score": float_score,
