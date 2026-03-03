@@ -121,8 +121,8 @@ const App = () => {
     const tryConnect = async () => {
       if (cancelled) return;
 
-      attempt++;
-      setWakeAttempt(attempt);
+      attempt += 1;
+      setWakeAttempt(Math.min(attempt, MAX_WAKE_RETRIES));
 
       try {
         const data = await autoLogin();
@@ -167,7 +167,7 @@ const App = () => {
     const attemptReconnect = async () => {
       if (cancelled) return;
       attempt += 1;
-      setWakeAttempt(attempt);
+      setWakeAttempt(Math.min(attempt, MAX_WAKE_RETRIES));
       setIsWakingUp(true);
 
       await forceHealthCheck();
