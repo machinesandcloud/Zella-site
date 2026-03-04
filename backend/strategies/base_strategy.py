@@ -150,4 +150,7 @@ class BaseStrategy:
 
     def log(self, message: str) -> None:
         self._logs.append(message)
+        # Prevent unbounded growth in long-running sessions
+        if len(self._logs) > 200:
+            self._logs = self._logs[-200:]
         self.logger.info(message)

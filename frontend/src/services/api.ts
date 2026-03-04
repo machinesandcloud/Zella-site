@@ -4,8 +4,14 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 const API_URL = import.meta.env.VITE_API_URL?.trim();
 const hasExplicitApiUrl = API_URL !== undefined && API_URL !== "";
 
-// Use localhost:8000 as default for development
-const baseURL = hasExplicitApiUrl ? API_URL : "http://localhost:8000";
+// Use explicit API URL if provided; otherwise default to same-origin in prod
+const defaultProdBaseURL =
+  typeof window !== "undefined" ? window.location.origin : "http://localhost:8000";
+const baseURL = hasExplicitApiUrl
+  ? API_URL
+  : import.meta.env.PROD
+    ? defaultProdBaseURL
+    : "http://localhost:8000";
 
 // Debug: Log API configuration (will show in browser console)
 console.log("[API Config]", {

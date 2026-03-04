@@ -52,6 +52,7 @@ class SymbolState:
     pending_scale_outs: List[Dict] = field(default_factory=list)
     bars_cache: Optional[pd.DataFrame] = None
     bars_cache_time: Optional[datetime] = None
+    last_seen: Optional[datetime] = None
 
 from core.strategy_engine import StrategyEngine
 from core.risk_manager import RiskManager
@@ -244,6 +245,8 @@ class AutonomousEngine:
         self._positions_cache_time: Optional[datetime] = None
         self._short_interest_cache_time: Optional[datetime] = None
         self._short_interest_cache_ttl_seconds = 12 * 60 * 60
+        self._symbol_cache_ttl_seconds = self.config.get("symbol_cache_ttl_seconds", 10 * 60)
+        self._symbol_state_ttl_seconds = self.config.get("symbol_state_ttl_seconds", 30 * 60)
         self._short_interest_provider = ShortInterestProvider(
             settings.polygon_api_key, base_url=settings.polygon_base_url
         )
@@ -525,7 +528,40 @@ class AutonomousEngine:
         with self._symbol_lock:
             if symbol not in self._symbol_states:
                 self._symbol_states[symbol] = SymbolState(symbol=symbol)
-            return self._symbol_states[symbol]
+            state = self._symbol_states[symbol]
+            state.last_seen = datetime.now()
+            return state
+
+    def _prune_background_tasks(self) -> None:
+        """Remove completed tasks to prevent unbounded task list growth."""
+        if not self._background_tasks:
+            return
+        self._background_tasks = [t for t in self._background_tasks if not t.done()]
+
+    def _cleanup_symbol_state_caches(self) -> None:
+        """Clean up stale symbol state caches to control memory usage."""
+        now = datetime.now()
+        with self._symbol_lock:
+            to_delete = []
+            for symbol, state in self._symbol_states.items():
+                # Clear stale bar caches for non-active symbols
+                if symbol not in self.active_symbols and state.bars_cache_time:
+                    age = (now - state.bars_cache_time).total_seconds()
+                    if age > self._symbol_cache_ttl_seconds:
+                        state.bars_cache = None
+                        state.bars_cache_time = None
+                # Drop entire symbol state if it hasn't been seen recently
+                if state.last_seen and symbol not in self.active_symbols:
+                    idle = (now - state.last_seen).total_seconds()
+                    if idle > self._symbol_state_ttl_seconds:
+                        to_delete.append(symbol)
+            for symbol in to_delete:
+                del self._symbol_states[symbol]
+
+        # Guard daily data cache size in long sessions
+        if len(self._daily_data_cache) > 500 and self.last_market_symbols:
+            keep = set(self.last_market_symbols)
+            self._daily_data_cache = {k: v for k, v in self._daily_data_cache.items() if k in keep}
 
     def _update_symbol_signal(self, symbol: str, signal: str) -> bool:
         """
@@ -896,6 +932,7 @@ class AutonomousEngine:
         while self.running:
             try:
                 await asyncio.sleep(10)
+                self._prune_background_tasks()
                 for name, task in list(self._task_registry.items()):
                     if name == "task_supervisor":
                         continue
@@ -972,6 +1009,7 @@ class AutonomousEngine:
                 new_task.add_done_callback(lambda t, n=name: logger.error(f"❌ Task {n} failed again") if t.exception() else None)
                 self._task_registry[name] = new_task
                 self._background_tasks.append(new_task)
+                self._prune_background_tasks()
                 logger.warning(f"🔁 Restarted task {name} ({reason})")
         except Exception as e:
             logger.error(f"Failed to restart task {name}: {e}")
@@ -1275,6 +1313,10 @@ class AutonomousEngine:
                     # Reset error counter on success
                     consecutive_errors = 0
                     self.last_scan_heartbeat = datetime.utcnow()
+
+                    # Periodic cache cleanup to prevent memory growth
+                    if loop_count % 20 == 0:
+                        self._cleanup_symbol_state_caches()
 
                     # 5. Wait for next scan
                     logger.info(f"⏳ Waiting {current_scan_interval}s for next scan...")
