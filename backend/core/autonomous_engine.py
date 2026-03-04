@@ -171,6 +171,9 @@ class AutonomousEngine:
         self._last_decision_flush: Optional[datetime] = None
         self.max_positions = self.config.get("max_positions", 5)
         self.enabled_strategies = self.config.get("enabled_strategies", "ALL")
+        self.time_stop_minutes = self.config.get("time_stop_minutes", 12)
+        self.time_stop_min_pnl = self.config.get("time_stop_min_pnl", 0.2)  # percent
+        self.max_hold_minutes = self.config.get("max_hold_minutes", 25)
 
         # State - THREAD SAFE with locks
         self.running = False
@@ -1497,6 +1500,23 @@ class AutonomousEngine:
                     if not symbol or current_price <= 0:
                         continue
 
+                    # Time-stop and max-hold exits to cut losers early
+                    ctx = self._get_trade_context(symbol)
+                    if ctx and ctx.entry_time:
+                        held_minutes = (datetime.now() - ctx.entry_time).total_seconds() / 60
+                        if held_minutes >= self.time_stop_minutes and pnl_percent < self.time_stop_min_pnl:
+                            logger.warning(f"⏱️ TIME STOP: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}%")
+                            await self._close_position(symbol, f"Time stop {self.time_stop_minutes}m (PnL {pnl_percent:.2f}%)")
+                            if symbol in position_atr:
+                                del position_atr[symbol]
+                            continue
+                        if held_minutes >= self.max_hold_minutes and pnl_percent <= 0:
+                            logger.warning(f"⏱️ MAX HOLD EXIT: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}%")
+                            await self._close_position(symbol, f"Max hold {self.max_hold_minutes}m (PnL {pnl_percent:.2f}%)")
+                            if symbol in position_atr:
+                                del position_atr[symbol]
+                            continue
+
                     # Get ATR for this symbol if not cached
                     if symbol not in position_atr:
                         try:
@@ -2524,6 +2544,20 @@ class AutonomousEngine:
             # Apply power hour boost to confidence
             adjusted_confidence = confidence * time_mult
 
+            # Learning-aware time filter (avoid time windows with poor performance)
+            try:
+                time_of_day = "opening" if minutes_since_open() < 30 else "morning" if minutes_since_open() < 120 else "midday" if minutes_since_open() < 240 else "afternoon" if minutes_since_open() < 360 else "power_hour"
+                if hasattr(self, "learning_engine") and not self.learning_engine.should_trade_now(time_of_day):
+                    self._add_decision(
+                        "SKIPPED",
+                        f"⏸️ {symbol}: Learning recommends skipping {time_of_day}",
+                        "INFO",
+                        {"symbol": symbol, "time_of_day": time_of_day}
+                    )
+                    continue
+            except Exception:
+                pass
+
             # TIGHTENED THRESHOLDS - Reduce losses by being more selective
             # Day trading requires HIGH conviction entries only
             if in_power_hour:
@@ -2545,12 +2579,22 @@ class AutonomousEngine:
                 )
                 continue
 
+            # Learning-based confidence adjustment
+            learned_threshold = None
+            try:
+                if hasattr(self, "learning_engine"):
+                    learned_threshold = self.learning_engine.get_recommended_confidence_threshold()
+            except Exception:
+                learned_threshold = None
+            if learned_threshold:
+                min_confidence = max(min_confidence, learned_threshold)
+
             if adjusted_confidence < min_confidence:
                 self._add_decision(
                     "CONSIDERING",
                     f"⚠️ {symbol}: Confidence {adjusted_confidence:.0%} below {self.risk_posture} threshold {min_confidence:.0%}",
                     "INFO",
-                    {"symbol": symbol, "confidence": adjusted_confidence, "required": min_confidence, "risk_posture": self.risk_posture}
+                    {"symbol": symbol, "confidence": adjusted_confidence, "required": min_confidence, "risk_posture": self.risk_posture, "learned_threshold": learned_threshold}
                 )
                 continue
 
@@ -2991,6 +3035,8 @@ class AutonomousEngine:
                         "raw_confidence": confidence,
                         "edge_boost": edge_boost,
                         "num_strategies": num_strategies,
+                        "relative_volume": opp.get("relative_volume"),
+                        "atr_percent": opp.get("atr_percent"),
                         "order_id": order_id,
                         "setup_grade": setup_grade,
                         "atr": atr_value,
@@ -3123,6 +3169,10 @@ class AutonomousEngine:
             strategies_used = []
             setup_grade = "B"
             confidence = 0.5
+            action = "BUY"
+            num_strategies_agreed = 1
+            relative_volume = 1.0
+            atr_percent = 2.0
 
             for decision in self.decisions:
                 if decision.get("type") == "TRADE" and symbol in decision.get("action", ""):
@@ -3130,6 +3180,10 @@ class AutonomousEngine:
                     strategies_used = metadata.get("strategies", [])
                     setup_grade = metadata.get("setup_grade", "B")
                     confidence = metadata.get("confidence", 0.5)
+                    action = (decision.get("action", "BUY").split()[0] if decision.get("action") else "BUY")
+                    num_strategies_agreed = metadata.get("num_strategies", len(strategies_used) or 1)
+                    relative_volume = float(metadata.get("relative_volume", 1.0) or 1.0)
+                    atr_percent = float(metadata.get("atr_percent", 2.0) or 2.0)
                     break
 
             # Determine volatility regime and time of day
@@ -3177,11 +3231,15 @@ class AutonomousEngine:
                     pnl=pnl,
                     entry_time=now,  # Approximate
                     exit_time=now,
+                    action=action,
                     confidence=confidence,
                     setup_grade=setup_grade,
                     volatility_regime=volatility_regime,
                     time_of_day=time_of_day,
-                    market_condition="trending" if abs(pnl) > atr_value else "ranging"
+                    market_condition="trending" if abs(pnl) > atr_value else "ranging",
+                    relative_volume=relative_volume,
+                    atr_percent=atr_percent,
+                    num_strategies_agreed=num_strategies_agreed
                 )
 
                 self.learning_engine.record_trade(trade_record)
