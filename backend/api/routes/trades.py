@@ -26,6 +26,10 @@ class TradeOut(BaseModel):
     exit_time: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
+    confidence: Optional[float] = None
+    setup_grade: Optional[str] = None
+    strategies: Optional[str] = None
+    entry_reason: Optional[str] = None
     setup_tag: Optional[str] = None
     catalyst: Optional[str] = None
     stop_method: Optional[str] = None

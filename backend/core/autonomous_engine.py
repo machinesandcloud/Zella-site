@@ -678,6 +678,9 @@ class AutonomousEngine:
         strategies: List[str],
         stop_loss: float,
         take_profit: float,
+        confidence: float,
+        setup_grade: str,
+        entry_reason: str | None = None,
     ) -> Optional[int]:
         """Persist trade entry to DB so history shows up."""
         user_id = self._get_default_user_id()
@@ -697,6 +700,10 @@ class AutonomousEngine:
                     entry_price=entry_price,
                     stop_loss=stop_loss,
                     take_profit=take_profit,
+                    confidence=confidence,
+                    setup_grade=setup_grade,
+                    strategies=",".join(strategies) if strategies else None,
+                    entry_reason=entry_reason,
                     entry_time=datetime.utcnow(),
                     status="open",
                     is_paper_trade=bool(settings.alpaca_paper),
@@ -2958,6 +2965,9 @@ class AutonomousEngine:
                     strategies=strategies,
                     stop_loss=stop_loss_price,
                     take_profit=take_profit_3r,
+                    confidence=final_confidence,
+                    setup_grade=setup_grade,
+                    entry_reason=opp.get("reasoning"),
                 )
                 context = self._create_trade_context(
                     symbol=symbol,

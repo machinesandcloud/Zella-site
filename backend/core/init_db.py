@@ -23,6 +23,14 @@ def _ensure_trade_columns() -> None:
         alterations.append("ADD COLUMN stop_method VARCHAR(30)")
     if "risk_mode" not in columns:
         alterations.append("ADD COLUMN risk_mode VARCHAR(20)")
+    if "confidence" not in columns:
+        alterations.append("ADD COLUMN confidence NUMERIC(5,2)")
+    if "setup_grade" not in columns:
+        alterations.append("ADD COLUMN setup_grade VARCHAR(4)")
+    if "strategies" not in columns:
+        alterations.append("ADD COLUMN strategies TEXT")
+    if "entry_reason" not in columns:
+        alterations.append("ADD COLUMN entry_reason TEXT")
     if not alterations:
         return
     statement = "ALTER TABLE trades " + ", ".join(alterations)

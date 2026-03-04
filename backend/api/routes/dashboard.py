@@ -106,6 +106,10 @@ def recent_trades(
             "entry_price": t.entry_price,
             "exit_price": t.exit_price,
             "strategy_name": t.strategy_name,
+            "confidence": t.confidence,
+            "setup_grade": t.setup_grade,
+            "strategies": t.strategies,
+            "entry_reason": t.entry_reason,
         }
         for t in trades
     ]

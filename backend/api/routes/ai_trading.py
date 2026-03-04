@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from core.auto_trader import AutoTrader
 from core.autonomous_engine import AutonomousEngine, DECISION_LOG_FILE
+from core.learning_engine import get_learning_engine
 from api.routes.auth import get_current_user
 from core.risk_manager import RiskManager
 from core.alpaca_client import AlpacaClient
@@ -274,6 +275,20 @@ def get_autonomous_logs(
         "decisions": decisions,
         "count": len(decisions),
         "engine_running": bool(engine and engine.running),
+    }
+
+
+@router.get("/learning/summary")
+def get_learning_summary(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Get ML learning summary and recent insights."""
+    learning_engine = get_learning_engine()
+    summary = learning_engine.get_learning_summary()
+    return {
+        "summary": summary,
+        "recent_insights": learning_engine.get_recent_insights(8),
+        "recent_trades": learning_engine.state.trade_history[-20:],
     }
 
 

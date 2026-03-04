@@ -335,6 +335,14 @@ export const getAutonomousLogs = async () => {
   return data;
 };
 
+export const fetchLearningSummary = async () => {
+  const { data } = await api.get("/api/ai/learning/summary", {
+    timeout: 5000,
+    __skipRetry: true
+  } as RetryConfig);
+  return data;
+};
+
 export const updateAutonomousConfig = async (config: Record<string, unknown>) => {
   const { data } = await api.post("/api/ai/autonomous/config", config);
   return data;

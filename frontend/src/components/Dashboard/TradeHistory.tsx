@@ -10,9 +10,10 @@ import {
   Typography,
   ToggleButton,
   ToggleButtonGroup,
-  Divider
+  Divider,
+  Box
 } from "@mui/material";
-import { fetchRecentTrades } from "../../services/api";
+import { fetchRecentTrades, fetchLearningSummary } from "../../services/api";
 
 type TradeRow = {
   symbol: string;
@@ -26,17 +27,28 @@ type TradeRow = {
   entry_price?: number;
   exit_price?: number;
   strategy_name?: string;
+  confidence?: number;
+  setup_grade?: string;
+  strategies?: string;
+  entry_reason?: string;
 };
 
 const TradeHistory = () => {
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [days, setDays] = useState(7);
+  const [learning, setLearning] = useState<any>(null);
 
   useEffect(() => {
     fetchRecentTrades(days, 100)
       .then((data) => setTrades(data || []))
       .catch(() => setTrades([]));
   }, [days]);
+
+  useEffect(() => {
+    fetchLearningSummary()
+      .then((data) => setLearning(data))
+      .catch(() => setLearning(null));
+  }, []);
 
   const totalPnl = trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
   const wins = trades.filter((t) => (t.pnl || 0) > 0).length;
@@ -76,6 +88,31 @@ const TradeHistory = () => {
         </Stack>
 
         <Divider sx={{ mb: 2 }} />
+        {learning?.summary && (
+          <Box sx={{ mb: 2, p: 2, borderRadius: 2, border: "1px solid rgba(255,255,255,0.06)" }}>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>Learning Summary</Typography>
+            <Stack direction="row" spacing={2} flexWrap="wrap">
+              <Typography variant="caption" color="text.secondary">
+                Trades learned: {learning.summary.total_trades_analyzed ?? 0}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Learning cycles: {learning.summary.learning_cycles_completed ?? 0}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Recommended confidence: {learning.summary.recommended_confidence ?? 0}
+              </Typography>
+            </Stack>
+            {learning.recent_insights?.length > 0 && (
+              <Stack spacing={0.5} sx={{ mt: 1 }}>
+                {learning.recent_insights.map((insight: string, idx: number) => (
+                  <Typography key={idx} variant="caption" color="text.secondary">
+                    {insight}
+                  </Typography>
+                ))}
+              </Stack>
+            )}
+          </Box>
+        )}
         {trades.length === 0 && (
           <Typography variant="body2" color="text.secondary">
             No trades yet.
@@ -113,6 +150,16 @@ const TradeHistory = () => {
                     <Typography variant="caption" color="text.secondary">
                       {trade.entry_time ? new Date(trade.entry_time).toLocaleString() : "--"}
                     </Typography>
+                    {trade.setup_grade && (
+                      <Typography variant="caption" color="text.secondary">
+                        Grade: {trade.setup_grade}
+                      </Typography>
+                    )}
+                    {typeof trade.confidence === "number" && (
+                      <Typography variant="caption" color="text.secondary">
+                        Conf: {Math.round(trade.confidence * 100)}%
+                      </Typography>
+                    )}
                   </Stack>
                 }
               />
@@ -134,6 +181,11 @@ const TradeHistory = () => {
             </ListItem>
           ))}
         </List>
+        {trades.length > 0 && trades[0].entry_reason && (
+          <Typography variant="caption" color="text.secondary">
+            Example reason: {trades[0].entry_reason}
+          </Typography>
+        )}
       </CardContent>
     </Card>
   );
