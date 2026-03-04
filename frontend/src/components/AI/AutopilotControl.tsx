@@ -35,6 +35,7 @@ import {
   startAutonomousEngine,
   stopAutonomousEngine,
   getAutonomousStatus,
+  getAutonomousLogs,
   updateAutonomousConfig,
   getStrategyPerformance,
   liquidateAllPositions
@@ -77,6 +78,7 @@ interface StrategyPerformance {
 
 const AutopilotControl = () => {
   const [status, setStatus] = useState<AutonomousStatus | null>(null);
+  const [decisionLogs, setDecisionLogs] = useState<Decision[]>([]);
   const [loading, setLoading] = useState(true);
   const [strategyPerf, setStrategyPerf] = useState<StrategyPerformance | null>(null);
   const [expandedStrategies, setExpandedStrategies] = useState(false);
@@ -128,6 +130,25 @@ const AutopilotControl = () => {
     }
   };
 
+  const loadDecisionLogs = async () => {
+    try {
+      const data = await getAutonomousLogs();
+      setDecisionLogs(data.decisions || []);
+    } catch (error) {
+      const cached = localStorage.getItem(STATUS_CACHE_KEY);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed?.decisions?.length) {
+            setDecisionLogs(parsed.decisions);
+          }
+        } catch {
+          // ignore cache parse errors
+        }
+      }
+    }
+  };
+
   useEffect(() => {
     const cached = localStorage.getItem(STATUS_CACHE_KEY);
     if (cached) {
@@ -141,10 +162,12 @@ const AutopilotControl = () => {
 
     loadStatus();
     loadStrategyPerformance();
+    loadDecisionLogs();
 
     // Auto-refresh every 5 seconds
     const interval = setInterval(() => {
       loadStatus();
+      loadDecisionLogs();
     }, 5000);
 
     return () => clearInterval(interval);
@@ -486,9 +509,9 @@ const AutopilotControl = () => {
           Live Decision Log
         </Typography>
 
-        {status.decisions.length > 0 ? (
+        {decisionLogs.length > 0 ? (
           <Stack spacing={2} sx={{ maxHeight: 300, overflow: "auto" }}>
-            {status.decisions.map((decision) => (
+            {decisionLogs.map((decision) => (
               <Box
                 key={decision.id}
                 sx={{
