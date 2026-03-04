@@ -162,6 +162,8 @@ class AutonomousEngine:
         self.risk_posture = self.config.get("risk_posture", "BALANCED")  # DEFENSIVE, BALANCED, AGGRESSIVE
         self.scan_interval = self.config.get("scan_interval", 1)  # seconds between scans (1s for real-time day trading)
         self.scan_watchdog_threshold = self.config.get("scan_watchdog_threshold", 60)  # seconds before restarting scan loop
+        self.scan_timeout_seconds = self.config.get("scan_timeout_seconds", 45)
+        self.analyze_timeout_seconds = self.config.get("analyze_timeout_seconds", 45)
         self.last_scan_heartbeat: Optional[datetime] = None
         self.max_decisions = self.config.get("max_decision_logs", 100)
         self._last_decision_flush: Optional[datetime] = None
@@ -1050,7 +1052,19 @@ class AutonomousEngine:
 
                     # 1. Scan market for opportunities
                     try:
-                        opportunities = await self._scan_market()
+                        opportunities = await asyncio.wait_for(
+                            self._scan_market(),
+                            timeout=self.scan_timeout_seconds,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error("❌ Scan market timed out")
+                        self._add_decision(
+                            "ERROR",
+                            f"Market scan timed out after {self.scan_timeout_seconds}s",
+                            "ERROR",
+                            {"timeout_seconds": self.scan_timeout_seconds},
+                        )
+                        opportunities = []
                     except Exception as scan_error:
                         logger.error(f"❌ Scan market failed: {scan_error}")
                         self._add_decision(
@@ -1063,11 +1077,23 @@ class AutonomousEngine:
 
                     # 2. Analyze each opportunity with ALL strategies
                     try:
-                        analyzed = await self._analyze_opportunities(
-                            opportunities,
-                            analyze_symbols=self.last_market_symbols,
-                            allowed_symbols={o.get("symbol") for o in opportunities if o.get("symbol")},
+                        analyzed = await asyncio.wait_for(
+                            self._analyze_opportunities(
+                                opportunities,
+                                analyze_symbols=self.last_market_symbols,
+                                allowed_symbols={o.get("symbol") for o in opportunities if o.get("symbol")},
+                            ),
+                            timeout=self.analyze_timeout_seconds,
                         )
+                    except asyncio.TimeoutError:
+                        logger.error("❌ Analysis timed out")
+                        self._add_decision(
+                            "ERROR",
+                            f"Analysis timed out after {self.analyze_timeout_seconds}s",
+                            "ERROR",
+                            {"timeout_seconds": self.analyze_timeout_seconds},
+                        )
+                        analyzed = []
                     except Exception as analyze_error:
                         logger.error(f"❌ Analysis failed: {analyze_error}")
                         self._add_decision(

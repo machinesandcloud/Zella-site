@@ -236,6 +236,18 @@ async def resilience_watchdog():
                     if engine.enabled:
                         logger.warning("Autonomous engine stopped - restarting")
                         await engine.start()
+                elif engine and engine.running:
+                    # Restart main loop if scan heartbeat is stale
+                    try:
+                        heartbeat = getattr(engine, "last_scan_heartbeat", None)
+                        threshold = getattr(engine, "scan_watchdog_threshold", 60)
+                        if heartbeat:
+                            age = (datetime.utcnow() - heartbeat).total_seconds()
+                            if age > threshold:
+                                logger.warning(f"Scan heartbeat stale ({int(age)}s) - restarting main loop")
+                                await engine._restart_task("main_trading_loop", f"watchdog stale {int(age)}s")
+                    except Exception as e:
+                        logger.warning(f"Scan watchdog check failed: {e}")
         except Exception as e:
             logger.warning(f"Resilience watchdog error: {e}")
             await _asyncio.sleep(5)
