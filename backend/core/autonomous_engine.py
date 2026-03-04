@@ -30,6 +30,7 @@ class TradeContext:
     quantity: int
     confidence: float
     setup_grade: str
+    trade_id: Optional[int] = None
     # Market state at entry
     spy_price: float = 0.0
     vwap: float = 0.0
@@ -197,6 +198,7 @@ class AutonomousEngine:
         # Trade context tracking - NEVER LOSE TRADE CONTEXT
         self._active_trade_contexts: Dict[str, TradeContext] = {}  # symbol -> context
         self._trade_context_lock = Lock()
+        self._trade_user_id: Optional[int] = None
 
         # Scanner results (for UI display)
         self.last_scanner_results: List[Dict[str, Any]] = []  # Raw screener output
@@ -644,6 +646,120 @@ class AutonomousEngine:
 
         logger.info(f"📸 Trade context captured for {symbol}: {strategy_name}, ${entry_price:.2f} x {quantity}")
         return context
+
+    def _get_default_user_id(self) -> Optional[int]:
+        """Resolve the default user for trade persistence (admin or first user)."""
+        if self._trade_user_id is not None:
+            return self._trade_user_id
+        try:
+            from core.db import SessionLocal
+            from models import User
+            db = SessionLocal()
+            try:
+                user = None
+                if settings.admin_username:
+                    user = db.query(User).filter(User.username == settings.admin_username).first()
+                if user is None:
+                    user = db.query(User).order_by(User.id.asc()).first()
+                self._trade_user_id = user.id if user else None
+                return self._trade_user_id
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Failed to resolve default user id: {e}")
+            return None
+
+    def _record_trade_entry(
+        self,
+        symbol: str,
+        action: str,
+        quantity: int,
+        entry_price: float,
+        strategies: List[str],
+        stop_loss: float,
+        take_profit: float,
+    ) -> Optional[int]:
+        """Persist trade entry to DB so history shows up."""
+        user_id = self._get_default_user_id()
+        if not user_id:
+            return None
+        try:
+            from core.db import SessionLocal
+            from models import Trade
+            db = SessionLocal()
+            try:
+                trade = Trade(
+                    user_id=user_id,
+                    symbol=symbol,
+                    strategy_name=strategies[0] if strategies else None,
+                    action=action,
+                    quantity=abs(int(quantity)),
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    entry_time=datetime.utcnow(),
+                    status="open",
+                    is_paper_trade=bool(settings.alpaca_paper),
+                )
+                db.add(trade)
+                db.commit()
+                db.refresh(trade)
+                return trade.id
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Failed to persist trade entry for {symbol}: {e}")
+            return None
+
+    def _finalize_trade_record(
+        self,
+        symbol: str,
+        exit_price: float,
+        pnl: Optional[float],
+    ) -> None:
+        """Update the most recent open trade with exit info."""
+        user_id = self._get_default_user_id()
+        if not user_id:
+            return
+        try:
+            from core.db import SessionLocal
+            from models import Trade
+            db = SessionLocal()
+            try:
+                trade = (
+                    db.query(Trade)
+                    .filter(
+                        Trade.user_id == user_id,
+                        Trade.symbol == symbol,
+                        Trade.exit_time.is_(None),
+                    )
+                    .order_by(Trade.entry_time.desc())
+                    .first()
+                )
+                if not trade:
+                    return
+                entry_price = float(trade.entry_price or 0)
+                quantity = float(trade.quantity or 0)
+                computed_pnl = pnl
+                if computed_pnl is None and entry_price and quantity:
+                    if (trade.action or "").upper() == "SELL":
+                        computed_pnl = (entry_price - exit_price) * quantity
+                    else:
+                        computed_pnl = (exit_price - entry_price) * quantity
+                pnl_percent = None
+                if entry_price and quantity:
+                    pnl_percent = ((computed_pnl or 0) / (entry_price * quantity)) * 100
+
+                trade.exit_price = exit_price
+                trade.exit_time = datetime.utcnow()
+                trade.pnl = computed_pnl
+                trade.pnl_percent = pnl_percent
+                trade.status = "closed"
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Failed to finalize trade record for {symbol}: {e}")
 
     def _get_trade_context(self, symbol: str) -> Optional[TradeContext]:
         """Get the trade context for a symbol - THREAD SAFE"""
@@ -2833,6 +2949,27 @@ class AutonomousEngine:
                     take_profit_3r=take_profit_3r
                 )
 
+                # Persist trade entry for history + attach context
+                trade_id = self._record_trade_entry(
+                    symbol=symbol,
+                    action=action,
+                    quantity=quantity,
+                    entry_price=price,
+                    strategies=strategies,
+                    stop_loss=stop_loss_price,
+                    take_profit=take_profit_3r,
+                )
+                context = self._create_trade_context(
+                    symbol=symbol,
+                    strategy_name=strategies[0] if strategies else "UNKNOWN",
+                    entry_price=price,
+                    quantity=quantity,
+                    confidence=final_confidence,
+                    setup_grade=setup_grade,
+                    signals_used=strategies,
+                )
+                context.trade_id = trade_id
+
                 self._add_decision(
                     "TRADE",
                     f"{action} {quantity} {symbol} @ ${price:.2f} [GRADE {setup_grade}]",
@@ -2935,6 +3072,13 @@ class AutonomousEngine:
                 entry_price=position.get("avgPrice", 0),
                 exit_price=current_price,
                 quantity=quantity
+            )
+
+            # Persist trade exit for history
+            self._finalize_trade_record(
+                symbol=symbol,
+                exit_price=current_price,
+                pnl=unrealized_pnl,
             )
 
             self._add_decision(

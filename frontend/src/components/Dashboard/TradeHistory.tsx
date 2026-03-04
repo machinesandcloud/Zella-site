@@ -7,7 +7,10 @@ import {
   ListItem,
   ListItemText,
   Stack,
-  Typography
+  Typography,
+  ToggleButton,
+  ToggleButtonGroup,
+  Divider
 } from "@mui/material";
 import { fetchRecentTrades } from "../../services/api";
 
@@ -27,19 +30,52 @@ type TradeRow = {
 
 const TradeHistory = () => {
   const [trades, setTrades] = useState<TradeRow[]>([]);
+  const [days, setDays] = useState(7);
 
   useEffect(() => {
-    fetchRecentTrades()
+    fetchRecentTrades(days, 100)
       .then((data) => setTrades(data || []))
       .catch(() => setTrades([]));
-  }, []);
+  }, [days]);
+
+  const totalPnl = trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+  const wins = trades.filter((t) => (t.pnl || 0) > 0).length;
+  const losses = trades.filter((t) => (t.pnl || 0) < 0).length;
+  const winRate = trades.length ? Math.round((wins / trades.length) * 100) : 0;
 
   return (
     <Card elevation={0} sx={{ border: "1px solid var(--border)" }}>
       <CardContent>
-        <Typography variant="h6" sx={{ mb: 2 }}>
-          Recent Trades
-        </Typography>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+          <Typography variant="h6">Recent Trades</Typography>
+          <ToggleButtonGroup
+            size="small"
+            value={days}
+            exclusive
+            onChange={(_, value) => value && setDays(value)}
+          >
+            <ToggleButton value={1}>Today</ToggleButton>
+            <ToggleButton value={7}>7 Days</ToggleButton>
+            <ToggleButton value={30}>30 Days</ToggleButton>
+          </ToggleButtonGroup>
+        </Stack>
+
+        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+          <Typography variant="caption" color="text.secondary">
+            Trades: {trades.length}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Win rate: {winRate}%
+          </Typography>
+          <Typography
+            variant="caption"
+            color={totalPnl >= 0 ? "success.main" : "error.main"}
+          >
+            P/L: {totalPnl >= 0 ? "+" : ""}{totalPnl.toFixed(2)}
+          </Typography>
+        </Stack>
+
+        <Divider sx={{ mb: 2 }} />
         {trades.length === 0 && (
           <Typography variant="body2" color="text.secondary">
             No trades yet.

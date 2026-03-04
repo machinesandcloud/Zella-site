@@ -127,8 +127,10 @@ export const fetchDashboardMetrics = async () => {
   return data;
 };
 
-export const fetchRecentTrades = async () => {
-  const { data } = await api.get("/api/dashboard/trades/recent");
+export const fetchRecentTrades = async (days: number = 7, limit: number = 50) => {
+  const { data } = await api.get("/api/dashboard/trades/recent", {
+    params: { days, limit }
+  });
   return data;
 };
 
