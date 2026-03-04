@@ -1,9 +1,10 @@
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 
 from core.auto_trader import AutoTrader
-from core.autonomous_engine import AutonomousEngine
+from core.autonomous_engine import AutonomousEngine, DECISION_LOG_FILE
 from api.routes.auth import get_current_user
 from core.risk_manager import RiskManager
 from core.alpaca_client import AlpacaClient
@@ -225,9 +226,55 @@ def get_autonomous_status(
 ) -> dict:
     """Get autonomous engine status and metrics"""
     if not engine:
-        raise HTTPException(status_code=503, detail="Autonomous engine not initialized")
+        # Fall back to persisted decision logs so UI can still render
+        decisions = []
+        if DECISION_LOG_FILE.exists():
+            try:
+                with open(DECISION_LOG_FILE, "r") as f:
+                    decisions = json.load(f)
+            except Exception:
+                decisions = []
+        return {
+            "enabled": False,
+            "running": False,
+            "mode": "UNKNOWN",
+            "risk_posture": "UNKNOWN",
+            "last_scan": None,
+            "active_positions": 0,
+            "positions_cache_age": None,
+            "decisions": decisions[:20],
+            "strategy_performance": {},
+            "num_strategies": 0,
+            "connected": False,
+            "symbols_scanned": 0,
+            "scanner_results": [],
+            "analyzed_opportunities": [],
+            "power_hour": {"active": False, "multiplier": 1.0},
+        }
 
     return engine.get_status()
+
+
+@router.get("/autonomous/logs")
+def get_autonomous_logs(
+    engine: Optional[AutonomousEngine] = Depends(get_autonomous_engine),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Get persisted autonomous decision logs."""
+    decisions = []
+    if engine:
+        decisions = engine.decisions[: engine.max_decisions]
+    elif DECISION_LOG_FILE.exists():
+        try:
+            with open(DECISION_LOG_FILE, "r") as f:
+                decisions = json.load(f)
+        except Exception:
+            decisions = []
+    return {
+        "decisions": decisions,
+        "count": len(decisions),
+        "engine_running": bool(engine and engine.running),
+    }
 
 
 @router.post("/autonomous/config")

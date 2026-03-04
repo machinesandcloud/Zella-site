@@ -10,7 +10,7 @@ import {
   FormControlLabel,
   Switch
 } from "@mui/material";
-import { getAutonomousStatus } from "../../services/api";
+import { getAutonomousLogs, getAutonomousStatus } from "../../services/api";
 
 type LogEntry = {
   type: string;
@@ -54,12 +54,17 @@ const BotLogs = () => {
 
   const fetchLogs = async () => {
     try {
-      const data = await getAutonomousStatus();
-      // decisions is an array of {type, message, category, details, timestamp}
+      const data = await getAutonomousLogs();
       const decisions = data.decisions || [];
-      setLogs(decisions.reverse()); // Show newest first
+      setLogs(decisions); // Already newest-first from backend
     } catch (error) {
-      console.warn("Failed to fetch bot logs:", error);
+      try {
+        const fallback = await getAutonomousStatus();
+        const decisions = fallback.decisions || [];
+        setLogs(decisions);
+      } catch (fallbackError) {
+        console.warn("Failed to fetch bot logs:", fallbackError);
+      }
     } finally {
       setLoading(false);
     }
