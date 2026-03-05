@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     screener_in_play_gap_percent: float = 2.0  # In-play gap threshold
     screener_in_play_volume_multiplier: float = 0.5  # Allow lower avg volume when in-play
     screener_debug: bool = False  # Include full screener debug metrics in logs/WS
+    trade_frequency_profile: str = "balanced"  # conservative | balanced | active
 
     # Autonomous engine resilience
     autonomous_auto_resume: bool = True  # Auto-resume engine on restart/reconnect

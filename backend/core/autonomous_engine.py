@@ -171,6 +171,15 @@ class AutonomousEngine:
         self._last_decision_flush: Optional[datetime] = None
         self.max_positions = self.config.get("max_positions", 5)
         self.enabled_strategies = self.config.get("enabled_strategies", "ALL")
+        self.trade_frequency_profile = (
+            self.config.get("trade_frequency_profile") or settings.trade_frequency_profile or "balanced"
+        ).lower()
+        if self.trade_frequency_profile == "active":
+            self.min_confidence_threshold = 0.60
+        elif self.trade_frequency_profile == "conservative":
+            self.min_confidence_threshold = 0.70
+        else:
+            self.min_confidence_threshold = 0.65
         self.time_stop_minutes = self.config.get("time_stop_minutes", 12)
         self.time_stop_min_pnl = self.config.get("time_stop_min_pnl", 0.2)  # percent
         self.max_hold_minutes = self.config.get("max_hold_minutes", 25)
@@ -216,7 +225,6 @@ class AutonomousEngine:
         # Day trading safeguards
         self.eod_liquidation_done_today: bool = False  # Track if EOD liquidation ran today
         self.last_liquidation_date: Optional[str] = None  # Date string of last liquidation
-        self.min_confidence_threshold: float = 0.65  # Minimum confidence to enter trades
         self.daily_pnl: float = 0.0  # Track daily P&L
         self.daily_pnl_limit: float = -500.0  # Stop trading if down this much
 
@@ -281,6 +289,18 @@ class AutonomousEngine:
             require_premarket_volume=settings.screener_require_premarket_volume,
             require_daily_trend=settings.screener_require_daily_trend,
         )
+        self._screener_base = {
+            "min_relative_volume": self.screener.min_relative_volume,
+            "min_relative_volume_low_float": self.screener.min_relative_volume_low_float,
+            "min_relative_volume_mid_float": self.screener.min_relative_volume_mid_float,
+            "min_relative_volume_large_float": self.screener.min_relative_volume_large_float,
+            "min_premarket_volume": self.screener.min_premarket_volume,
+            "in_play_min_rvol": self.screener.in_play_min_rvol,
+            "in_play_volume_multiplier": self.screener.in_play_volume_multiplier,
+            "require_premarket_volume": self.screener.require_premarket_volume,
+            "require_daily_trend": self.screener.require_daily_trend,
+        }
+        self._last_profile_log_time: Optional[datetime] = None
 
         # Initialize all available strategies
         self.all_strategies = self._initialize_strategies()
@@ -567,6 +587,69 @@ class AutonomousEngine:
         if len(self._daily_data_cache) > 500 and self.last_market_symbols:
             keep = set(self.last_market_symbols)
             self._daily_data_cache = {k: v for k, v in self._daily_data_cache.items() if k in keep}
+
+    def _apply_trade_frequency_profile(self, current_hour: int, current_minute: int) -> None:
+        """Adjust screener thresholds based on trade-frequency profile and time-of-day."""
+        profile = self.trade_frequency_profile
+        base = self._screener_base
+        mins_open = minutes_since_open()
+        in_opening = 0 <= mins_open < 30
+        in_midday = mins_open >= 120 if mins_open >= 0 else False
+
+        # Default to baseline
+        rvol = base["min_relative_volume"]
+        rvol_low = base["min_relative_volume_low_float"]
+        rvol_mid = base["min_relative_volume_mid_float"]
+        rvol_large = base["min_relative_volume_large_float"]
+        premarket_required = base["require_premarket_volume"]
+        premarket_min = base["min_premarket_volume"]
+        in_play_rvol = base["in_play_min_rvol"]
+        in_play_mult = base["in_play_volume_multiplier"]
+
+        if profile == "active":
+            rvol = 1.0 if in_midday else 1.2
+            rvol_low = max(1.4, rvol + 0.3)
+            rvol_mid = max(1.1, rvol)
+            rvol_large = 0.9 if in_midday else 1.0
+            in_play_rvol = 1.6 if in_midday else 1.8
+            in_play_mult = 0.4
+        elif profile == "balanced":
+            rvol = 1.2 if in_midday else 1.4
+            rvol_low = max(1.6, rvol + 0.4)
+            rvol_mid = max(1.2, rvol)
+            rvol_large = 1.0 if in_midday else 1.1
+            in_play_rvol = 1.8 if in_midday else 2.0
+            in_play_mult = 0.5
+
+        # Premarket volume only during premarket or opening range
+        premarket_required = premarket_required and (mins_open == -1 or in_opening)
+
+        self.screener.min_relative_volume = rvol
+        self.screener.min_relative_volume_low_float = rvol_low
+        self.screener.min_relative_volume_mid_float = rvol_mid
+        self.screener.min_relative_volume_large_float = rvol_large
+        self.screener.in_play_min_rvol = in_play_rvol
+        self.screener.in_play_volume_multiplier = in_play_mult
+        self.screener.require_premarket_volume = premarket_required
+        self.screener.min_premarket_volume = premarket_min
+
+        # Throttled log
+        now = datetime.now()
+        if not self._last_profile_log_time or (now - self._last_profile_log_time).total_seconds() > 900:
+            self._add_decision(
+                "SYSTEM",
+                f"Trade frequency profile: {profile}",
+                "INFO",
+                {
+                    "profile": profile,
+                    "rvol": rvol,
+                    "rvol_large": rvol_large,
+                    "in_play_rvol": in_play_rvol,
+                    "premarket_required": premarket_required,
+                    "minutes_since_open": mins_open,
+                },
+            )
+            self._last_profile_log_time = now
 
     def _update_symbol_signal(self, symbol: str, signal: str) -> bool:
         """
@@ -1976,6 +2059,9 @@ class AutonomousEngine:
             except Exception as e:
                 logger.debug(f"Could not fetch news catalysts: {e}")
 
+            # Adjust screener thresholds based on profile/time
+            self._apply_trade_frequency_profile(current_hour, current_minute)
+
             # Use enhanced ML screener with DETAILED evaluation
             try:
                 passed_list, all_evaluations = self.screener.rank_with_details(
@@ -2568,6 +2654,13 @@ class AutonomousEngine:
                 # Normal hours: Higher standards
                 min_confidence = 0.70 if self.risk_posture == "AGGRESSIVE" else 0.75 if self.risk_posture == "BALANCED" else 0.85
                 min_strategies = 2 if self.risk_posture == "AGGRESSIVE" else 3 if self.risk_posture == "BALANCED" else 4
+
+            # Trade frequency profile adjustments (safe loosening)
+            if self.trade_frequency_profile == "active":
+                min_confidence -= 0.05
+                min_strategies = max(2, min_strategies - 1)
+            elif self.trade_frequency_profile == "balanced":
+                min_confidence -= 0.02
 
             # Global minimum - never trade below this regardless of settings
             if adjusted_confidence < self.min_confidence_threshold:
