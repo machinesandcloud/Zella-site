@@ -100,6 +100,8 @@ from utils.indicators import (
     calculate_position_size_atr,
     is_power_hour,
     power_hour_multiplier,
+    ema,
+    vwap,
 )
 from utils.market_hours import (
     is_past_new_trade_cutoff,
@@ -184,6 +186,10 @@ class AutonomousEngine:
         self.time_stop_minutes = self.config.get("time_stop_minutes", 12)
         self.time_stop_min_pnl = self.config.get("time_stop_min_pnl", 0.2)  # percent
         self.max_hold_minutes = self.config.get("max_hold_minutes", 25)
+        self.trailing_lookback_bars = self.config.get("trailing_lookback_bars", 3)
+        self.trailing_min_pnl = self.config.get("trailing_min_pnl", 0.3)  # percent
+        self.momentum_exit_min_pnl = self.config.get("momentum_exit_min_pnl", 0.4)  # percent
+        self.momentum_exit_ema_period = self.config.get("momentum_exit_ema_period", 9)
 
         # State - THREAD SAFE with locks
         self.running = False
@@ -1273,6 +1279,7 @@ class AutonomousEngine:
                 try:
                     loop_count += 1
                     scan_start = datetime.now()
+                    now = self._get_market_now()
                     self.last_scan_heartbeat = datetime.utcnow()
 
                     # Log every iteration so user can see activity
@@ -1582,9 +1589,18 @@ class AutonomousEngine:
                     pnl_percent = position.get("unrealizedPnLPercent", 0)
                     unrealized_pnl = position.get("unrealizedPnL", 0)
                     quantity = position.get("quantity", 0)
+                    is_long = quantity >= 0
 
                     if not symbol or current_price <= 0:
                         continue
+
+                    df: Optional[pd.DataFrame] = None
+                    try:
+                        bars = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
+                        if bars and len(bars) > 0:
+                            df = pd.DataFrame(bars)
+                    except Exception:
+                        df = None
 
                     # Time-stop and max-hold exits to cut losers early
                     ctx = self._get_trade_context(symbol)
@@ -1606,9 +1622,7 @@ class AutonomousEngine:
                     # Get ATR for this symbol if not cached
                     if symbol not in position_atr:
                         try:
-                            bars = self.market_data.get_historical_bars(symbol, "1 D", "5 mins")
-                            if bars and len(bars) > 0:
-                                df = pd.DataFrame(bars)
+                            if df is not None and len(df) > 0:
                                 atr_series = atr(df, 14)
                                 position_atr[symbol] = atr_series.iloc[-1] if len(atr_series) > 0 else current_price * 0.02
                             else:
@@ -1696,6 +1710,53 @@ class AutonomousEngine:
                                 if symbol in position_atr:
                                     del position_atr[symbol]
                                 continue
+                        if plan.trailing_activated and plan.current_stop:
+                            if (is_long and current_price < plan.current_stop) or (not is_long and current_price > plan.current_stop):
+                                logger.warning(f"🛑 TRAILING STOP HIT: {symbol} @ ${current_price:.2f} (stop was ${plan.current_stop:.2f})")
+                                await self._close_position(symbol, f"Trailing stop hit @ ${plan.current_stop:.2f}")
+                                self.discipline.record_trade(unrealized_pnl)
+                                if symbol in position_atr:
+                                    del position_atr[symbol]
+                                continue
+
+                    # Momentum failure + micro trailing exit (fast exits for fading trades)
+                    if df is not None and len(df) >= max(10, self.trailing_lookback_bars):
+                        try:
+                            ema_series = ema(df["close"], self.momentum_exit_ema_period)
+                            ema_value = float(ema_series.iloc[-1]) if len(ema_series) else 0.0
+                            vwap_value = float(vwap(df).iloc[-1]) if len(df) else 0.0
+                            recent_lows = df["low"].iloc[-self.trailing_lookback_bars:]
+                            recent_highs = df["high"].iloc[-self.trailing_lookback_bars:]
+
+                            if pnl_percent >= self.trailing_min_pnl:
+                                if is_long and current_price < float(recent_lows.min()):
+                                    logger.warning(f"📉 MICRO TRAIL EXIT: {symbol} broke last {self.trailing_lookback_bars} lows")
+                                    await self._close_position(symbol, f"Micro trail: broke last {self.trailing_lookback_bars} lows")
+                                    if symbol in position_atr:
+                                        del position_atr[symbol]
+                                    continue
+                                if not is_long and current_price > float(recent_highs.max()):
+                                    logger.warning(f"📈 MICRO TRAIL EXIT: {symbol} broke last {self.trailing_lookback_bars} highs")
+                                    await self._close_position(symbol, f"Micro trail: broke last {self.trailing_lookback_bars} highs")
+                                    if symbol in position_atr:
+                                        del position_atr[symbol]
+                                    continue
+
+                            if pnl_percent >= self.momentum_exit_min_pnl and ema_value and vwap_value:
+                                if is_long and current_price < ema_value and current_price < vwap_value:
+                                    logger.warning(f"📉 MOMENTUM EXIT: {symbol} below EMA/VWAP")
+                                    await self._close_position(symbol, "Momentum failure (below EMA/VWAP)")
+                                    if symbol in position_atr:
+                                        del position_atr[symbol]
+                                    continue
+                                if not is_long and current_price > ema_value and current_price > vwap_value:
+                                    logger.warning(f"📈 MOMENTUM EXIT: {symbol} above EMA/VWAP")
+                                    await self._close_position(symbol, "Momentum failure (above EMA/VWAP)")
+                                    if symbol in position_atr:
+                                        del position_atr[symbol]
+                                    continue
+                        except Exception as e:
+                            logger.debug(f"Momentum/trailing exit check failed for {symbol}: {e}")
 
                     # Take profit at ATR-based target
                     if pnl_percent >= profit_target:
@@ -1711,11 +1772,11 @@ class AutonomousEngine:
                         if symbol in position_atr:
                             del position_atr[symbol]
 
-                await asyncio.sleep(30)  # Check every 30 seconds
+                await asyncio.sleep(5)  # Check every 5 seconds
 
             except Exception as e:
                 logger.error(f"Error in position monitor: {e}")
-                await asyncio.sleep(30)
+                await asyncio.sleep(5)
 
     async def _eod_liquidation_monitor(self):
         """
@@ -3578,6 +3639,40 @@ class AutonomousEngine:
         time_mult = power_hour_multiplier(now.hour, now.minute)
         cached_positions = self._positions_cache_count
         cache_age = (datetime.now() - self._positions_cache_time).total_seconds() if self._positions_cache_time else None
+        market_refresh = getattr(self.market_data, "cache_ttl", None)
+
+        exit_rules = {
+            "time_stop_minutes": self.time_stop_minutes,
+            "time_stop_min_pnl": self.time_stop_min_pnl,
+            "max_hold_minutes": self.max_hold_minutes,
+            "trailing_lookback_bars": self.trailing_lookback_bars,
+            "trailing_min_pnl": self.trailing_min_pnl,
+            "momentum_exit_min_pnl": self.momentum_exit_min_pnl,
+            "momentum_exit_ema_period": self.momentum_exit_ema_period,
+            "atr_stop_multiplier": 1.5,
+            "atr_profit_multiplier": 3.75,
+            "scale_out": {
+                "one_r_pct": 50,
+                "two_r_pct": 25,
+                "three_r_pct": 25,
+                "breakeven_after": "1R",
+                "trailing_after": "2R",
+            },
+        }
+
+        position_exit_state: Dict[str, Any] = {}
+        try:
+            for symbol, plan in self.elite_position_manager.positions.items():
+                position_exit_state[symbol] = {
+                    "current_stop": plan.current_stop,
+                    "original_stop": plan.original_stop,
+                    "breakeven_activated": plan.breakeven_activated,
+                    "trailing_activated": plan.trailing_activated,
+                    "remaining_quantity": plan.remaining_quantity,
+                    "scale_levels": plan.scale_levels,
+                }
+        except Exception:
+            position_exit_state = {}
 
         return {
             "enabled": self.enabled,
@@ -3601,6 +3696,16 @@ class AutonomousEngine:
                 "count": len(self.last_hotlist),
                 "generated_at": self.last_hotlist_at.isoformat() if self.last_hotlist_at else None,
             },
+            "timings": {
+                "scan_interval_seconds": self.scan_interval,
+                "scan_interval_off_hours_seconds": 15,
+                "position_monitor_interval_seconds": 5,
+                "bars_timeframe": "5 mins",
+                "market_data_refresh_seconds": market_refresh,
+                "daily_cache_ttl_seconds": self._daily_data_cache_ttl_seconds,
+            },
+            "exit_rules": exit_rules,
+            "position_exit_state": position_exit_state,
             "power_hour": {
                 "active": in_power_hour,
                 "multiplier": time_mult,

@@ -19,7 +19,8 @@ import {
   ListItem,
   ListItemText,
   IconButton,
-  Collapse
+  Collapse,
+  Tooltip
 } from "@mui/material";
 import {
   Stop,
@@ -95,7 +96,37 @@ const AutopilotControl = () => {
   const [strategyPerf, setStrategyPerf] = useState<StrategyPerformance | null>(null);
   const [expandedStrategies, setExpandedStrategies] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [showHotlist, setShowHotlist] = useState(false);
   const STATUS_CACHE_KEY = "zella_autonomous_status";
+
+  const getDecisionTimestamp = (decision: Decision): number => {
+    const raw = decision.timestamp || decision.time || "";
+    const parsed = new Date(raw).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const getDecisionKey = (decision: Decision): string => {
+    if (decision.id) return decision.id;
+    const stamp = decision.timestamp || decision.time || "";
+    const message = decision.message || decision.action || "";
+    return `${stamp}-${decision.type}-${message}`;
+  };
+
+  const mergeDecisions = (existing: Decision[], incoming: Decision[]): Decision[] => {
+    const map = new Map<string, Decision>();
+    const upsert = (decision: Decision) => {
+      const key = getDecisionKey(decision);
+      const current = map.get(key);
+      if (!current || getDecisionTimestamp(decision) >= getDecisionTimestamp(current)) {
+        map.set(key, decision);
+      }
+    };
+    existing.forEach(upsert);
+    incoming.forEach(upsert);
+    return Array.from(map.values()).sort(
+      (a, b) => getDecisionTimestamp(b) - getDecisionTimestamp(a)
+    );
+  };
 
   const loadStatus = async () => {
     setRefreshing(true);
@@ -145,14 +176,14 @@ const AutopilotControl = () => {
   const loadDecisionLogs = async () => {
     try {
       const data = await getAutonomousLogs();
-      setDecisionLogs(data.decisions || []);
+      setDecisionLogs((prev) => mergeDecisions(prev, data.decisions || []));
     } catch (error) {
       const cached = localStorage.getItem(STATUS_CACHE_KEY);
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
           if (parsed?.decisions?.length) {
-            setDecisionLogs(parsed.decisions);
+            setDecisionLogs((prev) => mergeDecisions(prev, parsed.decisions));
           }
         } catch {
           // ignore cache parse errors
@@ -291,6 +322,8 @@ const AutopilotControl = () => {
   const sessionLabel = status.market_session?.session || "UNKNOWN";
   const sessionSource = status.market_session?.clock_source || "local";
   const hotlistCount = status.hotlist?.count ?? 0;
+  const hotlistSymbols = status.hotlist?.symbols?.slice(0, 5) || [];
+  const hotlistTooltip = hotlistSymbols.length ? hotlistSymbols.join(", ") : "No hotlist yet";
   const sessionColor =
     sessionLabel === "REGULAR"
       ? "success"
@@ -341,13 +374,35 @@ const AutopilotControl = () => {
               size="small"
               variant="outlined"
             />
-            <Chip
-              label={`Hotlist: ${hotlistCount}`}
+            <Tooltip title={hotlistTooltip} arrow>
+              <Chip
+                label={`Hotlist: ${hotlistCount}`}
+                size="small"
+                variant="outlined"
+              />
+            </Tooltip>
+            <IconButton
               size="small"
-              variant="outlined"
-            />
+              onClick={() => setShowHotlist((prev) => !prev)}
+              disabled={hotlistSymbols.length === 0}
+            >
+              <ExpandMore
+                sx={{
+                  transform: showHotlist ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.2s ease",
+                }}
+              />
+            </IconButton>
           </Stack>
         </Stack>
+
+        <Collapse in={showHotlist} timeout="auto" unmountOnExit>
+          <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: "wrap" }}>
+            {hotlistSymbols.map((symbol) => (
+              <Chip key={symbol} label={symbol} size="small" color="info" variant="outlined" />
+            ))}
+          </Stack>
+        </Collapse>
 
         {/* Connection Warning */}
         {!status.connected && (

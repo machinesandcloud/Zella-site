@@ -52,17 +52,44 @@ const BotLogs = () => {
   const [loading, setLoading] = useState(true);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
+  const getLogTimestamp = (entry: LogEntry): number => {
+    const raw = entry.timestamp || "";
+    const parsed = new Date(raw).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const getLogKey = (entry: LogEntry): string => {
+    const stamp = entry.timestamp || "";
+    return `${stamp}-${entry.type}-${entry.message}`;
+  };
+
+  const mergeLogs = (existing: LogEntry[], incoming: LogEntry[]): LogEntry[] => {
+    const map = new Map<string, LogEntry>();
+    const upsert = (entry: LogEntry) => {
+      const key = getLogKey(entry);
+      const current = map.get(key);
+      if (!current || getLogTimestamp(entry) >= getLogTimestamp(current)) {
+        map.set(key, entry);
+      }
+    };
+    existing.forEach(upsert);
+    incoming.forEach(upsert);
+    return Array.from(map.values()).sort(
+      (a, b) => getLogTimestamp(b) - getLogTimestamp(a)
+    );
+  };
+
   const fetchLogs = async () => {
     try {
       const data = await getAutonomousLogs();
       const decisions = data.decisions || [];
-      setLogs(decisions); // Already newest-first from backend
+      setLogs((prev) => mergeLogs(prev, decisions));
       localStorage.setItem("zella_bot_logs", JSON.stringify(decisions));
     } catch (error) {
       try {
         const fallback = await getAutonomousStatus();
         const decisions = fallback.decisions || [];
-        setLogs(decisions);
+        setLogs((prev) => mergeLogs(prev, decisions));
         localStorage.setItem("zella_bot_logs", JSON.stringify(decisions));
       } catch (fallbackError) {
         console.warn("Failed to fetch bot logs:", fallbackError);
@@ -76,7 +103,10 @@ const BotLogs = () => {
     const cached = localStorage.getItem("zella_bot_logs");
     if (cached) {
       try {
-        setLogs(JSON.parse(cached));
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          setLogs((prev) => mergeLogs(prev, parsed));
+        }
         setLoading(false);
       } catch {
         // ignore cache parse errors

@@ -10,9 +10,11 @@ import {
   TableHead,
   TableRow,
   Typography,
-  Chip
+  Chip,
+  Stack,
+  Tooltip
 } from "@mui/material";
-import { closePosition, fetchPositions } from "../../services/api";
+import { closePosition, fetchPositions, getAutonomousStatus } from "../../services/api";
 
 const formatCurrency = (value: number | undefined): string => {
   if (value === undefined || value === null) return "--";
@@ -25,6 +27,9 @@ const formatCurrency = (value: number | undefined): string => {
 
 const ActivePositions = () => {
   const [positions, setPositions] = useState<any[]>([]);
+  const [exitRules, setExitRules] = useState<any | null>(null);
+  const [positionExitState, setPositionExitState] = useState<Record<string, any>>({});
+  const [timings, setTimings] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadPositions = async () => {
@@ -34,6 +39,18 @@ const ActivePositions = () => {
       const posArray = Array.isArray(data) ? data : (data?.positions || []);
       setPositions(posArray);
       localStorage.setItem("zella_positions", JSON.stringify(posArray));
+
+      try {
+        const status = await getAutonomousStatus();
+        setExitRules(status?.exit_rules || null);
+        setPositionExitState(status?.position_exit_state || {});
+        setTimings(status?.timings || null);
+        localStorage.setItem("zella_exit_rules", JSON.stringify(status?.exit_rules || {}));
+        localStorage.setItem("zella_position_exit_state", JSON.stringify(status?.position_exit_state || {}));
+        localStorage.setItem("zella_engine_timings", JSON.stringify(status?.timings || {}));
+      } catch {
+        // ignore status fetch errors
+      }
     } catch {
       setPositions([]);
     } finally {
@@ -47,6 +64,30 @@ const ActivePositions = () => {
       try {
         setPositions(JSON.parse(cached));
         setLoading(false);
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+    const cachedRules = localStorage.getItem("zella_exit_rules");
+    if (cachedRules) {
+      try {
+        setExitRules(JSON.parse(cachedRules));
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+    const cachedExitState = localStorage.getItem("zella_position_exit_state");
+    if (cachedExitState) {
+      try {
+        setPositionExitState(JSON.parse(cachedExitState));
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+    const cachedTimings = localStorage.getItem("zella_engine_timings");
+    if (cachedTimings) {
+      try {
+        setTimings(JSON.parse(cachedTimings));
       } catch {
         // ignore cache parse errors
       }
@@ -78,11 +119,35 @@ const ActivePositions = () => {
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
             Active Positions
           </Typography>
-          <Chip
-            label={`${positions.length} position${positions.length !== 1 ? "s" : ""}`}
-            size="small"
-            color={positions.length > 0 ? "primary" : "default"}
-          />
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Chip
+              label={`${positions.length} position${positions.length !== 1 ? "s" : ""}`}
+              size="small"
+              color={positions.length > 0 ? "primary" : "default"}
+            />
+            {timings?.position_monitor_interval_seconds && (
+              <Chip
+                label={`Exit check: ${timings.position_monitor_interval_seconds}s`}
+                size="small"
+                variant="outlined"
+              />
+            )}
+            {timings?.scan_interval_seconds && (
+              <Chip
+                label={`Scan: ${timings.scan_interval_seconds}s`}
+                size="small"
+                variant="outlined"
+              />
+            )}
+            {exitRules && (
+              <Tooltip
+                title={`Exits: time-stop ${exitRules.time_stop_minutes}m (<${exitRules.time_stop_min_pnl}%), max-hold ${exitRules.max_hold_minutes}m, EMA${exitRules.momentum_exit_ema_period}, trail ${exitRules.trailing_lookback_bars} bars`}
+                arrow
+              >
+                <Chip label="Exit rules" size="small" variant="outlined" />
+              </Tooltip>
+            )}
+          </Stack>
         </Box>
 
         {loading ? (
@@ -109,6 +174,7 @@ const ActivePositions = () => {
                 <TableCell sx={{ fontWeight: 600 }} align="right">Current</TableCell>
                 <TableCell sx={{ fontWeight: 600 }} align="right">P&L</TableCell>
                 <TableCell sx={{ fontWeight: 600 }} align="right">Value</TableCell>
+                <TableCell sx={{ fontWeight: 600 }} align="left">Exit Rules</TableCell>
                 <TableCell sx={{ fontWeight: 600 }} align="center">Action</TableCell>
               </TableRow>
             </TableHead>
@@ -118,6 +184,14 @@ const ActivePositions = () => {
                 const pnl = parseFloat(pos.unrealizedPnL) || 0;
                 const pnlPercent = parseFloat(pos.unrealizedPnLPercent) || 0;
                 const isProfitable = pnl >= 0;
+                const exitState = positionExitState[pos.symbol] || {};
+                const stopPrice = exitState.current_stop;
+                const breakeven = exitState.breakeven_activated;
+                const trailing = exitState.trailing_activated;
+                const scaleLevels = Array.isArray(exitState.scale_levels) ? exitState.scale_levels : [];
+                const scaleSummary = scaleLevels
+                  .map((level: any) => `${level.level}:${level.executed ? "✓" : "•"}`)
+                  .join(" ");
 
                 return (
                   <TableRow key={`${pos.symbol}-${idx}`}>
@@ -145,6 +219,30 @@ const ActivePositions = () => {
                     </TableCell>
                     <TableCell align="right">
                       {formatCurrency(pos.marketValue || pos.market_value)}
+                    </TableCell>
+                    <TableCell align="left">
+                      <Stack direction="row" spacing={1} flexWrap="wrap">
+                        {stopPrice && (
+                          <Chip label={`Stop $${Number(stopPrice).toFixed(2)}`} size="small" variant="outlined" />
+                        )}
+                        <Chip
+                          label={breakeven ? "BE ✅" : "BE ❌"}
+                          size="small"
+                          color={breakeven ? "success" : "default"}
+                          variant="outlined"
+                        />
+                        <Chip
+                          label={trailing ? "Trail ✅" : "Trail ❌"}
+                          size="small"
+                          color={trailing ? "success" : "default"}
+                          variant="outlined"
+                        />
+                        {scaleSummary && (
+                          <Tooltip title={`Scale levels (1R/2R/3R): ${scaleSummary}`} arrow>
+                            <Chip label="Scale" size="small" variant="outlined" />
+                          </Tooltip>
+                        )}
+                      </Stack>
                     </TableCell>
                     <TableCell align="center">
                       <Button
