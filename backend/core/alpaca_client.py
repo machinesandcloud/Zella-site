@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 import logging
 
 from alpaca.trading.client import TradingClient
@@ -60,6 +60,14 @@ class AlpacaClient:
         )
 
         self._connected = False
+        self._clock_cache: Optional[Dict[str, Any]] = None
+        self._clock_cache_at: Optional[datetime] = None
+        self._clock_cache_ttl_seconds = 5
+
+        # Trade updates stream
+        self._trade_stream = None
+        self._trade_stream_thread = None
+        self._trade_update_callback: Optional[Callable[[Dict[str, Any]], None]] = None
         logger.info(f"Alpaca client initialized (paper={paper})")
 
     def connect(self) -> bool:
@@ -152,6 +160,103 @@ class AlpacaClient:
         self._connected = False
         logger.info("Disconnected from Alpaca")
 
+    def get_clock(self) -> Optional[Dict[str, Any]]:
+        """Get Alpaca market clock with light caching."""
+        now = datetime.utcnow()
+        if self._clock_cache and self._clock_cache_at:
+            if (now - self._clock_cache_at).total_seconds() < self._clock_cache_ttl_seconds:
+                return self._clock_cache
+        try:
+            clock = self.trading_client.get_clock()
+            payload = {
+                "timestamp": clock.timestamp,
+                "is_open": bool(clock.is_open),
+                "next_open": clock.next_open,
+                "next_close": clock.next_close,
+            }
+            self._clock_cache = payload
+            self._clock_cache_at = now
+            return payload
+        except Exception as e:
+            logger.debug(f"Failed to fetch Alpaca clock: {e}")
+            return None
+
+    def get_calendar(self, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        """Get Alpaca trading calendar (best-effort)."""
+        try:
+            calendars = self.trading_client.get_calendar(start=start, end=end)
+            results = []
+            for entry in calendars:
+                results.append(
+                    {
+                        "date": entry.date.isoformat() if entry.date else None,
+                        "open": entry.open,
+                        "close": entry.close,
+                    }
+                )
+            return results
+        except Exception as e:
+            logger.debug(f"Failed to fetch Alpaca calendar: {e}")
+            return []
+
+    def _is_extended_hours(self) -> bool:
+        """Return True when Alpaca clock says market is closed (premarket/afterhours)."""
+        clock = self.get_clock()
+        if clock and clock.get("is_open") is False:
+            return True
+        return False
+
+    def start_trade_updates_stream(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Start Alpaca trade updates stream and deliver payloads to callback."""
+        if self._trade_stream_thread and self._trade_stream_thread.is_alive():
+            return
+        self._trade_update_callback = callback
+        try:
+            from alpaca.trading.stream import TradingStream
+        except Exception as e:
+            logger.warning(f"Trade updates stream not available: {e}")
+            return
+
+        self._trade_stream = TradingStream(
+            api_key=self.api_key,
+            secret_key=self.secret_key,
+            paper=self.paper,
+        )
+
+        async def handle_trade_update(data):
+            payload = {
+                "event": getattr(data, "event", None),
+                "order_id": getattr(getattr(data, "order", None), "id", None),
+                "symbol": getattr(getattr(data, "order", None), "symbol", None),
+                "side": getattr(getattr(data, "order", None), "side", None),
+                "filled_qty": getattr(getattr(data, "order", None), "filled_qty", None),
+                "filled_avg_price": getattr(getattr(data, "order", None), "filled_avg_price", None),
+                "status": getattr(getattr(data, "order", None), "status", None),
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            if self._trade_update_callback:
+                try:
+                    self._trade_update_callback(payload)
+                except Exception as e:
+                    logger.debug(f"Trade update callback failed: {e}")
+
+        try:
+            self._trade_stream.subscribe_trade_updates(handle_trade_update)
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to trade updates: {e}")
+            return
+
+        def run_stream():
+            try:
+                self._trade_stream.run()
+            except Exception as e:
+                logger.warning(f"Trade updates stream error: {e}")
+
+        import threading
+
+        self._trade_stream_thread = threading.Thread(target=run_stream, daemon=True)
+        self._trade_stream_thread.start()
+
     def get_trading_mode(self) -> str:
         """Get current trading mode."""
         return "PAPER" if self.paper else "LIVE"
@@ -223,6 +328,8 @@ class AlpacaClient:
             Order details
         """
         try:
+            if self._is_extended_hours():
+                return {"error": "Market orders not allowed in extended hours. Use limit DAY orders."}
             order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
 
             request = MarketOrderRequest(
@@ -247,7 +354,7 @@ class AlpacaClient:
             }
         except Exception as e:
             logger.error(f"Error placing market order: {e}")
-            raise
+            return {"error": str(e)}
 
     def place_limit_order(
         self,
@@ -271,13 +378,23 @@ class AlpacaClient:
         try:
             order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
 
-            request = LimitOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=order_side,
-                time_in_force=TimeInForce.DAY,
-                limit_price=limit_price
-            )
+            try:
+                request = LimitOrderRequest(
+                    symbol=symbol,
+                    qty=quantity,
+                    side=order_side,
+                    time_in_force=TimeInForce.DAY,
+                    limit_price=limit_price,
+                    extended_hours=self._is_extended_hours(),
+                )
+            except TypeError:
+                request = LimitOrderRequest(
+                    symbol=symbol,
+                    qty=quantity,
+                    side=order_side,
+                    time_in_force=TimeInForce.DAY,
+                    limit_price=limit_price,
+                )
 
             order = self.trading_client.submit_order(request)
 
@@ -295,7 +412,7 @@ class AlpacaClient:
             }
         except Exception as e:
             logger.error(f"Error placing limit order: {e}")
-            raise
+            return {"error": str(e)}
 
     def place_stop_order(
         self,
@@ -321,7 +438,7 @@ class AlpacaClient:
                 qty=quantity,
                 side=order_side,
                 time_in_force=TimeInForce.DAY,
-                stop_price=stop_price
+                stop_price=stop_price,
             )
 
             order = self.trading_client.submit_order(request)
@@ -340,7 +457,7 @@ class AlpacaClient:
             }
         except Exception as e:
             logger.error(f"Error placing stop order: {e}")
-            raise
+            return {"error": str(e)}
 
     def place_bracket_order(
         self,
@@ -354,6 +471,8 @@ class AlpacaClient:
         Place a bracket order (market entry + take profit + stop loss).
         """
         try:
+            if self._is_extended_hours():
+                return {"error": "Bracket orders are not allowed in extended hours."}
             order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
 
             request = MarketOrderRequest(
@@ -382,7 +501,7 @@ class AlpacaClient:
             }
         except Exception as e:
             logger.error(f"Error placing bracket order: {e}")
-            raise
+            return {"error": str(e)}
 
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an order by ID."""

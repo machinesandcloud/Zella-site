@@ -9,6 +9,7 @@ import logging
 import threading
 import asyncio
 import time
+import re
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.live import StockDataStream
@@ -29,6 +30,7 @@ WATCHLIST_FILE = Path("data/custom_watchlist.json")
 MAX_BACKOFF_SECONDS = 30  # Reduced from 60 - recover faster
 INITIAL_BACKOFF_SECONDS = 1  # Start smaller for faster recovery
 BATCH_SIZE = 100  # Alpaca max - fewer requests = faster total refresh
+BAR_STABILIZATION_SECONDS = 35  # Allow late trades to settle before using last bar
 
 
 class AlpacaMarketDataProvider(MarketDataProvider):
@@ -82,6 +84,11 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         self._quote_cache: Dict[str, Dict[str, Any]] = {}
         self._cache_timestamp: float = 0
         self._cache_lock = threading.Lock()
+
+        # Trading status / LULD caches
+        self._status_cache: Dict[str, Dict[str, Any]] = {}
+        self._luld_cache: Dict[str, Dict[str, Any]] = {}
+        self._status_lock = threading.Lock()
 
         # Last error tracking (for UI diagnostics)
         self.last_error: Optional[str] = None
@@ -154,8 +161,43 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                     self._quote_cache[symbol]["ask_size"] = int(data.ask_size) if data.ask_size else 0
                     self._quote_cache[symbol]["quote_timestamp"] = data.timestamp.isoformat()
 
+            async def handle_status(data):
+                symbol = data.symbol
+                status = getattr(data, "status", None) or getattr(data, "status_code", None)
+                reason = getattr(data, "reason", None) or getattr(data, "reason_code", None)
+                message = getattr(data, "message", None) or getattr(data, "reason_message", None)
+                halted = self._is_halted_status(status, reason, message)
+                payload = {
+                    "status": status,
+                    "reason": reason,
+                    "message": message,
+                    "halted": halted,
+                    "timestamp": data.timestamp.isoformat() if getattr(data, "timestamp", None) else datetime.now().isoformat(),
+                }
+                with self._status_lock:
+                    self._status_cache[symbol] = payload
+
+            async def handle_luld(data):
+                symbol = data.symbol
+                payload = {
+                    "limit_up": getattr(data, "limit_up", None),
+                    "limit_down": getattr(data, "limit_down", None),
+                    "indicator": getattr(data, "indicator", None),
+                    "timestamp": data.timestamp.isoformat() if getattr(data, "timestamp", None) else datetime.now().isoformat(),
+                }
+                with self._status_lock:
+                    self._luld_cache[symbol] = payload
+
             self._stream_client.subscribe_trades(handle_trade, *self._universe[:100])  # Alpaca limit
             self._stream_client.subscribe_quotes(handle_quote, *self._universe[:100])
+            try:
+                self._stream_client.subscribe_trading_statuses(handle_status, *self._universe[:100])
+            except Exception as e:
+                logger.debug(f"Trading status stream not available: {e}")
+            try:
+                self._stream_client.subscribe_luld_bands(handle_luld, *self._universe[:100])
+            except Exception as e:
+                logger.debug(f"LULD stream not available: {e}")
 
             # Run stream in background thread
             def run_stream():
@@ -173,6 +215,18 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         except Exception as e:
             logger.warning(f"Could not start WebSocket streaming: {e}. Falling back to polling.")
             self._streaming_active = False
+
+    def _is_halted_status(self, status: Any, reason: Any, message: Any) -> bool:
+        """Best-effort halt detection from status payloads."""
+        tokens = [
+            str(status or "").lower(),
+            str(reason or "").lower(),
+            str(message or "").lower(),
+        ]
+        for token in tokens:
+            if "halt" in token or token in {"h", "halted", "trading halt"}:
+                return True
+        return False
 
     # ==================== Rate Limiting (REACTIVE ONLY) ====================
 
@@ -351,6 +405,44 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                 for key in sorted_keys[:100]:
                     del self._bars_cache[key]
 
+    def _bar_duration_seconds(self, bar_size: str) -> Optional[int]:
+        """Convert bar_size to duration in seconds for stabilization logic."""
+        if not bar_size:
+            return None
+        size = bar_size.lower()
+        if "day" in size:
+            return None
+        match = re.match(r"(\d+)\s*(min|mins|minute|minutes|hour|hours)", size)
+        if not match:
+            return None
+        value = int(match.group(1))
+        unit = match.group(2)
+        if "hour" in unit:
+            return value * 3600
+        return value * 60
+
+    def _stabilize_bars(self, bars: List[Dict[str, Any]], bar_size: str) -> List[Dict[str, Any]]:
+        """Drop the most recent bar if it's too fresh (late trades can revise it)."""
+        duration = self._bar_duration_seconds(bar_size)
+        if not bars or duration is None:
+            return bars
+        last = bars[-1]
+        ts = last.get("date")
+        if not ts:
+            return bars
+        try:
+            bar_start = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                bar_start = datetime.fromisoformat(ts.replace("Z", ""))
+            except Exception:
+                return bars
+        bar_end = bar_start + timedelta(seconds=duration)
+        now = datetime.now()
+        if (now - bar_end).total_seconds() < BAR_STABILIZATION_SECONDS:
+            return bars[:-1]
+        return bars
+
     def get_historical_bars(
         self,
         symbol: str,
@@ -433,6 +525,8 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                 for bar in bars_data[symbol]
             ]
 
+            bars = self._stabilize_bars(bars, bar_size)
+
             # Cache the results
             if bars:
                 self._set_cached_bars(cache_key, bars)
@@ -510,7 +604,10 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         """
         with self._cache_lock:
             cached = self._quote_cache.get(symbol)
-            if cached:
+        if cached:
+            with self._status_lock:
+                status_payload = self._status_cache.get(symbol, {})
+                luld_payload = self._luld_cache.get(symbol)
                 return {
                     "symbol": symbol,
                     "price": cached.get("price", 0),
@@ -532,7 +629,10 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                     "change": cached.get("change", 0),
                     "change_pct": cached.get("change_pct", 0),
                     # Timestamps
-                    "timestamp": cached.get("trade_timestamp") or cached.get("quote_timestamp") or datetime.now().isoformat()
+                    "timestamp": cached.get("trade_timestamp") or cached.get("quote_timestamp") or datetime.now().isoformat(),
+                    "halted": status_payload.get("halted", False),
+                    "trading_status": status_payload.get("status"),
+                    "luld": luld_payload,
                 }
 
         # If rate limited or not in cache, return empty (don't block)
@@ -577,30 +677,74 @@ class AlpacaMarketDataProvider(MarketDataProvider):
 
         snapshots = {}
         with self._cache_lock:
-            for symbol in symbols:
-                cached = self._quote_cache.get(symbol)
-                if cached and cached.get("price"):
-                    snapshots[symbol] = {
-                        "symbol": symbol,
-                        "price": cached.get("price", 0),
-                        "bid": cached.get("bid", 0),
-                        "ask": cached.get("ask", 0),
-                        "bid_size": cached.get("bid_size", 0),
-                        "ask_size": cached.get("ask_size", 0),
-                        "open": cached.get("open", 0),
-                        "high": cached.get("high", 0),
-                        "low": cached.get("low", 0),
-                        "close": cached.get("close", 0),
-                        "volume": cached.get("volume", 0),
-                        "vwap": cached.get("vwap", 0),
-                        "prev_close": cached.get("prev_close", 0),
-                        "prev_volume": cached.get("prev_volume", 0),
-                        "change": cached.get("change", 0),
-                        "change_pct": cached.get("change_pct", 0),
-                        "timestamp": cached.get("trade_timestamp") or cached.get("quote_timestamp") or datetime.now().isoformat()
-                    }
+            cache_snapshot = {symbol: self._quote_cache.get(symbol) for symbol in symbols}
+        with self._status_lock:
+            status_snapshot = dict(self._status_cache)
+            luld_snapshot = dict(self._luld_cache)
+
+        for symbol, cached in cache_snapshot.items():
+            if cached and cached.get("price"):
+                status_payload = status_snapshot.get(symbol, {})
+                snapshots[symbol] = {
+                    "symbol": symbol,
+                    "price": cached.get("price", 0),
+                    "bid": cached.get("bid", 0),
+                    "ask": cached.get("ask", 0),
+                    "bid_size": cached.get("bid_size", 0),
+                    "ask_size": cached.get("ask_size", 0),
+                    "open": cached.get("open", 0),
+                    "high": cached.get("high", 0),
+                    "low": cached.get("low", 0),
+                    "close": cached.get("close", 0),
+                    "volume": cached.get("volume", 0),
+                    "vwap": cached.get("vwap", 0),
+                    "prev_close": cached.get("prev_close", 0),
+                    "prev_volume": cached.get("prev_volume", 0),
+                    "change": cached.get("change", 0),
+                    "change_pct": cached.get("change_pct", 0),
+                    "timestamp": cached.get("trade_timestamp") or cached.get("quote_timestamp") or datetime.now().isoformat(),
+                    "halted": status_payload.get("halted", False),
+                    "trading_status": status_payload.get("status"),
+                    "luld": luld_snapshot.get(symbol),
+                }
 
         return snapshots
+
+    def get_most_active(self, limit: int = 50) -> List[str]:
+        """Approximate most-active list from cached snapshots by volume."""
+        with self._cache_lock:
+            items = [
+                (sym, snap.get("volume", 0))
+                for sym, snap in self._quote_cache.items()
+                if snap.get("volume", 0) > 0
+            ]
+        items.sort(key=lambda x: x[1], reverse=True)
+        return [sym for sym, _ in items[:limit]]
+
+    def get_top_movers(self, limit: int = 50) -> List[str]:
+        """Approximate top movers list from cached change_pct."""
+        with self._cache_lock:
+            items = [
+                (sym, abs(float(snap.get("change_pct", 0) or 0)))
+                for sym, snap in self._quote_cache.items()
+                if snap.get("price")
+            ]
+        items.sort(key=lambda x: x[1], reverse=True)
+        return [sym for sym, _ in items[:limit]]
+
+    def get_hotlist(self, limit: int = 50) -> List[str]:
+        """Combine most-active and top-movers into a single hotlist."""
+        actives = self.get_most_active(limit=limit)
+        movers = self.get_top_movers(limit=limit)
+        merged: List[str] = []
+        seen = set()
+        for sym in actives + movers:
+            if sym not in seen:
+                merged.append(sym)
+                seen.add(sym)
+            if len(merged) >= limit:
+                break
+        return merged
 
     # ==================== Watchlist Management ====================
 

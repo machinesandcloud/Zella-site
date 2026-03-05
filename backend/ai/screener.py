@@ -394,6 +394,8 @@ class MarketScreener:
         current_hour: Optional[int] = None,
         current_minute: Optional[int] = None,
         daily_df: Optional[pd.DataFrame] = None,
+        market_status: Optional[Dict[str, Any]] = None,
+        session_info: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Evaluate a symbol and return DETAILED results including pass/fail for each filter.
@@ -480,8 +482,30 @@ class MarketScreener:
             result["rejection_reason"] = f"Low volume ({int(avg_volume):,} < {int(volume_floor):,})"
             return result
 
+        # Market status filter (halts / LULD)
+        halted = bool(market_status.get("halted", False)) if market_status else False
+        luld = market_status.get("luld") if market_status else None
+        luld_indicator = None
+        luld_active = False
+        if isinstance(luld, dict):
+            luld_indicator = luld.get("indicator")
+            luld_active = bool(luld_indicator) and str(luld_indicator).lower() not in {"n", "normal"}
+        if halted or luld_active:
+            result["filters"]["market_status"] = {
+                "passed": False,
+                "halted": halted,
+                "luld_indicator": luld_indicator,
+            }
+            result["data"]["halted"] = halted
+            result["data"]["luld_indicator"] = luld_indicator
+            result["rejection_reason"] = "Trading halt/LULD active"
+            return result
+        result["filters"]["market_status"] = {"passed": True, "halted": halted, "luld_indicator": luld_indicator}
+        result["data"]["halted"] = halted
+        result["data"]["luld_indicator"] = luld_indicator
+
         # Premarket Volume Filter (for gappers or during premarket)
-        session = market_session()
+        session = session_info or market_session()
         premarket_required = has_timestamp and (session.get("premarket", False) or gap_info.get("is_gapper", False))
         if self.require_premarket_volume and premarket_required:
             premarket_passed = premarket_volume >= self.min_premarket_volume
@@ -676,6 +700,8 @@ class MarketScreener:
         current_hour: Optional[int] = None,
         current_minute: Optional[int] = None,
         daily_data: Optional[Dict[str, pd.DataFrame]] = None,
+        market_status: Optional[Dict[str, Dict[str, Any]]] = None,
+        session_info: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """
         Rank all symbols and return both passed and failed evaluations.
@@ -688,7 +714,13 @@ class MarketScreener:
             daily_df = daily_data.get(symbol) if daily_data else None
             try:
                 evaluation = self.evaluate_symbol_detailed(
-                    symbol, df, current_hour, current_minute, daily_df=daily_df
+                    symbol,
+                    df,
+                    current_hour,
+                    current_minute,
+                    daily_df=daily_df,
+                    market_status=market_status.get(symbol) if market_status else None,
+                    session_info=session_info,
                 )
             except Exception as e:
                 logger.warning(f"Screener evaluation failed for {symbol}: {e}")

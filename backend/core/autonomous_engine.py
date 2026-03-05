@@ -108,6 +108,7 @@ from utils.market_hours import (
     is_opening_range,
     minutes_since_open,
     market_session,
+    EASTERN,
 )
 from core.pro_trade_filters import ProTradeValidator
 from core.elite_trade_system import (
@@ -217,6 +218,8 @@ class AutonomousEngine:
         self.last_analyzed_opportunities: List[Dict[str, Any]] = []  # After strategy analysis
         self.last_strategy_analyzed_count: int = 0  # Total symbols analyzed by strategies
         self.last_market_symbols: List[str] = []  # Last symbols with market data
+        self.last_hotlist: List[str] = []  # Latest hotlist symbols
+        self.last_hotlist_at: Optional[datetime] = None
         self.symbols_scanned: int = 0  # Count of symbols scanned
         self.all_evaluations: List[Dict[str, Any]] = []  # ALL stocks with pass/fail details
         self.filter_summary: Dict[str, int] = {}  # Summary of filter pass/fail counts
@@ -565,7 +568,7 @@ class AutonomousEngine:
 
     def _cleanup_symbol_state_caches(self) -> None:
         """Clean up stale symbol state caches to control memory usage."""
-        now = datetime.now()
+        now = self._get_market_now()
         with self._symbol_lock:
             to_delete = []
             for symbol, state in self._symbol_states.items():
@@ -588,11 +591,11 @@ class AutonomousEngine:
             keep = set(self.last_market_symbols)
             self._daily_data_cache = {k: v for k, v in self._daily_data_cache.items() if k in keep}
 
-    def _apply_trade_frequency_profile(self, current_hour: int, current_minute: int) -> None:
+    def _apply_trade_frequency_profile(self, current_hour: int, current_minute: int, now: Optional[datetime] = None) -> None:
         """Adjust screener thresholds based on trade-frequency profile and time-of-day."""
         profile = self.trade_frequency_profile
         base = self._screener_base
-        mins_open = minutes_since_open()
+        mins_open = minutes_since_open(now=now)
         in_opening = 0 <= mins_open < 30
         in_midday = mins_open >= 120 if mins_open >= 0 else False
 
@@ -1398,7 +1401,7 @@ class AutonomousEngine:
                     # CRITICAL: EOD LIQUIDATION CHECK (redundant - for safety)
                     # Day traders MUST close all positions before market close
                     # =====================================================
-                    if is_eod_liquidation_time() and not self.eod_liquidation_done_today:
+                    if is_eod_liquidation_time(now=now) and not self.eod_liquidation_done_today:
                         logger.warning("⚠️ EOD LIQUIDATION TIME - Closing ALL positions!")
                         self._add_decision(
                             "EOD_LIQUIDATION",
@@ -1729,14 +1732,15 @@ class AutonomousEngine:
 
         while self.running:
             try:
-                today = datetime.now().strftime("%Y-%m-%d")
+                now = self._get_market_now()
+                today = now.strftime("%Y-%m-%d")
 
                 # Reset flag for new trading day
                 if self.last_liquidation_date != today:
                     self.eod_liquidation_done_today = False
 
                 # Check if it's liquidation time (3:50 PM ET)
-                if is_eod_liquidation_time() and not self.eod_liquidation_done_today:
+                if is_eod_liquidation_time(now=now) and not self.eod_liquidation_done_today:
                     logger.warning("⚠️ EOD LIQUIDATION TIME (3:50 PM ET) - Closing ALL positions!")
                     self._add_decision(
                         "EOD_LIQUIDATION",
@@ -1914,17 +1918,22 @@ class AutonomousEngine:
         scan_start = time_module.perf_counter()
 
         try:
-            universe = self.market_data.get_universe()
+            universe = self._build_scan_universe()
             logger.info(f"Scanning {len(universe)} symbols...")
             self._add_decision(
                 "THINKING",
                 f"📈 Universe loaded: {len(universe)} symbols to scan",
                 "INFO",
-                {"universe_size": len(universe), "sample": universe[:5] if universe else []}
+                {
+                    "universe_size": len(universe),
+                    "sample": universe[:5] if universe else [],
+                    "hotlist_size": len(self.last_hotlist),
+                    "hotlist_sample": self.last_hotlist[:5],
+                }
             )
 
             # Get current time for power hour weighting
-            now = datetime.now()
+            now = self._get_market_now()
             current_hour = now.hour
             current_minute = now.minute
             in_power_hour = is_power_hour(current_hour, current_minute)
@@ -2060,12 +2069,24 @@ class AutonomousEngine:
                 logger.debug(f"Could not fetch news catalysts: {e}")
 
             # Adjust screener thresholds based on profile/time
-            self._apply_trade_frequency_profile(current_hour, current_minute)
+            self._apply_trade_frequency_profile(current_hour, current_minute, now=now)
 
             # Use enhanced ML screener with DETAILED evaluation
             try:
+                session_info = self._get_market_session_info()
+                market_status = {}
+                if hasattr(self.market_data, "get_batch_snapshots"):
+                    try:
+                        market_status = self.market_data.get_batch_snapshots(list(market_data.keys()))
+                    except Exception:
+                        market_status = {}
                 passed_list, all_evaluations = self.screener.rank_with_details(
-                    market_data, current_hour, current_minute, daily_data=daily_data
+                    market_data,
+                    current_hour,
+                    current_minute,
+                    daily_data=daily_data,
+                    market_status=market_status,
+                    session_info=session_info,
                 )
             except Exception as e:
                 logger.error(f"Screener error: {e}")
@@ -2632,7 +2653,8 @@ class AutonomousEngine:
 
             # Learning-aware time filter (avoid time windows with poor performance)
             try:
-                time_of_day = "opening" if minutes_since_open() < 30 else "morning" if minutes_since_open() < 120 else "midday" if minutes_since_open() < 240 else "afternoon" if minutes_since_open() < 360 else "power_hour"
+                minutes_open = minutes_since_open(now=now)
+                time_of_day = "opening" if minutes_open < 30 else "morning" if minutes_open < 120 else "midday" if minutes_open < 240 else "afternoon" if minutes_open < 360 else "power_hour"
                 if hasattr(self, "learning_engine") and not self.learning_engine.should_trade_now(time_of_day):
                     self._add_decision(
                         "SKIPPED",
@@ -2729,6 +2751,22 @@ class AutonomousEngine:
                     except Exception:
                         snapshot = {}
 
+                halted = bool(snapshot.get("halted", False))
+                luld_info = snapshot.get("luld") or {}
+                luld_indicator = luld_info.get("indicator") if isinstance(luld_info, dict) else None
+                if halted or (luld_indicator and str(luld_indicator).lower() not in {"n", "normal"}):
+                    self._add_decision(
+                        "SKIPPED",
+                        f"⏸️ {symbol}: Trading halted/LULD active",
+                        "INFO",
+                        {
+                            "symbol": symbol,
+                            "halted": halted,
+                            "luld_indicator": luld_indicator,
+                        },
+                    )
+                    continue
+
                 bid = snapshot.get("bid") or opp.get("bid") or (price * 0.999)
                 ask = snapshot.get("ask") or opp.get("ask") or (price * 1.001)
                 current_volume = (
@@ -2755,7 +2793,7 @@ class AutonomousEngine:
                     current_positions=current_pos_list,
                     daily_pnl=self.daily_pnl,
                     vix_level=0,  # TODO: Add VIX fetch
-                    minutes_since_open=minutes_since_open()
+                    minutes_since_open=minutes_since_open(now=now)
                 )
 
                 if not validation["approved"]:
@@ -3405,9 +3443,63 @@ class AutonomousEngine:
         """Check if we can actually execute trades (broker must be connected)"""
         return self.broker.is_connected()
 
+    def _get_market_clock(self) -> Optional[Dict[str, Any]]:
+        """Fetch Alpaca clock if broker supports it (best-effort)."""
+        broker = getattr(self, "broker", None)
+        if broker and hasattr(broker, "get_clock"):
+            try:
+                return broker.get_clock()
+            except Exception:
+                return None
+        return None
+
+    def _get_market_now(self) -> datetime:
+        """Get market-aware current time (Alpaca clock if available)."""
+        clock = self._get_market_clock()
+        ts = clock.get("timestamp") if clock else None
+        if isinstance(ts, datetime):
+            if ts.tzinfo is None:
+                return ts.replace(tzinfo=EASTERN)
+            try:
+                return ts.astimezone(EASTERN)
+            except Exception:
+                return ts
+        return datetime.now()
+
+    def _get_market_session_info(self) -> Dict[str, Any]:
+        """Return market session info using Alpaca clock when possible."""
+        now = self._get_market_now()
+        session = market_session(now)
+        clock = self._get_market_clock()
+        if clock and clock.get("is_open") is not None:
+            if clock["is_open"] and not session.get("regular"):
+                session["regular"] = True
+                session["session"] = "REGULAR"
+            if not clock["is_open"] and session.get("regular"):
+                session["regular"] = False
+                session["session"] = "CLOSED"
+            session["clock_source"] = "alpaca"
+        else:
+            session["clock_source"] = "local"
+        return session
+
+    def _build_scan_universe(self) -> List[str]:
+        """Build scan universe with hotlist bias when available."""
+        base_universe = self.market_data.get_universe()
+        hotlist: List[str] = []
+        if hasattr(self.market_data, "get_hotlist"):
+            try:
+                hotlist = self.market_data.get_hotlist(limit=50)
+            except Exception:
+                hotlist = []
+        merged = list(dict.fromkeys(hotlist + base_universe))
+        self.last_hotlist = hotlist
+        self.last_hotlist_at = datetime.utcnow()
+        return merged
+
     def _is_market_hours(self) -> bool:
         """Check if we're in regular market hours (ET)"""
-        session = market_session()
+        session = self._get_market_session_info()
         return session.get("regular", False)
 
     def _add_decision(self, decision_type: str, message: str, category: str, details: Dict[str, Any]):
@@ -3441,6 +3533,33 @@ class AutonomousEngine:
             self._persist_decisions()
             self._last_decision_flush = now
 
+    def handle_trade_update(self, update: Dict[str, Any]) -> None:
+        """Handle Alpaca trade update events for logging/diagnostics."""
+        try:
+            symbol = update.get("symbol") or "UNKNOWN"
+            event = update.get("event") or "update"
+            status = update.get("status") or ""
+            filled_qty = update.get("filled_qty")
+            fill_price = update.get("filled_avg_price")
+            message = f"📥 {symbol}: trade update {event}"
+            if status:
+                message += f" ({status})"
+            self._add_decision(
+                "TRADE_UPDATE",
+                message,
+                "INFO",
+                {
+                    "symbol": symbol,
+                    "event": event,
+                    "status": status,
+                    "filled_qty": filled_qty,
+                    "filled_avg_price": fill_price,
+                    "order_id": update.get("order_id"),
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Failed to handle trade update: {e}")
+
     def _persist_decisions(self) -> None:
         """Persist recent decisions to disk for UI continuity."""
         try:
@@ -3453,7 +3572,8 @@ class AutonomousEngine:
     def get_status(self) -> Dict[str, Any]:
         """Get current engine status with detailed scanner information"""
         # Check power hour status
-        now = datetime.now()
+        now = self._get_market_now()
+        session = self._get_market_session_info()
         in_power_hour = is_power_hour(now.hour, now.minute)
         time_mult = power_hour_multiplier(now.hour, now.minute)
         cached_positions = self._positions_cache_count
@@ -3475,6 +3595,12 @@ class AutonomousEngine:
             "symbols_scanned": self.symbols_scanned,
             "scanner_results": self.last_scanner_results,  # Top stocks with full evaluation data
             "analyzed_opportunities": self.last_analyzed_opportunities,  # With strategy signals
+            "market_session": session,
+            "hotlist": {
+                "symbols": self.last_hotlist[:50],
+                "count": len(self.last_hotlist),
+                "generated_at": self.last_hotlist_at.isoformat() if self.last_hotlist_at else None,
+            },
             "power_hour": {
                 "active": in_power_hour,
                 "multiplier": time_mult,

@@ -169,6 +169,15 @@ async def resilience_watchdog():
                     )
                 if app.state.alpaca_client and not app.state.alpaca_client.is_connected():
                     app.state.alpaca_client.ensure_connected()
+                if app.state.alpaca_client and hasattr(app.state.alpaca_client, "start_trade_updates_stream"):
+                    try:
+                        app.state.alpaca_client.start_trade_updates_stream(
+                            lambda update: app.state.autonomous_engine.handle_trade_update(update)
+                            if getattr(app.state, "autonomous_engine", None)
+                            else None
+                        )
+                    except Exception:
+                        pass
 
             # Ensure market data provider
             if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
@@ -413,6 +422,18 @@ async def on_startup() -> None:
                 logger.info("✓ Autonomous Trading Engine initialized and starting (DEMO MODE - scan only)")
             else:
                 logger.info("✓ Autonomous Trading Engine initialized and starting (LIVE MODE)")
+
+            # Start Alpaca trade updates stream for execution awareness
+            if app.state.alpaca_client and hasattr(app.state.alpaca_client, "start_trade_updates_stream"):
+                try:
+                    app.state.alpaca_client.start_trade_updates_stream(
+                        lambda update: app.state.autonomous_engine.handle_trade_update(update)
+                        if app.state.autonomous_engine
+                        else None
+                    )
+                    logger.info("✓ Alpaca trade updates stream started")
+                except Exception as e:
+                    logger.warning(f"Trade updates stream failed to start: {e}")
         except Exception as e:
             logger.error(f"✗ Failed to initialize Autonomous Engine: {e}")
             app.state.autonomous_engine = None

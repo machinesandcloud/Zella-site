@@ -55,6 +55,18 @@ interface AutonomousStatus {
   strategy_performance: Record<string, { signals: number; trades: number }>;
   num_strategies: number;
   connected: boolean;
+  market_session?: {
+    session?: string;
+    regular?: boolean;
+    premarket?: boolean;
+    afterhours?: boolean;
+    clock_source?: string;
+  };
+  hotlist?: {
+    symbols?: string[];
+    count?: number;
+    generated_at?: string | null;
+  };
 }
 
 interface Decision {
@@ -276,6 +288,15 @@ const AutopilotControl = () => {
 
   const isRunning = status.enabled && status.running;
   const connectionStatus = status.connected ? "connected" : "disconnected";
+  const sessionLabel = status.market_session?.session || "UNKNOWN";
+  const sessionSource = status.market_session?.clock_source || "local";
+  const hotlistCount = status.hotlist?.count ?? 0;
+  const sessionColor =
+    sessionLabel === "REGULAR"
+      ? "success"
+      : sessionLabel === "PREMARKET" || sessionLabel === "AFTERHOURS"
+        ? "warning"
+        : "default";
 
   return (
     <Card elevation={0} sx={{ border: "1px solid var(--border)" }}>
@@ -309,6 +330,21 @@ const AutopilotControl = () => {
               label={isRunning ? "RUNNING" : "STOPPED"}
               color={isRunning ? "success" : "default"}
               size="small"
+            />
+            <Chip
+              label={`SESSION: ${sessionLabel}`}
+              color={sessionColor}
+              size="small"
+            />
+            <Chip
+              label={`Clock: ${sessionSource.toUpperCase()}`}
+              size="small"
+              variant="outlined"
+            />
+            <Chip
+              label={`Hotlist: ${hotlistCount}`}
+              size="small"
+              variant="outlined"
             />
           </Stack>
         </Stack>
