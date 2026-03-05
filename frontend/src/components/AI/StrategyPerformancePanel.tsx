@@ -102,6 +102,7 @@ const StrategyPerformancePanel = () => {
     try {
       const data = await fetchStrategyPerformanceByPeriod();
       setStrategies(data.strategies || []);
+      localStorage.setItem("zella_strategy_performance", JSON.stringify(data));
       setError(null);
     } catch (err) {
       console.error("Failed to fetch strategy performance:", err);
@@ -129,7 +130,20 @@ const StrategyPerformancePanel = () => {
   }, [strategyTrades]);
 
   useEffect(() => {
+    const cached = localStorage.getItem("zella_strategy_performance");
+    if (cached) {
+      try {
+        const data = JSON.parse(cached);
+        setStrategies(data.strategies || []);
+        setLoading(false);
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
     fetchPerformance();
+    const interval = setInterval(fetchPerformance, 30000);
+    return () => clearInterval(interval);
   }, [fetchPerformance]);
 
   const toggleStrategy = (strategyName: string) => {

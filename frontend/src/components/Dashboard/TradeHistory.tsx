@@ -39,15 +39,55 @@ const TradeHistory = () => {
   const [learning, setLearning] = useState<any>(null);
 
   useEffect(() => {
-    fetchRecentTrades(days, 100)
-      .then((data) => setTrades(data || []))
-      .catch(() => setTrades([]));
+    const cacheKey = `zella_trades_recent_${days}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        setTrades(JSON.parse(cached));
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
+    const load = async () => {
+      try {
+        const data = await fetchRecentTrades(days, 100);
+        setTrades(data || []);
+        localStorage.setItem(cacheKey, JSON.stringify(data || []));
+      } catch {
+        setTrades([]);
+      }
+    };
+
+    load();
+    const interval = setInterval(load, 15000);
+    return () => clearInterval(interval);
   }, [days]);
 
   useEffect(() => {
-    fetchLearningSummary()
-      .then((data) => setLearning(data))
-      .catch(() => setLearning(null));
+    const cacheKey = "zella_learning_summary";
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        setLearning(JSON.parse(cached));
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
+    const load = async () => {
+      try {
+        const data = await fetchLearningSummary();
+        setLearning(data);
+        localStorage.setItem(cacheKey, JSON.stringify(data));
+      } catch {
+        setLearning(null);
+      }
+    };
+
+    load();
+    const interval = setInterval(load, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const totalPnl = trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
@@ -75,6 +115,9 @@ const TradeHistory = () => {
         <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
           <Typography variant="caption" color="text.secondary">
             Trades: {trades.length}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Wins/Losses: {wins}/{losses}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             Win rate: {winRate}%
