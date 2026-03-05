@@ -11,9 +11,28 @@ const SystemHealth = () => {
   const [status, setStatus] = useState<Status | null>(null);
 
   useEffect(() => {
-    fetchAlpacaStatus()
-      .then((data) => setStatus(data))
-      .catch(() => setStatus(null));
+    const cached = localStorage.getItem("zella_alpaca_status");
+    if (cached) {
+      try {
+        setStatus(JSON.parse(cached));
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
+    const load = async () => {
+      try {
+        const data = await fetchAlpacaStatus();
+        setStatus(data);
+        localStorage.setItem("zella_alpaca_status", JSON.stringify(data));
+      } catch {
+        setStatus(null);
+      }
+    };
+
+    load();
+    const interval = setInterval(load, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   return (

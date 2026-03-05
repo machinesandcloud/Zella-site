@@ -38,12 +38,22 @@ const PerformanceMetrics = () => {
   });
 
   useEffect(() => {
+    const cached = localStorage.getItem("zella_performance_metrics");
+    if (cached) {
+      try {
+        setMetrics(JSON.parse(cached));
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
     const loadMetrics = async () => {
       try {
         // Try dashboard metrics first
         const data = await fetchDashboardMetrics();
         if (data && typeof data.total_trades === "number") {
           setMetrics(data);
+          localStorage.setItem("zella_performance_metrics", JSON.stringify(data));
           return;
         }
       } catch {
@@ -76,6 +86,18 @@ const PerformanceMetrics = () => {
             profit_factor: avgLoss > 0 ? avgWin / avgLoss : 0,
             total_pnl: totalPnl
           });
+          localStorage.setItem("zella_performance_metrics", JSON.stringify({
+            total_trades: trades.length,
+            wins: wins.length,
+            losses: losses.length,
+            win_rate: trades.length > 0 ? (wins.length / trades.length) * 100 : 0,
+            largest_win: winPnls.length > 0 ? Math.max(...winPnls) : 0,
+            largest_loss: lossPnls.length > 0 ? Math.max(...lossPnls) : 0,
+            avg_win: avgWin,
+            avg_loss: avgLoss,
+            profit_factor: avgLoss > 0 ? avgWin / avgLoss : 0,
+            total_pnl: totalPnl
+          }));
         }
       } catch {
         // Keep default zeros
@@ -83,7 +105,7 @@ const PerformanceMetrics = () => {
     };
 
     loadMetrics();
-    const interval = setInterval(loadMetrics, 60000); // Refresh every minute
+    const interval = setInterval(loadMetrics, 20000); // Refresh every 20s
     return () => clearInterval(interval);
   }, []);
 

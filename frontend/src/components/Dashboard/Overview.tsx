@@ -19,21 +19,42 @@ const Overview = () => {
   const [lastUpdate, setLastUpdate] = useState<string>("");
 
   useEffect(() => {
+    const cachedSummary = localStorage.getItem("zella_account_summary");
+    if (cachedSummary) {
+      try {
+        setSummary(JSON.parse(cachedSummary));
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+    const cachedStatus = localStorage.getItem("zella_alpaca_status");
+    if (cachedStatus) {
+      try {
+        setAlpacaStatus(JSON.parse(cachedStatus));
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
     const loadData = () => {
       fetchAlpacaAccount()
         .then((data) => {
           setSummary(data || {});
+          localStorage.setItem("zella_account_summary", JSON.stringify(data || {}));
           setLastUpdate(new Date().toLocaleTimeString());
         })
         .catch(() => setSummary({}));
 
       fetchAlpacaStatus()
-        .then((data) => setAlpacaStatus(data))
+        .then((data) => {
+          setAlpacaStatus(data);
+          localStorage.setItem("zella_alpaca_status", JSON.stringify(data));
+        })
         .catch(() => setAlpacaStatus(null));
     };
 
     loadData();
-    const interval = setInterval(loadData, 30000);
+    const interval = setInterval(loadData, 10000);
     return () => clearInterval(interval);
   }, []);
 

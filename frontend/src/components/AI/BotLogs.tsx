@@ -57,11 +57,13 @@ const BotLogs = () => {
       const data = await getAutonomousLogs();
       const decisions = data.decisions || [];
       setLogs(decisions); // Already newest-first from backend
+      localStorage.setItem("zella_bot_logs", JSON.stringify(decisions));
     } catch (error) {
       try {
         const fallback = await getAutonomousStatus();
         const decisions = fallback.decisions || [];
         setLogs(decisions);
+        localStorage.setItem("zella_bot_logs", JSON.stringify(decisions));
       } catch (fallbackError) {
         console.warn("Failed to fetch bot logs:", fallbackError);
       }
@@ -71,6 +73,15 @@ const BotLogs = () => {
   };
 
   useEffect(() => {
+    const cached = localStorage.getItem("zella_bot_logs");
+    if (cached) {
+      try {
+        setLogs(JSON.parse(cached));
+        setLoading(false);
+      } catch {
+        // ignore cache parse errors
+      }
+    }
     fetchLogs();
     const interval = setInterval(fetchLogs, 5000); // Refresh every 5s
     return () => clearInterval(interval);

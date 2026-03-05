@@ -16,7 +16,20 @@ import TradeHistory from "./components/Dashboard/TradeHistory";
 import PerformanceMetrics from "./components/Dashboard/PerformanceMetrics";
 import AlpacaConnection from "./components/Settings/AlpacaConnection";
 import RiskSettings from "./components/Settings/RiskSettings";
-import { autoLogin, fetchAlpacaStatus, startHealthMonitoring, stopHealthMonitoring, onConnectionChange, forceHealthCheck } from "./services/api";
+import {
+  autoLogin,
+  fetchAlpacaStatus,
+  fetchAlpacaAccount,
+  fetchPositions,
+  fetchDashboardMetrics,
+  fetchRecentTrades,
+  fetchLearningSummary,
+  fetchStrategyPerformanceByPeriod,
+  startHealthMonitoring,
+  stopHealthMonitoring,
+  onConnectionChange,
+  forceHealthCheck
+} from "./services/api";
 import AutopilotControl from "./components/AI/AutopilotControl";
 import SystemHealth from "./components/Dashboard/SystemHealth";
 import BotLogs from "./components/AI/BotLogs";
@@ -77,6 +90,52 @@ const App = () => {
     return () => {
       stopHealthMonitoring();
     };
+  }, []);
+
+  // Prefetch key data to make tab switches instant
+  useEffect(() => {
+    const prefetch = async () => {
+      try {
+        const [account, status, positions, metrics, trades, learning, strategyPerf] = await Promise.allSettled([
+          fetchAlpacaAccount(),
+          fetchAlpacaStatus(),
+          fetchPositions(),
+          fetchDashboardMetrics(),
+          fetchRecentTrades(7, 100),
+          fetchLearningSummary(),
+          fetchStrategyPerformanceByPeriod()
+        ]);
+
+        if (account.status === "fulfilled") {
+          localStorage.setItem("zella_account_summary", JSON.stringify(account.value || {}));
+        }
+        if (status.status === "fulfilled") {
+          localStorage.setItem("zella_alpaca_status", JSON.stringify(status.value));
+        }
+        if (positions.status === "fulfilled") {
+          const posArray = Array.isArray(positions.value) ? positions.value : (positions.value?.positions || []);
+          localStorage.setItem("zella_positions", JSON.stringify(posArray));
+        }
+        if (metrics.status === "fulfilled") {
+          localStorage.setItem("zella_performance_metrics", JSON.stringify(metrics.value || {}));
+        }
+        if (trades.status === "fulfilled") {
+          localStorage.setItem("zella_trades_recent_7", JSON.stringify(trades.value || []));
+        }
+        if (learning.status === "fulfilled") {
+          localStorage.setItem("zella_learning_summary", JSON.stringify(learning.value));
+        }
+        if (strategyPerf.status === "fulfilled") {
+          localStorage.setItem("zella_strategy_performance", JSON.stringify(strategyPerf.value || {}));
+        }
+      } catch {
+        // ignore prefetch errors
+      }
+    };
+
+    prefetch();
+    const interval = setInterval(prefetch, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   // Connection health monitoring - subscribe to connection changes

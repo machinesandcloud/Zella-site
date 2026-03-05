@@ -33,6 +33,7 @@ const ActivePositions = () => {
       // API returns array directly from alpaca_client.get_positions()
       const posArray = Array.isArray(data) ? data : (data?.positions || []);
       setPositions(posArray);
+      localStorage.setItem("zella_positions", JSON.stringify(posArray));
     } catch {
       setPositions([]);
     } finally {
@@ -41,8 +42,18 @@ const ActivePositions = () => {
   };
 
   useEffect(() => {
+    const cached = localStorage.getItem("zella_positions");
+    if (cached) {
+      try {
+        setPositions(JSON.parse(cached));
+        setLoading(false);
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
     loadPositions();
-    const interval = setInterval(loadPositions, 15000); // Refresh every 15s
+    const interval = setInterval(loadPositions, 10000); // Refresh every 10s
     return () => clearInterval(interval);
   }, []);
 
