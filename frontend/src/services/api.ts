@@ -79,7 +79,12 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Any successful API response indicates backend is reachable.
+    healthFailures = 0;
+    notifyConnectionChange(true);
+    return response;
+  },
   async (error: AxiosError) => {
     const config = error.config as RetryConfig;
 

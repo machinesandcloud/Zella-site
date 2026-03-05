@@ -33,6 +33,12 @@ type TradeRow = {
   entry_reason?: string;
 };
 
+const toNumber = (value: unknown, fallback = 0): number => {
+  if (value === null || value === undefined) return fallback;
+  const num = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
 const TradeHistory = () => {
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [days, setDays] = useState(7);
@@ -90,9 +96,9 @@ const TradeHistory = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const totalPnl = trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-  const wins = trades.filter((t) => (t.pnl || 0) > 0).length;
-  const losses = trades.filter((t) => (t.pnl || 0) < 0).length;
+  const totalPnl = trades.reduce((sum, t) => sum + toNumber(t.pnl, 0), 0);
+  const wins = trades.filter((t) => toNumber(t.pnl, 0) > 0).length;
+  const losses = trades.filter((t) => toNumber(t.pnl, 0) < 0).length;
   const winRate = trades.length ? Math.round((wins / trades.length) * 100) : 0;
 
   return (
@@ -185,10 +191,10 @@ const TradeHistory = () => {
                 secondary={
                   <Stack direction="row" spacing={2} sx={{ mt: 0.5 }}>
                     <Typography variant="caption" color="text.secondary">
-                      Entry: {trade.entry_price ? `$${trade.entry_price.toFixed(2)}` : "--"}
+                      Entry: {trade.entry_price ? `$${toNumber(trade.entry_price, 0).toFixed(2)}` : "--"}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      Exit: {trade.exit_price ? `$${trade.exit_price.toFixed(2)}` : "--"}
+                      Exit: {trade.exit_price ? `$${toNumber(trade.exit_price, 0).toFixed(2)}` : "--"}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
                       {trade.entry_time ? new Date(trade.entry_time).toLocaleString() : "--"}
@@ -212,8 +218,10 @@ const TradeHistory = () => {
                   fontWeight={600}
                   color={(trade.pnl ?? 0) >= 0 ? "success.main" : "error.main"}
                 >
-                  {(trade.pnl ?? 0) >= 0 ? "+" : ""}{(trade.pnl ?? 0).toFixed(2)}
-                  {trade.pnl_percent && ` (${trade.pnl_percent.toFixed(1)}%)`}
+                  {toNumber(trade.pnl, 0) >= 0 ? "+" : ""}{toNumber(trade.pnl, 0).toFixed(2)}
+                  {trade.pnl_percent !== undefined && trade.pnl_percent !== null
+                    ? ` (${toNumber(trade.pnl_percent, 0).toFixed(1)}%)`
+                    : ""}
                 </Typography>
                 <Chip
                   label={trade.status || "closed"}
