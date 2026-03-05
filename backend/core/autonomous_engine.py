@@ -2649,16 +2649,16 @@ class AutonomousEngine:
             if in_power_hour:
                 # Still slightly lower during power hour but not reckless
                 min_confidence = 0.65 if self.risk_posture == "AGGRESSIVE" else 0.72 if self.risk_posture == "BALANCED" else 0.80
-                min_strategies = 2 if self.risk_posture == "AGGRESSIVE" else 2 if self.risk_posture == "BALANCED" else 3
+                min_strategies = 1  # Independent strategy mode
             else:
                 # Normal hours: Higher standards
                 min_confidence = 0.70 if self.risk_posture == "AGGRESSIVE" else 0.75 if self.risk_posture == "BALANCED" else 0.85
-                min_strategies = 2 if self.risk_posture == "AGGRESSIVE" else 3 if self.risk_posture == "BALANCED" else 4
+                min_strategies = 1  # Independent strategy mode
 
             # Trade frequency profile adjustments (safe loosening)
             if self.trade_frequency_profile == "active":
                 min_confidence -= 0.05
-                min_strategies = max(2, min_strategies - 1)
+                min_strategies = 1
             elif self.trade_frequency_profile == "balanced":
                 min_confidence -= 0.02
 
@@ -2699,6 +2699,13 @@ class AutonomousEngine:
                     {"symbol": symbol, "num_strategies": num_strategies, "required": min_strategies, "strategies": strategies}
                 )
                 continue
+            elif min_strategies == 1 and num_strategies >= 1:
+                self._add_decision(
+                    "SYSTEM",
+                    f"✅ {symbol}: Independent strategy mode (single strategy allowed)",
+                    "INFO",
+                    {"symbol": symbol, "num_strategies": num_strategies}
+                )
 
             # Log that we're actively considering this trade
             self._add_decision(
