@@ -96,8 +96,8 @@ const App = () => {
   useEffect(() => {
     const scheduleIdle = (fn: () => void) => {
       if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-        // @ts-expect-error requestIdleCallback not in lib by default
-        window.requestIdleCallback(fn, { timeout: 2000 });
+        (window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void })
+          .requestIdleCallback?.(fn, { timeout: 2000 });
       } else {
         setTimeout(fn, 0);
       }
