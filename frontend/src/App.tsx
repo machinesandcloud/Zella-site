@@ -94,48 +94,44 @@ const App = () => {
 
   // Prefetch key data to make tab switches instant
   useEffect(() => {
+    const scheduleIdle = (fn: () => void) => {
+      if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+        // @ts-expect-error requestIdleCallback not in lib by default
+        window.requestIdleCallback(fn, { timeout: 2000 });
+      } else {
+        setTimeout(fn, 0);
+      }
+    };
+
     const prefetch = async () => {
       try {
-        const [account, status, positions, metrics, trades, learning, strategyPerf] = await Promise.allSettled([
-          fetchAlpacaAccount(),
-          fetchAlpacaStatus(),
-          fetchPositions(),
-          fetchDashboardMetrics(),
-          fetchRecentTrades(7, 100),
-          fetchLearningSummary(),
-          fetchStrategyPerformanceByPeriod()
-        ]);
+        const account = await fetchAlpacaAccount();
+        localStorage.setItem("zella_account_summary", JSON.stringify(account || {}));
 
-        if (account.status === "fulfilled") {
-          localStorage.setItem("zella_account_summary", JSON.stringify(account.value || {}));
-        }
-        if (status.status === "fulfilled") {
-          localStorage.setItem("zella_alpaca_status", JSON.stringify(status.value));
-        }
-        if (positions.status === "fulfilled") {
-          const posArray = Array.isArray(positions.value) ? positions.value : (positions.value?.positions || []);
-          localStorage.setItem("zella_positions", JSON.stringify(posArray));
-        }
-        if (metrics.status === "fulfilled") {
-          localStorage.setItem("zella_performance_metrics", JSON.stringify(metrics.value || {}));
-        }
-        if (trades.status === "fulfilled") {
-          localStorage.setItem("zella_trades_recent_7", JSON.stringify(trades.value || []));
-        }
-        if (learning.status === "fulfilled") {
-          localStorage.setItem("zella_learning_summary", JSON.stringify(learning.value));
-        }
-        if (strategyPerf.status === "fulfilled") {
-          localStorage.setItem("zella_strategy_performance", JSON.stringify(strategyPerf.value || {}));
-        }
+        const status = await fetchAlpacaStatus();
+        localStorage.setItem("zella_alpaca_status", JSON.stringify(status));
+
+        const positions = await fetchPositions();
+        const posArray = Array.isArray(positions) ? positions : (positions?.positions || []);
+        localStorage.setItem("zella_positions", JSON.stringify(posArray));
+
+        const metrics = await fetchDashboardMetrics();
+        localStorage.setItem("zella_performance_metrics", JSON.stringify(metrics || {}));
+
+        const trades = await fetchRecentTrades(7, 100);
+        localStorage.setItem("zella_trades_recent_7", JSON.stringify(trades || []));
+
+        const learning = await fetchLearningSummary();
+        localStorage.setItem("zella_learning_summary", JSON.stringify(learning));
+
+        const strategyPerf = await fetchStrategyPerformanceByPeriod();
+        localStorage.setItem("zella_strategy_performance", JSON.stringify(strategyPerf || {}));
       } catch {
         // ignore prefetch errors
       }
     };
 
-    prefetch();
-    const interval = setInterval(prefetch, 30000);
-    return () => clearInterval(interval);
+    scheduleIdle(() => void prefetch());
   }, []);
 
   // Connection health monitoring - subscribe to connection changes
