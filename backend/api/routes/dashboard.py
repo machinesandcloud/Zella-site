@@ -54,7 +54,11 @@ def overview(
 
 
 @router.get("/metrics")
-def metrics(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+def metrics(
+    db: Session = Depends(get_db),
+    alpaca: AlpacaClient | None = Depends(get_alpaca_client),
+    current_user: User = Depends(get_current_user),
+) -> dict:
     trades = db.query(Trade).filter(Trade.user_id == current_user.id).all()
     if not trades:
         trades = db.query(Trade).all()
@@ -70,10 +74,14 @@ def metrics(db: Session = Depends(get_db), current_user: User = Depends(get_curr
     largest_win = max([float(t.pnl or 0) for t in trades], default=0)
     largest_loss = min([float(t.pnl or 0) for t in trades], default=0)
     total_pnl = sum(float(t.pnl or 0) for t in trades)
+    broker_summary = alpaca.get_account_summary() if alpaca and alpaca.is_connected() else {}
+
     return {
         "total_trades": total_trades,
         "winning_trades": winning_trades,
         "losing_trades": losing_trades,
+        "wins": winning_trades,
+        "losses": losing_trades,
         "win_rate": round(win_rate, 2),
         "gross_profit": round(gross_profit, 2),
         "gross_loss": round(gross_loss, 2),
@@ -83,6 +91,12 @@ def metrics(db: Session = Depends(get_db), current_user: User = Depends(get_curr
         "largest_win": round(largest_win, 2),
         "largest_loss": round(largest_loss, 2),
         "total_pnl": round(total_pnl, 2),
+        "broker": {
+            "account_value": broker_summary.get("NetLiquidation"),
+            "buying_power": broker_summary.get("BuyingPower"),
+            "cash_balance": broker_summary.get("CashBalance"),
+            "today_pnl": broker_summary.get("UnrealizedPnL"),
+        },
     }
 
 

@@ -13,6 +13,14 @@ type Metrics = {
   total_pnl: number;
   wins: number;
   losses: number;
+  winning_trades?: number;
+  losing_trades?: number;
+  broker?: {
+    account_value?: number;
+    buying_power?: number;
+    cash_balance?: number;
+    today_pnl?: number;
+  };
 };
 
 const formatCurrency = (value: number): string => {
@@ -126,6 +134,8 @@ const PerformanceMetrics = () => {
     </Box>
   );
 
+  const wins = Number.isFinite(metrics.wins) ? metrics.wins : (metrics.winning_trades ?? 0);
+  const losses = Number.isFinite(metrics.losses) ? metrics.losses : (metrics.losing_trades ?? 0);
   const noTrades = metrics.total_trades === 0;
 
   return (
@@ -160,7 +170,7 @@ const PerformanceMetrics = () => {
               />
             </Grid>
             <Grid item xs={6} sm={4} md={3}>
-              <MetricBox label="Wins / Losses" value={`${metrics.wins} / ${metrics.losses}`} />
+              <MetricBox label="Wins / Losses" value={`${wins} / ${losses}`} />
             </Grid>
             <Grid item xs={6} sm={4} md={3}>
               <MetricBox
@@ -169,6 +179,15 @@ const PerformanceMetrics = () => {
                 color={metrics.total_pnl >= 0 ? "#4caf50" : "#f44336"}
               />
             </Grid>
+            {typeof metrics.broker?.today_pnl === "number" && (
+              <Grid item xs={6} sm={4} md={3}>
+                <MetricBox
+                  label="Broker Today P&L"
+                  value={formatCurrency(metrics.broker.today_pnl)}
+                  color={metrics.broker.today_pnl >= 0 ? "#4caf50" : "#f44336"}
+                />
+              </Grid>
+            )}
             <Grid item xs={6} sm={4} md={3}>
               <MetricBox label="Avg Win" value={formatCurrency(metrics.avg_win)} color="#4caf50" />
             </Grid>
