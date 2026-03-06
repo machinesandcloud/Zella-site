@@ -295,7 +295,13 @@ class VectorizedIndicators:
         typical_price = (high + low + close) / 3
         cumulative_tp_vol = np.cumsum(typical_price * volume)
         cumulative_vol = np.cumsum(volume)
-        return np.divide(cumulative_tp_vol, cumulative_vol, where=cumulative_vol != 0)
+        # Provide out to avoid uninitialized memory warnings when using where=
+        return np.divide(
+            cumulative_tp_vol,
+            cumulative_vol,
+            where=cumulative_vol != 0,
+            out=np.zeros_like(cumulative_tp_vol),
+        )
 
     @staticmethod
     def bollinger_bands(close: np.ndarray, period: int = 20, std_dev: float = 2.0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:

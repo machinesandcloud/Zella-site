@@ -3,6 +3,9 @@ import asyncio
 import logging
 from datetime import datetime
 
+import numpy as np
+import pandas as pd
+
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
@@ -29,6 +32,23 @@ from utils.logger import setup_logging
 
 app = FastAPI(title="Zella AI Trading API", version="0.1.1")
 
+def _coerce_json(value):
+    """Convert numpy/pandas scalars and containers into JSON-serializable types."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, pd.Timedelta):
+        return value.total_seconds()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {key: _coerce_json(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_coerce_json(item) for item in value]
+    return value
 
 @app.get("/health")
 async def health_check():
@@ -74,7 +94,7 @@ async def health_check():
     else:
         health_status["components"]["market_data"] = "not_initialized"
 
-    return health_status
+    return _coerce_json(health_status)
 
 allowed_origins = [
     origin.strip()
@@ -133,22 +153,10 @@ async def server_self_ping():
                     except Exception:
                         return False
 
-                async def ping_status(url: str) -> bool:
-                    try:
-                        async with session.get(
-                            f"{url}/api/ai/autonomous/status",
-                            timeout=aiohttp.ClientTimeout(total=10),
-                        ) as response:
-                            return response.status == 200
-                    except Exception:
-                        return False
-
                 ok_external = await ping(server_url)
                 ok_local = await ping(local_url)
-                ok_external_status = await ping_status(server_url)
-                ok_local_status = await ping_status(local_url)
 
-                if ok_external or ok_local or ok_external_status or ok_local_status:
+                if ok_external or ok_local:
                     if ping_count % 6 == 0:
                         logger.info(f"✓ Self-ping #{ping_count} OK - server alive")
                 else:

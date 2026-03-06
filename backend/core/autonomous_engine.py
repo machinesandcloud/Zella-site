@@ -17,6 +17,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -3630,6 +3631,24 @@ class AutonomousEngine:
         except Exception as e:
             logger.debug(f"Failed to persist decisions: {e}")
 
+    def _coerce_json(self, value: Any) -> Any:
+        """Convert numpy/pandas scalars and containers into JSON-serializable types."""
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, pd.Timestamp):
+            return value.isoformat()
+        if isinstance(value, pd.Timedelta):
+            return value.total_seconds()
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, dict):
+            return {key: self._coerce_json(val) for key, val in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [self._coerce_json(item) for item in value]
+        return value
+
     def get_status(self) -> Dict[str, Any]:
         """Get current engine status with detailed scanner information"""
         # Check power hour status
@@ -3674,7 +3693,7 @@ class AutonomousEngine:
         except Exception:
             position_exit_state = {}
 
-        return {
+        status = {
             "enabled": self.enabled,
             "running": self.running,
             "mode": self.mode,
@@ -3737,6 +3756,8 @@ class AutonomousEngine:
                 "recent_insights": self.learning_engine.get_recent_insights(5) if hasattr(self, 'learning_engine') else [],
             },
         }
+
+        return self._coerce_json(status)
 
     def update_config(self, config: Dict[str, Any]):
         """Update engine configuration"""
