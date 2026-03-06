@@ -253,6 +253,10 @@ def get_autonomous_status(
             "power_hour": {"active": False, "multiplier": 1.0},
         }
 
+    try:
+        engine._trade_user_id = current_user.id
+    except Exception:
+        pass
     return engine.get_status()
 
 
