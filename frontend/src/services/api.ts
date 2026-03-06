@@ -173,14 +173,14 @@ const cachedGet = async <T = any>(
 
   if (cached) {
     const isFresh = Date.now() - cached.ts <= ttlMs;
-    if (revalidate) {
-      void api.get(url, { ...config, __skipRetry: true } as RetryConfig).then((res) => {
-        writeCache(key, res.data);
-      }).catch(() => {
-        // ignore background errors
-      });
-    }
     if (isFresh) {
+      if (revalidate) {
+        void api.get(url, { ...config, __skipRetry: true } as RetryConfig).then((res) => {
+          writeCache(key, res.data);
+        }).catch(() => {
+          // ignore background errors
+        });
+      }
       return cached.data as T;
     }
   }
