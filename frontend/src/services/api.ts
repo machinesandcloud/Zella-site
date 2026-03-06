@@ -68,9 +68,125 @@ const api = axios.create({
 interface RetryConfig extends InternalAxiosRequestConfig {
   __retryCount?: number;
   __skipRetry?: boolean;
+  __startTime?: number;
 }
 
+type ApiTiming = {
+  url: string;
+  method: string;
+  status: number | "ERR";
+  durationMs: number;
+  ts: number;
+  ok: boolean;
+};
+
+type CacheEntry = {
+  ts: number;
+  data: unknown;
+};
+
+const TIMINGS_KEY = "zella_api_timings";
+const MAX_TIMINGS = 50;
+let timingBuffer: ApiTiming[] = [];
+
+const loadTimings = () => {
+  try {
+    const stored = localStorage.getItem(TIMINGS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        timingBuffer = parsed;
+      }
+    }
+  } catch {
+    // ignore
+  }
+};
+
+const recordTiming = (timing: ApiTiming) => {
+  timingBuffer = [timing, ...timingBuffer].slice(0, MAX_TIMINGS);
+  try {
+    localStorage.setItem(TIMINGS_KEY, JSON.stringify(timingBuffer));
+  } catch {
+    // ignore storage errors
+  }
+  window.dispatchEvent(new CustomEvent("api:timing", { detail: timing }));
+};
+
+export const getApiTimings = () => {
+  if (!timingBuffer.length) loadTimings();
+  return timingBuffer.slice();
+};
+
+const cacheStore = new Map<string, CacheEntry>();
+const cacheKeyFor = (url: string, config?: InternalAxiosRequestConfig) => {
+  const params = (config as InternalAxiosRequestConfig)?.params;
+  if (!params) return `GET:${url}`;
+  const entries = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => [k, String(v)] as [string, string])
+    .sort(([a], [b]) => a.localeCompare(b));
+  const qs = new URLSearchParams(entries).toString();
+  return `GET:${url}${qs ? `?${qs}` : ""}`;
+};
+
+const cacheKeyToStorage = (key: string) => `zella_cache_${encodeURIComponent(key)}`;
+
+const readCache = (key: string): CacheEntry | null => {
+  const mem = cacheStore.get(key);
+  if (mem) return mem;
+  try {
+    const raw = localStorage.getItem(cacheKeyToStorage(key));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CacheEntry;
+    if (parsed && typeof parsed.ts === "number") {
+      cacheStore.set(key, parsed);
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
+
+const writeCache = (key: string, data: unknown) => {
+  const entry: CacheEntry = { ts: Date.now(), data };
+  cacheStore.set(key, entry);
+  try {
+    localStorage.setItem(cacheKeyToStorage(key), JSON.stringify(entry));
+  } catch {
+    // ignore
+  }
+};
+
+const cachedGet = async <T>(
+  url: string,
+  config: InternalAxiosRequestConfig = {},
+  opts: { ttlMs?: number; revalidate?: boolean } = {}
+): Promise<T> => {
+  const ttlMs = opts.ttlMs ?? 15000;
+  const revalidate = opts.revalidate ?? true;
+  const key = cacheKeyFor(url, config);
+  const cached = readCache(key);
+
+  if (cached) {
+    if (revalidate) {
+      void api.get(url, { ...config, __skipRetry: true } as RetryConfig).then((res) => {
+        writeCache(key, res.data);
+      }).catch(() => {
+        // ignore background errors
+      });
+    }
+    return cached.data as T;
+  }
+
+  const { data } = await api.get(url, config);
+  writeCache(key, data);
+  return data as T;
+};
+
 api.interceptors.request.use((config) => {
+  (config as RetryConfig).__startTime = performance.now();
   const token = localStorage.getItem("zella_token");
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -83,6 +199,16 @@ api.interceptors.response.use(
     // Any successful API response indicates backend is reachable.
     healthFailures = 0;
     notifyConnectionChange(true);
+    const config = response.config as RetryConfig;
+    const durationMs = config.__startTime ? Math.round(performance.now() - config.__startTime) : 0;
+    recordTiming({
+      url: config.url || "",
+      method: (config.method || "get").toUpperCase(),
+      status: response.status,
+      durationMs,
+      ts: Date.now(),
+      ok: true
+    });
     return response;
   },
   async (error: AxiosError) => {
@@ -97,6 +223,15 @@ api.interceptors.response.use(
 
     // Check if we should retry
     if (!config || config.__skipRetry || !isRetryableError(error)) {
+      const durationMs = config?.__startTime ? Math.round(performance.now() - config.__startTime) : 0;
+      recordTiming({
+        url: config?.url || "",
+        method: (config?.method || "get").toUpperCase(),
+        status: (error.response?.status ?? "ERR") as number | "ERR",
+        durationMs,
+        ts: Date.now(),
+        ok: false
+      });
       return Promise.reject(error);
     }
 
@@ -106,6 +241,15 @@ api.interceptors.response.use(
     // Check if we've exceeded max retries
     if (config.__retryCount >= MAX_RETRIES) {
       console.warn(`[API] Max retries (${MAX_RETRIES}) exceeded for ${config.url}`);
+      const durationMs = config.__startTime ? Math.round(performance.now() - config.__startTime) : 0;
+      recordTiming({
+        url: config.url || "",
+        method: (config.method || "get").toUpperCase(),
+        status: (error.response?.status ?? "ERR") as number | "ERR",
+        durationMs,
+        ts: Date.now(),
+        ok: false
+      });
       return Promise.reject(error);
     }
 
@@ -123,30 +267,23 @@ api.interceptors.response.use(
 );
 
 export const fetchDashboardOverview = async () => {
-  const { data } = await api.get("/api/dashboard/overview");
-  return data;
+  return cachedGet("/api/dashboard/overview", {}, { ttlMs: 10000 });
 };
 
 export const fetchDashboardMetrics = async () => {
-  const { data } = await api.get("/api/dashboard/metrics");
-  return data;
+  return cachedGet("/api/dashboard/metrics", {}, { ttlMs: 10000 });
 };
 
 export const fetchRecentTrades = async (days: number = 7, limit: number = 50) => {
-  const { data } = await api.get("/api/dashboard/trades/recent", {
-    params: { days, limit }
-  });
-  return data;
+  return cachedGet("/api/dashboard/trades/recent", { params: { days, limit } }, { ttlMs: 10000 });
 };
 
 export const fetchAccountSnapshots = async () => {
-  const { data } = await api.get("/api/dashboard/account/snapshots");
-  return data;
+  return cachedGet("/api/dashboard/account/snapshots", {}, { ttlMs: 15000 });
 };
 
 export const fetchTrades = async () => {
-  const { data } = await api.get("/api/trades");
-  return data;
+  return cachedGet("/api/trades", {}, { ttlMs: 15000 });
 };
 
 export const fetchSetupStats = async () => {
@@ -178,23 +315,19 @@ export const fetchMarketSession = async () => {
 };
 
 export const fetchAccountSummary = async () => {
-  const { data } = await api.get("/api/alpaca/account");
-  return data;
+  return cachedGet("/api/alpaca/account", {}, { ttlMs: 5000 });
 };
 
 export const fetchAlpacaStatus = async () => {
-  const { data } = await api.get("/api/alpaca/status");
-  return data;
+  return cachedGet("/api/alpaca/status", {}, { ttlMs: 5000 });
 };
 
 export const fetchAlpacaAccount = async () => {
-  const { data } = await api.get("/api/alpaca/account");
-  return data;
+  return cachedGet("/api/alpaca/account", {}, { ttlMs: 5000 });
 };
 
 export const fetchAlpacaPositions = async () => {
-  const { data } = await api.get("/api/alpaca/positions");
-  return data;
+  return cachedGet("/api/alpaca/positions", {}, { ttlMs: 5000 });
 };
 
 export const autoLogin = async () => {
@@ -203,8 +336,7 @@ export const autoLogin = async () => {
 };
 
 export const fetchPositions = async () => {
-  const { data } = await api.get("/api/alpaca/positions");
-  return data;
+  return cachedGet("/api/alpaca/positions", {}, { ttlMs: 5000 });
 };
 
 export const closePosition = async (symbol: string) => {
@@ -325,27 +457,36 @@ export const liquidateAllPositions = async () => {
 };
 
 export const getAutonomousStatus = async () => {
-  const { data } = await api.get("/api/ai/autonomous/status", {
-    timeout: 5000,
-    __skipRetry: true
-  } as RetryConfig);
-  return data;
+  return cachedGet(
+    "/api/ai/autonomous/status",
+    {
+      timeout: 5000,
+      __skipRetry: true
+    } as RetryConfig,
+    { ttlMs: 5000 }
+  );
 };
 
 export const getAutonomousLogs = async () => {
-  const { data } = await api.get("/api/ai/autonomous/logs", {
-    timeout: 5000,
-    __skipRetry: true
-  } as RetryConfig);
-  return data;
+  return cachedGet(
+    "/api/ai/autonomous/logs",
+    {
+      timeout: 5000,
+      __skipRetry: true
+    } as RetryConfig,
+    { ttlMs: 3000 }
+  );
 };
 
 export const fetchLearningSummary = async () => {
-  const { data } = await api.get("/api/ai/learning/summary", {
-    timeout: 5000,
-    __skipRetry: true
-  } as RetryConfig);
-  return data;
+  return cachedGet(
+    "/api/ai/learning/summary",
+    {
+      timeout: 5000,
+      __skipRetry: true
+    } as RetryConfig,
+    { ttlMs: 30000 }
+  );
 };
 
 export const updateAutonomousConfig = async (config: Record<string, unknown>) => {
@@ -399,13 +540,15 @@ export const fetchWatchlistSnapshots = async (symbols?: string[]) => {
 // ==================== Strategy Performance API ====================
 
 export const fetchStrategyPerformanceByPeriod = async () => {
-  const { data } = await api.get("/api/trades/strategy-performance");
-  return data;
+  return cachedGet("/api/trades/strategy-performance", {}, { ttlMs: 20000 });
 };
 
 export const fetchTradesByStrategy = async (strategyName: string, limit: number = 50) => {
-  const { data } = await api.get(`/api/trades/by-strategy/${encodeURIComponent(strategyName)}?limit=${limit}`);
-  return data;
+  return cachedGet(
+    `/api/trades/by-strategy/${encodeURIComponent(strategyName)}`,
+    { params: { limit } },
+    { ttlMs: 20000 }
+  );
 };
 
 export const fetchAvailableStrategies = async () => {

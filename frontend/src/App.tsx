@@ -34,6 +34,7 @@ import AutopilotControl from "./components/AI/AutopilotControl";
 import SystemHealth from "./components/Dashboard/SystemHealth";
 import BotLogs from "./components/AI/BotLogs";
 import StrategyPerformancePanel from "./components/AI/StrategyPerformancePanel";
+import ApiLatencyBadge from "./components/Diagnostics/ApiLatencyBadge";
 
 // Navigation tabs
 const NAV = [
@@ -368,6 +369,7 @@ const App = () => {
               </Box>
             </Stack>
             <Stack direction="row" spacing={1} alignItems="center">
+              <ApiLatencyBadge />
               <Chip
                 label={alpacaStatus?.mode === "LIVE" ? "Live" : "Paper"}
                 color={alpacaStatus?.mode === "LIVE" ? "success" : "secondary"}
