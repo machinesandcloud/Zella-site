@@ -1,4 +1,4 @@
-import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
 
 // Check if VITE_API_URL is explicitly set (not undefined, not empty)
 const API_URL = import.meta.env.VITE_API_URL?.trim();
@@ -119,8 +119,10 @@ export const getApiTimings = () => {
 };
 
 const cacheStore = new Map<string, CacheEntry>();
-const cacheKeyFor = (url: string, config?: InternalAxiosRequestConfig) => {
-  const params = (config as InternalAxiosRequestConfig)?.params;
+type CacheableConfig = AxiosRequestConfig & { __skipRetry?: boolean };
+
+const cacheKeyFor = (url: string, config?: AxiosRequestConfig) => {
+  const params = config?.params;
   if (!params) return `GET:${url}`;
   const entries = Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== null)
@@ -159,9 +161,9 @@ const writeCache = (key: string, data: unknown) => {
   }
 };
 
-const cachedGet = async <T>(
+const cachedGet = async <T = any>(
   url: string,
-  config: InternalAxiosRequestConfig = {},
+  config: CacheableConfig = {},
   opts: { ttlMs?: number; revalidate?: boolean } = {}
 ): Promise<T> => {
   const ttlMs = opts.ttlMs ?? 15000;
