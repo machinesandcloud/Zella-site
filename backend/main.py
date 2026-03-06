@@ -122,22 +122,34 @@ async def server_self_ping():
 
     while True:
         try:
-            await asyncio.sleep(25)  # Ping every 25 seconds (more aggressive)
+            await asyncio.sleep(10)  # Ping every 10 seconds for strong keep-alive
             ping_count += 1
 
             async with aiohttp.ClientSession() as session:
                 async def ping(url: str) -> bool:
                     try:
-                        async with session.get(f"{url}/health", timeout=aiohttp.ClientTimeout(total=15)) as response:
+                        async with session.get(f"{url}/health", timeout=aiohttp.ClientTimeout(total=10)) as response:
+                            return response.status == 200
+                    except Exception:
+                        return False
+
+                async def ping_status(url: str) -> bool:
+                    try:
+                        async with session.get(
+                            f"{url}/api/ai/autonomous/status",
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as response:
                             return response.status == 200
                     except Exception:
                         return False
 
                 ok_external = await ping(server_url)
                 ok_local = await ping(local_url)
+                ok_external_status = await ping_status(server_url)
+                ok_local_status = await ping_status(local_url)
 
-                if ok_external or ok_local:
-                    if ping_count % 10 == 0:
+                if ok_external or ok_local or ok_external_status or ok_local_status:
+                    if ping_count % 6 == 0:
                         logger.info(f"✓ Self-ping #{ping_count} OK - server alive")
                 else:
                     logger.warning("Self-ping failed for both external and local health checks")
