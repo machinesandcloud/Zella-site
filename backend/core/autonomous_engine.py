@@ -703,7 +703,11 @@ class AutonomousEngine:
         atr_val = 0.0
         if symbol_state.bars_cache is not None and len(symbol_state.bars_cache) > 0:
             vwap = float(symbol_state.bars_cache.iloc[-1].get("vwap", 0)) if "vwap" in symbol_state.bars_cache.columns else 0.0
-            atr_val = float(atr(symbol_state.bars_cache)) if len(symbol_state.bars_cache) >= 14 else 0.0
+            if len(symbol_state.bars_cache) >= 14:
+                atr_series = atr(symbol_state.bars_cache)
+                atr_val = float(atr_series.iloc[-1]) if len(atr_series) else 0.0
+            else:
+                atr_val = 0.0
 
         # Get account state
         buying_power = 0.0
