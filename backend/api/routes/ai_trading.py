@@ -1,7 +1,11 @@
 import json
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
+
+import numpy as np
+import pandas as pd
 
 from core.auto_trader import AutoTrader
 from core.autonomous_engine import AutonomousEngine, DECISION_LOG_FILE
@@ -13,6 +17,24 @@ from utils.market_hours import market_session
 from models import User
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+
+
+def _coerce_json(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, pd.Timedelta):
+        return value.total_seconds()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {key: _coerce_json(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_coerce_json(item) for item in value]
+    return value
 
 
 class WatchlistRequest(BaseModel):
@@ -289,11 +311,12 @@ def get_learning_summary(
     """Get ML learning summary and recent insights."""
     learning_engine = get_learning_engine()
     summary = learning_engine.get_learning_summary()
-    return {
+    payload = {
         "summary": summary,
         "recent_insights": learning_engine.get_recent_insights(8),
         "recent_trades": learning_engine.state.trade_history[-20:],
     }
+    return _coerce_json(payload)
 
 
 @router.post("/autonomous/config")
@@ -319,11 +342,12 @@ def get_strategy_performance(
     if not engine:
         raise HTTPException(status_code=503, detail="Autonomous engine not initialized")
 
-    return {
+    payload = {
         "strategies": list(engine.all_strategies.keys()),
         "performance": engine.strategy_performance,
         "total_strategies": len(engine.all_strategies)
     }
+    return _coerce_json(payload)
 
 
 @router.post("/autonomous/scan")
