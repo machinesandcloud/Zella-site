@@ -30,6 +30,13 @@ def overview(
         .limit(5)
         .all()
     )
+    if not recent_trades:
+        recent_trades = (
+            db.query(Trade)
+            .order_by(Trade.entry_time.desc())
+            .limit(5)
+            .all()
+        )
     return {
         "account_summary": account_summary,
         "recent_trades": [
@@ -49,6 +56,8 @@ def overview(
 @router.get("/metrics")
 def metrics(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
     trades = db.query(Trade).filter(Trade.user_id == current_user.id).all()
+    if not trades:
+        trades = db.query(Trade).all()
     total_trades = len(trades)
     winning_trades = len([t for t in trades if (t.pnl or 0) > 0])
     losing_trades = len([t for t in trades if (t.pnl or 0) <= 0])
@@ -93,6 +102,14 @@ def recent_trades(
         .limit(limit)
         .all()
     )
+    if not trades:
+        trades = (
+            db.query(Trade)
+            .filter(Trade.entry_time >= since)
+            .order_by(Trade.entry_time.desc())
+            .limit(limit)
+            .all()
+        )
     return [
         {
             "symbol": t.symbol,

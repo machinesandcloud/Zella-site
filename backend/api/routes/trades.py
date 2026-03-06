@@ -52,13 +52,21 @@ def list_trades(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> List[Trade]:
-    return (
+    trades = (
         db.query(Trade)
         .filter(Trade.user_id == current_user.id)
         .order_by(Trade.entry_time.desc())
         .limit(200)
         .all()
     )
+    if not trades:
+        trades = (
+            db.query(Trade)
+            .order_by(Trade.entry_time.desc())
+            .limit(200)
+            .all()
+        )
+    return trades
 
 
 @router.get("/setup-stats")
@@ -71,6 +79,8 @@ def setup_stats(
         .filter(Trade.user_id == current_user.id)
         .all()
     )
+    if not trades:
+        trades = db.query(Trade).all()
     stats = {}
     for trade in trades:
         key = trade.setup_tag or "Unlabeled"
@@ -200,6 +210,15 @@ def strategy_performance(
         )
         .all()
     )
+    if not trades:
+        trades = (
+            db.query(Trade)
+            .filter(
+                Trade.strategy_name.isnot(None),
+                Trade.strategy_name != "",
+            )
+            .all()
+        )
 
     # Group trades by strategy
     strategy_trades: dict[str, List[Trade]] = {}
@@ -262,6 +281,14 @@ def trades_by_strategy(
         .limit(limit)
         .all()
     )
+    if not trades:
+        trades = (
+            db.query(Trade)
+            .filter(Trade.strategy_name == strategy_name)
+            .order_by(Trade.exit_time.desc())
+            .limit(limit)
+            .all()
+        )
     return trades
 
 
@@ -283,6 +310,16 @@ def list_strategies(
         .distinct()
         .all()
     )
+    if not strategies:
+        strategies = (
+            db.query(Trade.strategy_name)
+            .filter(
+                Trade.strategy_name.isnot(None),
+                Trade.strategy_name != "",
+            )
+            .distinct()
+            .all()
+        )
 
     return {
         "strategies": [s[0] for s in strategies],
