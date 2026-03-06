@@ -447,8 +447,8 @@ const notifyConnectionChange = (connected: boolean) => {
 let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 let quickRetryTimeout: ReturnType<typeof setTimeout> | null = null;
 let healthFailures = 0;
-const MAX_HEALTH_FAILURES = 3;
-const QUICK_RETRY_DELAY = 5000;
+const MAX_HEALTH_FAILURES = 2;
+const QUICK_RETRY_DELAY = 1000;
 
 const doHealthCheck = async (): Promise<boolean> => {
   try {
@@ -483,7 +483,7 @@ export const startHealthMonitoring = () => {
   // Periodic checks
   healthCheckInterval = setInterval(() => {
     void doHealthCheck();
-  }, 30000);
+  }, 5000);
 };
 
 export const stopHealthMonitoring = () => {

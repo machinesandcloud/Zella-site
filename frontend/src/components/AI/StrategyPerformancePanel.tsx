@@ -30,7 +30,8 @@ import TrendingDownIcon from "@mui/icons-material/TrendingDown";
 import ShowChartIcon from "@mui/icons-material/ShowChart";
 import {
   fetchStrategyPerformanceByPeriod,
-  fetchTradesByStrategy
+  fetchTradesByStrategy,
+  getAutonomousStatus
 } from "../../services/api";
 
 interface PeriodStats {
@@ -97,12 +98,49 @@ const StrategyPerformancePanel = () => {
   const [strategyTrades, setStrategyTrades] = useState<Record<string, Trade[]>>({});
   const [tradesLoading, setTradesLoading] = useState<string | null>(null);
 
+  const emptyStats = (): PeriodStats => ({
+    total_pnl: 0,
+    trades: 0,
+    wins: 0,
+    losses: 0,
+    win_rate: 0,
+    avg_pnl: 0
+  });
+
+  const buildEmptyStrategies = (names: string[]): StrategyPerformance[] =>
+    names.map((strategy) => ({
+      strategy,
+      all_time: emptyStats(),
+      daily: emptyStats(),
+      three_day: emptyStats(),
+      weekly: emptyStats(),
+      monthly: emptyStats()
+    }));
+
   const fetchPerformance = useCallback(async () => {
     setLoading(true);
     try {
       const data = await fetchStrategyPerformanceByPeriod();
-      setStrategies(data.strategies || []);
-      localStorage.setItem("zella_strategy_performance", JSON.stringify(data));
+      const nextStrategies = data.strategies || [];
+      if (nextStrategies.length === 0) {
+        try {
+          const status = await getAutonomousStatus();
+          const active = status?.status?.active_strategies || status?.active_strategies || [];
+          if (active.length > 0) {
+            const seeded = buildEmptyStrategies(active);
+            setStrategies(seeded);
+            localStorage.setItem("zella_strategy_performance", JSON.stringify({ strategies: seeded }));
+          } else {
+            setStrategies([]);
+            localStorage.setItem("zella_strategy_performance", JSON.stringify({ strategies: [] }));
+          }
+        } catch {
+          setStrategies([]);
+        }
+      } else {
+        setStrategies(nextStrategies);
+        localStorage.setItem("zella_strategy_performance", JSON.stringify(data));
+      }
       setError(null);
     } catch (err) {
       console.error("Failed to fetch strategy performance:", err);
@@ -142,8 +180,12 @@ const StrategyPerformancePanel = () => {
     }
 
     fetchPerformance();
+    const safetyTimer = setTimeout(() => setLoading(false), 2000);
     const interval = setInterval(fetchPerformance, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(safetyTimer);
+    };
   }, [fetchPerformance]);
 
   const toggleStrategy = (strategyName: string) => {

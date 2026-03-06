@@ -62,22 +62,14 @@ async def health_check():
         "components": {}
     }
 
-    # Check autonomous engine
+    # Check autonomous engine (keep this fast/lightweight)
     if hasattr(app.state, "autonomous_engine") and app.state.autonomous_engine:
         engine = app.state.autonomous_engine
         health_status["components"]["autonomous_engine"] = {
             "running": engine.running,
             "enabled": engine.enabled,
-            "mode": engine.mode
+            "mode": engine.mode,
         }
-        # Include performance engine status
-        if hasattr(engine, 'perf_engine'):
-            health_status["components"]["performance_engine"] = {
-                "cache_hit_rate": round(engine.perf_engine.cache.hit_rate, 3),
-                "symbols_tracked": len(engine.perf_engine.symbols),
-                "staged_orders": len(engine.perf_engine.order_prestager.get_all_staged()),
-                "integration_validated": getattr(engine, '_integration_validated', False)
-            }
     else:
         health_status["components"]["autonomous_engine"] = {"status": "not_initialized"}
 

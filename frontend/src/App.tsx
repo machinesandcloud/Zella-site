@@ -44,9 +44,9 @@ const NAV = [
 ];
 
 // Backend wake-up configuration for Render
-const MAX_WAKE_RETRIES = 6;
-const WAKE_RETRY_INTERVAL = 10000;
-const RECONNECT_RETRY_INTERVAL = 10000;
+const MAX_WAKE_RETRIES = 12;
+const WAKE_RETRY_INTERVAL = 1000;
+const RECONNECT_RETRY_INTERVAL = 1000;
 
 const App = () => {
   const [tab, setTab] = useState(0);
@@ -93,6 +93,7 @@ const App = () => {
 
   // Prefetch key data to make tab switches instant
   useEffect(() => {
+    if (!isAuthenticated) return;
     const scheduleIdle = (fn: () => void) => {
       if (typeof window !== "undefined" && "requestIdleCallback" in window) {
         (window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void })
@@ -131,13 +132,17 @@ const App = () => {
     };
 
     scheduleIdle(() => void prefetch());
-  }, []);
+  }, [isAuthenticated]);
 
   // Connection health monitoring - subscribe to connection changes
   useEffect(() => {
     // Listen for connection changes
     const unsubscribe = onConnectionChange((connected) => {
       setBackendConnected(connected);
+      if (connected) {
+        setIsWakingUp(false);
+        setWakeAttempt(0);
+      }
       if (!connected) {
         setToast({
           open: true,
@@ -224,7 +229,12 @@ const App = () => {
       setWakeAttempt(Math.min(attempt, MAX_WAKE_RETRIES));
       setIsWakingUp(true);
 
-      await forceHealthCheck();
+      const ok = await forceHealthCheck();
+      if (ok) {
+        setBackendConnected(true);
+        setIsWakingUp(false);
+        return;
+      }
 
       if (!isAuthenticated) {
         try {
@@ -239,8 +249,10 @@ const App = () => {
         }
       }
 
-      if (!cancelled && !backendConnected) {
+      if (!cancelled && !backendConnected && attempt < MAX_WAKE_RETRIES) {
         setTimeout(attemptReconnect, RECONNECT_RETRY_INTERVAL);
+      } else if (!cancelled && attempt >= MAX_WAKE_RETRIES) {
+        setIsWakingUp(false);
       }
     };
 
