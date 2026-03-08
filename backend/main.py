@@ -80,9 +80,20 @@ async def health_check():
             broker_status = "alpaca_connected"
     health_status["components"]["broker"] = broker_status
 
-    # Check market data provider
+    # Check market data provider with cache status
     if hasattr(app.state, "market_data_provider") and app.state.market_data_provider:
-        health_status["components"]["market_data"] = "initialized"
+        provider = app.state.market_data_provider
+        if hasattr(provider, "get_cache_status"):
+            cache_status = provider.get_cache_status()
+            health_status["components"]["market_data"] = {
+                "status": "initialized",
+                "cache_size": cache_status.get("cache_size", 0),
+                "symbols_with_prices": cache_status.get("symbols_with_prices", 0),
+                "streaming_active": cache_status.get("streaming_active", False),
+                "rate_limited": cache_status.get("rate_limited", False),
+            }
+        else:
+            health_status["components"]["market_data"] = "initialized"
     else:
         health_status["components"]["market_data"] = "not_initialized"
 
@@ -191,7 +202,7 @@ async def resilience_watchdog():
                     except Exception:
                         pass
 
-            # Ensure market data provider
+            # Ensure market data provider and cache health
             if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:
                 if not hasattr(app.state, "market_data_provider") or app.state.market_data_provider is None:
                     logger.warning("Market data provider missing - recreating")
@@ -201,6 +212,20 @@ async def resilience_watchdog():
                         universe=get_default_universe(),
                         data_feed=app_settings.alpaca_data_feed,
                     )
+                    # Warm up the new provider
+                    app.state.market_data_provider.warm_up(timeout=5.0)
+                else:
+                    # Check cache health and trigger refresh if needed
+                    provider = app.state.market_data_provider
+                    if hasattr(provider, "get_cache_status"):
+                        status = provider.get_cache_status()
+                        symbols_with_prices = status.get("symbols_with_prices", 0)
+                        cache_age = status.get("cache_age_seconds")
+
+                        # If cache is empty or very stale (>60s), force refresh
+                        if symbols_with_prices < 10 or (cache_age and cache_age > 60):
+                            logger.warning(f"Cache unhealthy: {symbols_with_prices} symbols, age={cache_age}s - refreshing")
+                            provider.warm_up(timeout=5.0)
 
             # Ensure auto trader
             if getattr(app.state, "market_data_provider", None) and getattr(app.state, "auto_trader", None) is None:
@@ -366,6 +391,17 @@ async def on_startup() -> None:
             universe=get_default_universe(),
             data_feed=app_settings.alpaca_data_feed,
         )
+
+        # Warm up the cache BEFORE starting the engine
+        logger.info("Warming up market data cache (this ensures data is ready before scanning)...")
+        cache_ready = app.state.market_data_provider.warm_up(timeout=10.0)
+        if cache_ready:
+            status = app.state.market_data_provider.get_cache_status()
+            logger.info(f"✓ Cache ready: {status['symbols_with_prices']} symbols with prices")
+        else:
+            logger.warning("⚠ Cache warm-up timeout - scanning may show 0 symbols initially")
+            status = app.state.market_data_provider.get_cache_status()
+            logger.warning(f"  Cache status: {status}")
     else:
         logger.error("Alpaca API keys missing - market data provider not initialized")
         app.state.market_data_provider = None

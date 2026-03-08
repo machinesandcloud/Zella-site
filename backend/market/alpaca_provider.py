@@ -710,6 +710,65 @@ class AlpacaMarketDataProvider(MarketDataProvider):
 
         return snapshots
 
+    def warm_up(self, timeout: float = 15.0) -> bool:
+        """
+        Warm up the cache by forcing an immediate data fetch.
+        Call this before starting the autonomous engine to ensure data is ready.
+
+        Args:
+            timeout: Maximum time to wait for data (seconds)
+
+        Returns:
+            True if cache has data, False otherwise
+        """
+        start = time.time()
+        logger.info("Warming up market data cache...")
+
+        # Force immediate refresh (don't wait for background thread)
+        try:
+            self._refresh_all_quotes()
+        except Exception as e:
+            logger.warning(f"Initial cache refresh failed: {e}")
+
+        # Wait for cache to have data
+        while time.time() - start < timeout:
+            with self._cache_lock:
+                cache_size = len(self._quote_cache)
+                has_prices = sum(1 for v in self._quote_cache.values() if v.get("price", 0) > 0)
+
+            if has_prices >= 10:  # At least 10 symbols with prices
+                logger.info(f"Cache warmed up: {has_prices} symbols with prices (took {time.time() - start:.1f}s)")
+                return True
+
+            time.sleep(0.5)
+
+        # Timeout - log what we have
+        with self._cache_lock:
+            cache_size = len(self._quote_cache)
+            has_prices = sum(1 for v in self._quote_cache.values() if v.get("price", 0) > 0)
+
+        logger.warning(f"Cache warm-up timeout: only {has_prices} symbols with prices after {timeout}s")
+        return has_prices > 0
+
+    def get_cache_status(self) -> Dict[str, Any]:
+        """Get cache status for diagnostics"""
+        with self._cache_lock:
+            cache_size = len(self._quote_cache)
+            has_prices = sum(1 for v in self._quote_cache.values() if v.get("price", 0) > 0)
+            cache_age = time.time() - self._cache_timestamp if self._cache_timestamp else None
+
+        return {
+            "cache_size": cache_size,
+            "symbols_with_prices": has_prices,
+            "cache_age_seconds": round(cache_age, 1) if cache_age else None,
+            "streaming_active": self._streaming_active,
+            "rate_limited": self._is_rate_limited(),
+            "backoff_until": self._backoff_until if self._is_rate_limited() else None,
+            "universe_size": len(self._universe),
+            "last_error": self.last_error,
+            "last_error_at": self.last_error_at,
+        }
+
     def get_most_active(self, limit: int = 50) -> List[str]:
         """Approximate most-active list from cached snapshots by volume."""
         with self._cache_lock:

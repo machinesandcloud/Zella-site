@@ -591,12 +591,13 @@ const notifyConnectionChange = (connected: boolean) => {
   }
 };
 
-// Start periodic health monitoring (every 30 seconds)
+// Start periodic health monitoring
 let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 let quickRetryTimeout: ReturnType<typeof setTimeout> | null = null;
 let healthFailures = 0;
-const MAX_HEALTH_FAILURES = 2;
-const QUICK_RETRY_DELAY = 1000;
+const MAX_HEALTH_FAILURES = 3; // Require 3 failures before showing disconnected
+const QUICK_RETRY_DELAY = 2000; // 2 seconds between quick retries
+const HEALTH_CHECK_INTERVAL = 30000; // 30 seconds for normal checks
 
 const doHealthCheck = async (): Promise<boolean> => {
   try {
@@ -606,11 +607,17 @@ const doHealthCheck = async (): Promise<boolean> => {
     return true;
   } catch {
     healthFailures += 1;
-    console.warn("[API] Health check failed - connection may be lost");
+    // Only log after first failure to reduce noise
+    if (healthFailures === 1) {
+      console.warn("[API] Health check failed - will retry");
+    }
+    // Only notify disconnected after multiple failures
     if (healthFailures >= MAX_HEALTH_FAILURES) {
+      console.warn(`[API] ${healthFailures} consecutive health check failures - connection lost`);
       notifyConnectionChange(false);
     }
-    if (!quickRetryTimeout) {
+    // Quick retry on failure
+    if (!quickRetryTimeout && healthFailures < MAX_HEALTH_FAILURES) {
       quickRetryTimeout = setTimeout(() => {
         quickRetryTimeout = null;
         void doHealthCheck();
@@ -628,10 +635,10 @@ export const startHealthMonitoring = () => {
   // Initial check
   void doHealthCheck();
 
-  // Periodic checks
+  // Periodic checks every 30 seconds (not too aggressive)
   healthCheckInterval = setInterval(() => {
     void doHealthCheck();
-  }, 5000);
+  }, HEALTH_CHECK_INTERVAL);
 };
 
 export const stopHealthMonitoring = () => {
