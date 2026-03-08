@@ -151,7 +151,10 @@ async def market_data_ws(websocket: WebSocket) -> None:
     else:
         symbols = ["AAPL", "TSLA", "NVDA", "AMD", "META", "MSFT", "GOOGL", "AMZN", "SPY", "QQQ"]
 
-    interval = float(websocket.query_params.get("interval", "0.2"))  # 200ms default
+    try:
+        interval = float(websocket.query_params.get("interval", "0.2"))  # 200ms default
+    except (ValueError, TypeError):
+        interval = 0.2
     interval = max(0.1, min(interval, 2.0))  # Clamp between 100ms and 2s
 
     # Note: Not using ConnectionManager here, so we call accept() directly

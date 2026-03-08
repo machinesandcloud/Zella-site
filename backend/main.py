@@ -199,8 +199,8 @@ async def resilience_watchdog():
                             if getattr(app.state, "autonomous_engine", None)
                             else None
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Trade updates stream already running or failed: {e}")
 
             # Ensure market data provider and cache health
             if app_settings.alpaca_api_key and app_settings.alpaca_secret_key:

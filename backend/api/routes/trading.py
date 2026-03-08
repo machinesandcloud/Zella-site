@@ -203,9 +203,14 @@ def place_order(
         stop_price=order_in.stop_price,
         status="SUBMITTED",
     )
-    db.add(order)
-    db.commit()
-    db.refresh(order)
+    try:
+        db.add(order)
+        db.commit()
+        db.refresh(order)
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Database error saving order for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save order to database")
     return order
 
 
@@ -226,9 +231,12 @@ def cancel_order(
     if not order or not order.ibkr_order_id:
         raise HTTPException(status_code=404, detail="Order not found or missing broker order id")
     alpaca.cancel_order(str(order.ibkr_order_id))
-    if order:
+    try:
         order.status = "CANCELLED"
         db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Failed to update order status in database: {e}")
     return {"status": "cancelled", "order_id": order_id}
 
 

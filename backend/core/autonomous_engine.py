@@ -135,6 +135,28 @@ logger = logging.getLogger("autonomous_engine")
 DECISION_LOG_FILE = Path("data/decision_log.json")
 
 
+def retry_with_backoff(func, max_retries: int = 3, base_delay: float = 0.1):
+    """
+    Execute a function with exponential backoff retry.
+    Used for critical trading operations that may fail due to transient errors.
+    """
+    import time as time_module
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            result = func()
+            if result and not result.get("error"):
+                return result
+            last_error = result.get("error", "Unknown error") if result else "No response"
+        except Exception as e:
+            last_error = str(e)
+        if attempt < max_retries - 1:
+            delay = base_delay * (2 ** attempt)  # Exponential backoff: 0.1, 0.2, 0.4
+            logger.warning(f"Retry {attempt + 1}/{max_retries} after {delay:.2f}s: {last_error}")
+            time_module.sleep(delay)
+    return {"error": f"Failed after {max_retries} retries: {last_error}"}
+
+
 class AutonomousEngine:
     """
     Fully autonomous trading engine that:
@@ -1005,8 +1027,8 @@ class AutonomousEngine:
             self.daily_pnl = 0.0
             try:
                 self.discipline.reset_daily()
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to reset daily discipline counters: {e}")
             logger.info("📅 New trading day - daily counters reset")
 
         # =====================================================
@@ -3178,7 +3200,11 @@ class AutonomousEngine:
                         logger.info(f"   STEALTH: Executed {total_filled} shares in {len(orders)} slices")
                 else:
                     with LATENCY.timed(f"order_execution_{symbol}"):
-                        order = self.broker.place_market_order(symbol, quantity, action)
+                        order = retry_with_backoff(
+                            lambda s=symbol, q=quantity, a=action: self.broker.place_market_order(s, q, a),
+                            max_retries=3,
+                            base_delay=0.1
+                        )
 
                 exec_elapsed_ms = (time_module.perf_counter() - exec_start) * 1000
                 if exec_elapsed_ms > 10:

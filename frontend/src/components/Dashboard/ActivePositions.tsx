@@ -16,6 +16,45 @@ import {
 } from "@mui/material";
 import { closePosition, fetchPositions, getAutonomousStatus } from "../../services/api";
 
+interface Position {
+  symbol: string;
+  quantity?: number;
+  qty?: number;
+  avgPrice?: number;
+  avg_entry_price?: number;
+  currentPrice?: number;
+  current_price?: number;
+  marketValue?: number;
+  market_value?: number;
+  unrealizedPnL?: string | number;
+  unrealizedPnLPercent?: string | number;
+}
+
+interface ExitRules {
+  time_stop_minutes?: number;
+  time_stop_min_pnl?: number;
+  max_hold_minutes?: number;
+  momentum_exit_ema_period?: number;
+  trailing_lookback_bars?: number;
+}
+
+interface ScaleLevel {
+  level: string;
+  executed: boolean;
+}
+
+interface PositionExitState {
+  current_stop?: number;
+  breakeven_activated?: boolean;
+  trailing_activated?: boolean;
+  scale_levels?: ScaleLevel[];
+}
+
+interface Timings {
+  position_monitor_interval_seconds?: number;
+  scan_interval_seconds?: number;
+}
+
 const formatCurrency = (value: number | undefined): string => {
   if (value === undefined || value === null) return "--";
   return new Intl.NumberFormat("en-US", {
@@ -26,10 +65,10 @@ const formatCurrency = (value: number | undefined): string => {
 };
 
 const ActivePositions = () => {
-  const [positions, setPositions] = useState<any[]>([]);
-  const [exitRules, setExitRules] = useState<any | null>(null);
-  const [positionExitState, setPositionExitState] = useState<Record<string, any>>({});
-  const [timings, setTimings] = useState<any | null>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [exitRules, setExitRules] = useState<ExitRules | null>(null);
+  const [positionExitState, setPositionExitState] = useState<Record<string, PositionExitState>>({});
+  const [timings, setTimings] = useState<Timings | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadPositions = async () => {
@@ -181,8 +220,8 @@ const ActivePositions = () => {
             <TableBody>
               {positions.map((pos, idx) => {
                 // Use correct field names from alpaca_client.get_positions()
-                const pnl = parseFloat(pos.unrealizedPnL) || 0;
-                const pnlPercent = parseFloat(pos.unrealizedPnLPercent) || 0;
+                const pnl = parseFloat(String(pos.unrealizedPnL ?? 0)) || 0;
+                const pnlPercent = parseFloat(String(pos.unrealizedPnLPercent ?? 0)) || 0;
                 const isProfitable = pnl >= 0;
                 const exitState = positionExitState[pos.symbol] || {};
                 const stopPrice = exitState.current_stop;
@@ -190,7 +229,7 @@ const ActivePositions = () => {
                 const trailing = exitState.trailing_activated;
                 const scaleLevels = Array.isArray(exitState.scale_levels) ? exitState.scale_levels : [];
                 const scaleSummary = scaleLevels
-                  .map((level: any) => `${level.level}:${level.executed ? "✓" : "•"}`)
+                  .map((level: ScaleLevel) => `${level.level}:${level.executed ? "✓" : "•"}`)
                   .join(" ");
 
                 return (
