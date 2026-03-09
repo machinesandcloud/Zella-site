@@ -110,11 +110,21 @@ class Settings(BaseSettings):
         Returns:
             List of warning messages (empty if all OK)
         """
+        import os
         warnings = []
 
-        # Check secret key
+        # Check secret key - CRITICAL in production
         if self.secret_key == "your-secret-key-here":
+            # In production (Render), this should fail startup
+            if os.environ.get("RENDER") or os.environ.get("PRODUCTION"):
+                raise ValueError("CRITICAL: SECRET_KEY must be set to a secure value in production!")
             warnings.append("⚠️  SECRET_KEY is set to default value - CHANGE THIS in production!")
+
+        # Check admin password - CRITICAL in production
+        if self.admin_password == "zella-auto-login-2024":
+            if os.environ.get("RENDER") or os.environ.get("PRODUCTION"):
+                raise ValueError("CRITICAL: ADMIN_PASSWORD must be changed from default in production!")
+            warnings.append("⚠️  ADMIN_PASSWORD is set to default value - CHANGE THIS in production!")
 
         # Check Alpaca configuration
         if self.use_alpaca_effective:

@@ -2703,6 +2703,41 @@ class AutonomousEngine:
 
         return ranked[:self.max_positions]
 
+    def _check_circuit_breakers(self) -> Tuple[bool, str]:
+        """
+        Check circuit breakers for extreme market volatility.
+
+        Returns:
+            Tuple of (can_trade: bool, reason: str)
+        """
+        # Check SPY movement for market-wide volatility
+        try:
+            with self._cache_lock:
+                spy_data = self._spy_data_cache
+            if spy_data is not None and len(spy_data) >= 2:
+                spy_open = float(spy_data.iloc[0].get("open", 0))
+                spy_current = float(spy_data.iloc[-1].get("close", 0))
+                if spy_open > 0:
+                    spy_change_pct = abs((spy_current - spy_open) / spy_open * 100)
+                    # Halt on >3% SPY move (extreme volatility)
+                    if spy_change_pct > 3.0:
+                        return False, f"Circuit breaker: SPY moved {spy_change_pct:.1f}% - extreme volatility"
+                    # Reduce exposure on >2% SPY move
+                    if spy_change_pct > 2.0:
+                        logger.warning(f"⚠️ SPY moved {spy_change_pct:.1f}% - reducing position sizes")
+        except Exception as e:
+            logger.debug(f"Circuit breaker check error: {e}")
+
+        # Check consecutive losses (already in discipline enforcer, but add hard limit here)
+        if self.risk_manager.consecutive_losses >= 5:
+            return False, "Circuit breaker: 5+ consecutive losses - cooling off"
+
+        # Check daily loss limit hit
+        if self.daily_pnl <= self.daily_pnl_limit:
+            return False, f"Circuit breaker: Daily loss limit ${abs(self.daily_pnl_limit):.0f} hit"
+
+        return True, ""
+
     async def _execute_trades(self, opportunities: List[Dict[str, Any]]):
         """
         Execute trades for top opportunities using Warrior Trading position sizing
@@ -2712,6 +2747,13 @@ class AutonomousEngine:
         """
         if not self.risk_manager.can_trade():
             logger.warning("Risk manager blocks trading")
+            return
+
+        # Check circuit breakers for extreme volatility
+        can_trade, circuit_reason = self._check_circuit_breakers()
+        if not can_trade:
+            logger.warning(f"🚨 {circuit_reason}")
+            self._add_decision("CIRCUIT_BREAKER", circuit_reason, "HALT", {})
             return
 
         account = self.broker.get_account_summary()

@@ -97,7 +97,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
 
         # Historical bars cache with short TTL for freshness
         self._bars_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
-        self._bars_cache_ttl = 30.0  # 30 seconds - balance between speed and freshness
+        self._bars_cache_ttl = 15.0  # 15 seconds - faster for intraday trading
         self._bars_cache_lock = threading.Lock()
 
         # Rate limiting - ONLY on actual 429 errors, no preemptive delays
@@ -425,6 +425,57 @@ class AlpacaMarketDataProvider(MarketDataProvider):
             return value * 3600
         return value * 60
 
+    def _validate_bar(self, bar: Dict[str, Any]) -> bool:
+        """
+        Validate a single bar for data quality.
+
+        Returns True if bar is valid, False if it should be filtered out.
+        """
+        try:
+            o, h, l, c, v = bar.get("open"), bar.get("high"), bar.get("low"), bar.get("close"), bar.get("volume")
+
+            # Check for None/zero values (invalid data)
+            if not all([o, h, l, c]) or any(x <= 0 for x in [o, h, l, c]):
+                return False
+
+            # Check OHLC relationship (high >= low, high >= open/close, low <= open/close)
+            if h < l or h < max(o, c) or l > min(o, c):
+                logger.debug(f"Invalid OHLC: O={o} H={h} L={l} C={c}")
+                return False
+
+            # Check for extreme values (likely bad data)
+            if h / l > 2.0:  # More than 100% range in single bar is suspicious
+                logger.debug(f"Extreme range: H/L ratio = {h/l:.2f}")
+                return False
+
+            # Volume should be non-negative (allow 0 for afterhours)
+            if v is not None and v < 0:
+                return False
+
+            return True
+        except Exception:
+            return False
+
+    def _validate_bars(self, bars: List[Dict[str, Any]], symbol: str) -> List[Dict[str, Any]]:
+        """
+        Validate and filter bars for data quality.
+
+        - Removes bars with invalid OHLC relationships
+        - Removes bars with extreme values (likely bad data)
+        - Logs warnings for significant data issues
+        """
+        if not bars:
+            return bars
+
+        original_count = len(bars)
+        valid_bars = [bar for bar in bars if self._validate_bar(bar)]
+        filtered_count = original_count - len(valid_bars)
+
+        if filtered_count > 0:
+            logger.warning(f"Data quality: {symbol} - filtered {filtered_count}/{original_count} invalid bars")
+
+        return valid_bars
+
     def _stabilize_bars(self, bars: List[Dict[str, Any]], bar_size: str) -> List[Dict[str, Any]]:
         """Drop the most recent bar if it's too fresh (late trades can revise it)."""
         duration = self._bar_duration_seconds(bar_size)
@@ -529,6 +580,8 @@ class AlpacaMarketDataProvider(MarketDataProvider):
                 for bar in bars_data[symbol]
             ]
 
+            # Apply data quality validation
+            bars = self._validate_bars(bars, symbol)
             bars = self._stabilize_bars(bars, bar_size)
 
             # Cache the results
