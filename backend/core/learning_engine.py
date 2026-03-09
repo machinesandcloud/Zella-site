@@ -279,10 +279,14 @@ class LearningEngine:
 
                 if avg_win_confidence > avg_loss_confidence + 0.05:
                     new_threshold = (avg_win_confidence + avg_loss_confidence) / 2
+                    # Cap threshold at 0.60 to prevent becoming too conservative
+                    new_threshold = min(new_threshold, 0.60)
+                    # Floor at 0.40 to maintain some quality
+                    new_threshold = max(new_threshold, 0.40)
                     adjustments["confidence_adjustments"]["recommended_threshold"] = round(new_threshold, 2)
                     adjustments["insights"].append(
                         f"💡 Winners avg confidence: {avg_win_confidence:.2f}, "
-                        f"Losers: {avg_loss_confidence:.2f} - Consider raising threshold"
+                        f"Losers: {avg_loss_confidence:.2f} - Threshold: {new_threshold:.2f}"
                     )
 
             # Analyze time of day patterns
@@ -362,8 +366,17 @@ class LearningEngine:
         return 1.0  # Default weight
 
     def get_recommended_confidence_threshold(self) -> float:
-        """Get the learned recommended confidence threshold."""
-        return self.state.confidence_adjustments.get("recommended_threshold", 0.70)
+        """Get the learned recommended confidence threshold.
+
+        For active day trading, we use a low default (0.45) to enable frequent trading.
+        The threshold can be learned from data but is capped at 0.60 to prevent
+        the bot from becoming too conservative after a losing streak.
+        """
+        learned = self.state.confidence_adjustments.get("recommended_threshold")
+        if learned is None:
+            return 0.45  # Low default for active day trading
+        # Cap at 0.60 - never let learning make us too conservative
+        return min(learned, 0.60)
 
     def should_trade_now(self, time_of_day: str) -> bool:
         """Check if trading is recommended for the current time based on learning."""

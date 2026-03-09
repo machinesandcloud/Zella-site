@@ -272,13 +272,15 @@ class AutonomousEngine:
         # Elite trading system (institutional-grade analysis)
         self.elite_system = EliteTradingSystem()
         self.elite_position_manager = ElitePositionManager()
+        # Active day trading requires higher limits
+        # Pro traders make 20-30+ trades/day - don't cap winners artificially
         self.discipline = TradingDisciplineEnforcer(
-            max_consecutive_losses=3,
-            loss_cooldown_minutes=5,
-            max_daily_winners=5,  # Quit while ahead
-            daily_loss_limit=500.0,
-            profit_protection_threshold=300.0,
-            max_drawdown_pct=30.0
+            max_consecutive_losses=5,  # Allow more losses before extended cooldown
+            loss_cooldown_minutes=2,   # Shorter cooldown - day trading is fast-paced
+            max_daily_winners=30,      # Allow many winners - don't quit early
+            daily_loss_limit=1000.0,   # Higher daily loss limit for active trading
+            profit_protection_threshold=500.0,  # Higher threshold before profit protection
+            max_drawdown_pct=40.0      # Allow more drawdown from peak
         )
 
         # Track SPY data for relative strength
@@ -646,6 +648,8 @@ class AutonomousEngine:
             rvol_large = 0.9 if in_midday else 1.0
             in_play_rvol = 1.6 if in_midday else 1.8
             in_play_mult = 0.4
+            # Active profile: Disable daily trend filter - trade momentum, not trend
+            self.screener.require_daily_trend = False
         elif profile == "balanced":
             rvol = 1.2 if in_midday else 1.4
             rvol_low = max(1.6, rvol + 0.4)
@@ -2940,7 +2944,7 @@ class AutonomousEngine:
                 )
                 continue
 
-            # Learning-based confidence adjustment
+            # Learning-based confidence adjustment (use average, not max, to stay active)
             learned_threshold = None
             try:
                 if hasattr(self, "learning_engine"):
@@ -2948,7 +2952,9 @@ class AutonomousEngine:
             except Exception:
                 learned_threshold = None
             if learned_threshold:
-                min_confidence = max(min_confidence, learned_threshold)
+                # Average our threshold with learned threshold (weighted 60/40 toward our setting)
+                # This prevents learning from making us too conservative
+                min_confidence = (min_confidence * 0.6) + (learned_threshold * 0.4)
 
             if adjusted_confidence < min_confidence:
                 self._add_decision(
