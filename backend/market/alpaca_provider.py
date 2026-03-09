@@ -26,11 +26,12 @@ logger = logging.getLogger("alpaca_provider")
 # Persistent watchlist file
 WATCHLIST_FILE = Path("data/custom_watchlist.json")
 
-# Performance configuration - SPEED IS EVERYTHING
-MAX_BACKOFF_SECONDS = 30  # Reduced from 60 - recover faster
-INITIAL_BACKOFF_SECONDS = 1  # Start smaller for faster recovery
-BATCH_SIZE = 100  # Alpaca max - fewer requests = faster total refresh
+# Performance configuration - balanced for rate limits
+MAX_BACKOFF_SECONDS = 60  # Allow time for rate limit recovery
+INITIAL_BACKOFF_SECONDS = 2  # Start with reasonable backoff
+BATCH_SIZE = 50  # Smaller batches to avoid rate limits
 BAR_STABILIZATION_SECONDS = 35  # Allow late trades to settle before using last bar
+MIN_REQUEST_INTERVAL = 0.2  # Minimum 200ms between requests to avoid rate limits
 
 
 class AlpacaMarketDataProvider(MarketDataProvider):
@@ -49,7 +50,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         api_key: str,
         secret_key: str,
         universe: Optional[List[str]] = None,
-        cache_ttl: float = 1.5,  # Fast refresh cycle (1.5s) - speed is everything
+        cache_ttl: float = 5.0,  # Balanced refresh cycle (5s) - avoid rate limits
         data_feed: str = "iex",
     ) -> None:
         """
@@ -347,14 +348,17 @@ class AlpacaMarketDataProvider(MarketDataProvider):
 
             all_quotes = {}
 
-            # Sequential fetching (parallel can cause rate limits)
-            for batch in batches:
+            # Sequential fetching with delays to avoid rate limits
+            for i, batch in enumerate(batches):
                 if self._is_rate_limited():
                     break  # Stop if we hit rate limit
 
                 try:
                     batch_quotes = self._fetch_batch(batch)
                     all_quotes.update(batch_quotes)
+                    # Add delay between batches to avoid rate limits
+                    if i < len(batches) - 1:
+                        time.sleep(MIN_REQUEST_INTERVAL)
                 except Exception as e:
                     self._handle_rate_limit_error(e)
                     break
