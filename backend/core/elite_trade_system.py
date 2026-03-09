@@ -607,20 +607,18 @@ class PositionManager:
                 level["executed"] = True
                 plan.remaining_quantity -= level["quantity"]
 
-                # Activate breakeven after 1R
+                # Activate breakeven AND trailing after 1R (more aggressive profit protection)
                 if level["level"] == "1R" and not plan.breakeven_activated:
                     plan.current_stop = entry_price
                     plan.breakeven_activated = True
+                    plan.trailing_activated = True  # Activate trailing early at 1R
                     actions.append({
                         "action": "MOVE_STOP_TO_BREAKEVEN",
                         "new_stop": entry_price
                     })
-
-                # Activate trailing after 2R
-                if level["level"] == "2R" and not plan.trailing_activated:
-                    plan.trailing_activated = True
                     actions.append({
-                        "action": "ACTIVATE_TRAILING_STOP"
+                        "action": "ACTIVATE_TRAILING_STOP",
+                        "reason": "Early activation at 1R for profit protection"
                     })
 
         return actions

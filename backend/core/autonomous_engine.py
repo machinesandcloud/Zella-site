@@ -2739,6 +2739,86 @@ class AutonomousEngine:
 
         return True, ""
 
+    def _detect_market_regime(self) -> str:
+        """
+        Detect current market regime based on SPY behavior.
+
+        Returns:
+            "TRENDING_UP" - Strong uptrend, favor longs
+            "TRENDING_DOWN" - Strong downtrend, favor shorts
+            "CHOPPY" - Range-bound, require higher confidence
+            "EXTREME_VOLATILITY" - Don't trade
+            "UNKNOWN" - Not enough data
+        """
+        try:
+            with self._cache_lock:
+                spy_data = self._spy_data_cache
+
+            if spy_data is None or len(spy_data) < 20:
+                return "UNKNOWN"
+
+            # Calculate key metrics
+            spy_close = spy_data["close"].astype(float)
+            spy_high = spy_data["high"].astype(float)
+            spy_low = spy_data["low"].astype(float)
+
+            current_price = float(spy_close.iloc[-1])
+            open_price = float(spy_data.iloc[0].get("open", current_price))
+
+            # Calculate VWAP approximation (typical price * volume weighted)
+            if "volume" in spy_data.columns:
+                typical_price = (spy_high + spy_low + spy_close) / 3
+                cumulative_tpv = (typical_price * spy_data["volume"].astype(float)).cumsum()
+                cumulative_vol = spy_data["volume"].astype(float).cumsum()
+                vwap_series = cumulative_tpv / cumulative_vol
+                spy_vwap = float(vwap_series.iloc[-1])
+            else:
+                spy_vwap = current_price
+
+            # Calculate intraday range
+            day_high = float(spy_high.max())
+            day_low = float(spy_low.min())
+            day_range_pct = ((day_high - day_low) / day_low * 100) if day_low > 0 else 0
+
+            # Calculate trend (price vs VWAP and open)
+            above_vwap = current_price > spy_vwap
+            above_open = current_price > open_price
+            change_pct = ((current_price - open_price) / open_price * 100) if open_price > 0 else 0
+
+            # EXTREME VOLATILITY: >2.5% range in single day
+            if day_range_pct > 2.5:
+                return "EXTREME_VOLATILITY"
+
+            # TRENDING UP: Above VWAP, above open, >0.3% gain
+            if above_vwap and above_open and change_pct > 0.3:
+                return "TRENDING_UP"
+
+            # TRENDING DOWN: Below VWAP, below open, >0.3% loss
+            if not above_vwap and not above_open and change_pct < -0.3:
+                return "TRENDING_DOWN"
+
+            # CHOPPY: Price crossing VWAP multiple times or small range
+            # Count VWAP crosses in last 10 bars
+            if len(spy_close) >= 10 and len(vwap_series) >= 10:
+                recent_close = spy_close.tail(10).values
+                recent_vwap = vwap_series.tail(10).values
+                crosses = 0
+                for i in range(1, len(recent_close)):
+                    if (recent_close[i] > recent_vwap[i]) != (recent_close[i-1] > recent_vwap[i-1]):
+                        crosses += 1
+                if crosses >= 3:  # 3+ VWAP crosses = choppy
+                    return "CHOPPY"
+
+            # Default to UNKNOWN if no clear regime
+            if abs(change_pct) < 0.2:
+                return "CHOPPY"
+
+            return "UNKNOWN"
+
+        except Exception as e:
+            logger.debug(f"Market regime detection error: {e}")
+            return "UNKNOWN"
+
     async def _execute_trades(self, opportunities: List[Dict[str, Any]]):
         """
         Execute trades for top opportunities using Warrior Trading position sizing
@@ -2755,6 +2835,41 @@ class AutonomousEngine:
         if not can_trade:
             logger.warning(f"🚨 {circuit_reason}")
             self._add_decision("CIRCUIT_BREAKER", circuit_reason, "HALT", {})
+            return
+
+        # TIME-OF-DAY FILTER: Avoid dangerous trading periods
+        now = datetime.now()
+        mins_open = minutes_since_open(now=now)
+
+        # Avoid first 5 minutes (too volatile, spreads wide)
+        if mins_open < 5:
+            self._add_decision("TIME_FILTER", "Skipping first 5 minutes - spreads too wide", "INFO", {"minutes_open": mins_open})
+            return
+
+        # Avoid lunch chop (11:30-1:00 ET = 120-210 minutes after open)
+        if 120 <= mins_open <= 210:
+            # Still allow high-confidence trades during lunch
+            opportunities = [o for o in opportunities if o.get("confidence", 0) >= 0.70]
+            if not opportunities:
+                self._add_decision("TIME_FILTER", "Lunch chop filter - only high confidence trades allowed", "INFO", {"minutes_open": mins_open})
+                return
+
+        # Avoid last 5 minutes (erratic, EOD orders)
+        if mins_open >= 385:  # 6.5 hours = 390 minutes, so 385 = last 5 mins
+            self._add_decision("TIME_FILTER", "Skipping last 5 minutes - EOD volatility", "INFO", {"minutes_open": mins_open})
+            return
+
+        # MARKET REGIME DETECTION: Check SPY trend
+        market_regime = self._detect_market_regime()
+        if market_regime == "CHOPPY":
+            # In choppy markets, require higher confidence
+            opportunities = [o for o in opportunities if o.get("confidence", 0) >= 0.65]
+            if not opportunities:
+                self._add_decision("REGIME_FILTER", "Choppy market - only high confidence trades", "INFO", {"regime": market_regime})
+                return
+        elif market_regime == "EXTREME_VOLATILITY":
+            # Don't trade in extreme conditions
+            self._add_decision("REGIME_FILTER", "Extreme volatility detected - halting new entries", "HALT", {"regime": market_regime})
             return
 
         account = self.broker.get_account_summary()
