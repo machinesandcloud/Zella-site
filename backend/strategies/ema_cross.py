@@ -84,19 +84,19 @@ class EMACrossStrategy(BaseStrategy):
         # BUY Signal: Golden Cross (fast crosses above slow)
         if prev_fast <= prev_slow and current_fast > current_slow:
             # Confidence based on crossover strength
-            spread_confidence = min(0.3, abs(ema_spread) / 3.0)  # Stronger spread = more confident
-            slope_confidence = min(0.3, max(0, fast_slope) / 2.0)  # Upward slope helps
-            vol_confidence = min(0.2, (volume_ratio - 1) * 0.1) if volume_ratio > 1 else 0
+            spread_bonus = min(0.15, abs(ema_spread) / 2.0)
+            slope_bonus = min(0.15, max(0, fast_slope) / 1.5)
+            vol_bonus = min(0.10, (volume_ratio - 1) * 0.1) if volume_ratio > 1 else 0
 
-            confidence = 0.4 + spread_confidence + slope_confidence + vol_confidence
+            confidence = 0.50 + spread_bonus + slope_bonus + vol_bonus
 
             self._last_signal = "BUY"
             return {
                 "action": "BUY",
-                "confidence": min(0.95, confidence),
-                "reason": f"Golden Cross: EMA{self.fast_ema} (${current_fast:.2f}) crossed above EMA{self.slow_ema} (${current_slow:.2f})",
-                "stop_loss": current_price - (atr_val * 2),
-                "take_profit": current_price + (atr_val * 3),
+                "confidence": min(0.85, confidence),
+                "reason": f"Golden Cross: EMA{self.fast_ema} > EMA{self.slow_ema}",
+                "stop_loss": current_price - (atr_val * 1.5),  # Tighter stop
+                "take_profit": current_price + (atr_val * 2.5),
                 "indicators": {
                     "fast_ema": round(current_fast, 2),
                     "slow_ema": round(current_slow, 2),
@@ -112,19 +112,19 @@ class EMACrossStrategy(BaseStrategy):
 
         # SELL Signal: Death Cross (fast crosses below slow)
         if prev_fast >= prev_slow and current_fast < current_slow:
-            spread_confidence = min(0.3, abs(ema_spread) / 3.0)
-            slope_confidence = min(0.3, max(0, -fast_slope) / 2.0)  # Downward slope helps
-            vol_confidence = min(0.2, (volume_ratio - 1) * 0.1) if volume_ratio > 1 else 0
+            spread_bonus = min(0.15, abs(ema_spread) / 2.0)
+            slope_bonus = min(0.15, max(0, -fast_slope) / 1.5)
+            vol_bonus = min(0.10, (volume_ratio - 1) * 0.1) if volume_ratio > 1 else 0
 
-            confidence = 0.4 + spread_confidence + slope_confidence + vol_confidence
+            confidence = 0.50 + spread_bonus + slope_bonus + vol_bonus
 
             self._last_signal = "SELL"
             return {
                 "action": "SELL",
-                "confidence": min(0.95, confidence),
-                "reason": f"Death Cross: EMA{self.fast_ema} (${current_fast:.2f}) crossed below EMA{self.slow_ema} (${current_slow:.2f})",
-                "stop_loss": current_price + (atr_val * 2),
-                "take_profit": current_price - (atr_val * 3),
+                "confidence": min(0.85, confidence),
+                "reason": f"Death Cross: EMA{self.fast_ema} < EMA{self.slow_ema}",
+                "stop_loss": current_price + (atr_val * 1.5),  # Tighter stop
+                "take_profit": current_price - (atr_val * 2.5),
                 "indicators": {
                     "fast_ema": round(current_fast, 2),
                     "slow_ema": round(current_slow, 2),

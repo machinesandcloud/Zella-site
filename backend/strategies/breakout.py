@@ -40,7 +40,7 @@ class BreakoutStrategy(BaseStrategy):
         super().__init__(config)
         params = config.get("parameters", {})
         self.breakout_lookback = int(params.get("breakout_lookback", 20))
-        self.volume_threshold = float(params.get("volume_threshold", 1.5))
+        self.volume_threshold = float(params.get("volume_threshold", 1.0))  # Reduced from 1.5
         self.quantity = int(params.get("quantity", 1))
 
     def generate_signals(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
@@ -74,21 +74,21 @@ class BreakoutStrategy(BaseStrategy):
         breakout_above = (current_price - resistance) / resistance * 100 if current_price > resistance else 0
         breakdown_below = (support - current_price) / support * 100 if current_price < support else 0
 
-        # BUY Signal: Price breaks above resistance with volume
+        # BUY Signal: Price breaks above resistance
         if current_price > resistance and volume_ratio >= self.volume_threshold:
-            # Confidence based on breakout strength
-            magnitude_confidence = min(0.3, breakout_above / 3.0)  # Up to 3% breakout
-            volume_confidence = min(0.3, (volume_ratio - 1) / 3.0)  # Up to 4x volume
-            base_confidence = 0.4
+            # Higher base + bonuses
+            magnitude_bonus = min(0.15, breakout_above / 2.0)
+            volume_bonus = min(0.15, (volume_ratio - 1) / 2.0)
+            base_confidence = 0.50
 
-            confidence = base_confidence + magnitude_confidence + volume_confidence
+            confidence = base_confidence + magnitude_bonus + volume_bonus
 
             return {
                 "action": "BUY",
-                "confidence": min(0.95, confidence),
-                "reason": f"Breakout: Price ${current_price:.2f} broke above resistance ${resistance:.2f} (+{breakout_above:.1f}%), Vol {volume_ratio:.1f}x",
-                "stop_loss": resistance - (atr_val * 0.5),  # Stop just below breakout level
-                "take_profit": current_price + (range_size * 1.0),  # Target = range size
+                "confidence": min(0.85, confidence),
+                "reason": f"Breakout: ${current_price:.2f} > ${resistance:.2f} (+{breakout_above:.1f}%)",
+                "stop_loss": resistance - (atr_val * 0.3),  # Tight stop at breakout level
+                "take_profit": current_price + (range_size * 1.5),  # 1.5x range target
                 "indicators": {
                     "resistance": round(resistance, 2),
                     "support": round(support, 2),
@@ -101,20 +101,20 @@ class BreakoutStrategy(BaseStrategy):
                 }
             }
 
-        # SELL Signal: Price breaks below support with volume
+        # SELL Signal: Price breaks below support
         if current_price < support and volume_ratio >= self.volume_threshold:
-            magnitude_confidence = min(0.3, breakdown_below / 3.0)
-            volume_confidence = min(0.3, (volume_ratio - 1) / 3.0)
-            base_confidence = 0.4
+            magnitude_bonus = min(0.15, breakdown_below / 2.0)
+            volume_bonus = min(0.15, (volume_ratio - 1) / 2.0)
+            base_confidence = 0.50
 
-            confidence = base_confidence + magnitude_confidence + volume_confidence
+            confidence = base_confidence + magnitude_bonus + volume_bonus
 
             return {
                 "action": "SELL",
-                "confidence": min(0.95, confidence),
-                "reason": f"Breakdown: Price ${current_price:.2f} broke below support ${support:.2f} (-{breakdown_below:.1f}%), Vol {volume_ratio:.1f}x",
-                "stop_loss": support + (atr_val * 0.5),
-                "take_profit": current_price - (range_size * 1.0),
+                "confidence": min(0.85, confidence),
+                "reason": f"Breakdown: ${current_price:.2f} < ${support:.2f} (-{breakdown_below:.1f}%)",
+                "stop_loss": support + (atr_val * 0.3),  # Tight stop
+                "take_profit": current_price - (range_size * 1.5),
                 "indicators": {
                     "resistance": round(resistance, 2),
                     "support": round(support, 2),

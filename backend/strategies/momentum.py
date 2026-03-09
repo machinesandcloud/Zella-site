@@ -37,12 +37,9 @@ class MomentumStrategy(BaseStrategy):
 
     def generate_signals(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         """
-        Generate momentum signal with full calculation details.
+        Generate momentum signal - ride strong moves with tight stops.
 
-        QUALITY FILTERS:
-        - Require meaningful momentum (>2% for higher quality)
-        - Require volume confirmation (>1.2x avg)
-        - Require positive acceleration (momentum accelerating, not decelerating)
+        Day trading approach: Jump on strong moves, exit fast if momentum fades.
         """
         if df is None or len(df) < self.momentum_lookback + 5:
             return None
@@ -55,7 +52,7 @@ class MomentumStrategy(BaseStrategy):
 
         momentum = ((current_price - past_price) / past_price) * 100
 
-        # Calculate acceleration (is momentum increasing or decreasing?)
+        # Calculate acceleration (momentum of momentum)
         if len(df) >= self.momentum_lookback + 5:
             prev_momentum = ((df["close"].iloc[-2] - df["close"].iloc[-2 - self.momentum_lookback]) /
                            df["close"].iloc[-2 - self.momentum_lookback]) * 100
@@ -63,33 +60,34 @@ class MomentumStrategy(BaseStrategy):
         else:
             acceleration = 0
 
-        # Volume analysis
+        # Volume analysis (bonus, not requirement)
         vol_avg = df["volume"].tail(20).mean() if len(df) >= 20 else df["volume"].mean()
         volume_ratio = df["volume"].iloc[-1] / vol_avg if vol_avg > 0 else 1.0
 
-        # QUALITY FILTER 1: Require volume confirmation
-        if volume_ratio < 1.2:
-            return None
-
-        # Calculate ATR
+        # Calculate ATR for tight stops
         atr_val = atr(df, 14).iloc[-1] if len(df) >= 14 else current_price * 0.02
 
-        # Increase minimum momentum for higher quality signals
-        effective_min_momentum = max(self.min_momentum, 2.0)
+        # Use configured minimum momentum (default 1.5%)
+        min_mom = self.min_momentum
 
-        # BUY Signal - require positive acceleration
-        if momentum >= effective_min_momentum and acceleration >= 0:
-            momentum_confidence = min(0.30, (momentum - effective_min_momentum) / 6.0)
-            accel_confidence = min(0.15, acceleration / 1.0) if acceleration > 0 else 0
-            volume_confidence = min(0.15, (volume_ratio - 1.2) / 2.0) if volume_ratio > 1.2 else 0
-            confidence = 0.35 + momentum_confidence + accel_confidence + volume_confidence
+        # BUY Signal - strong upward momentum
+        if momentum >= min_mom:
+            # Higher base + bonuses
+            momentum_bonus = min(0.20, (momentum - min_mom) / 4.0)
+            accel_bonus = min(0.10, acceleration / 1.0) if acceleration > 0 else 0
+            volume_bonus = min(0.10, (volume_ratio - 1.0) / 2.0) if volume_ratio > 1.0 else 0
+            confidence = 0.50 + momentum_bonus + accel_bonus + volume_bonus
+
+            # Tight ATR-based stops for day trading
+            stop_loss = current_price - (atr_val * 1.5)  # Tighter stop
+            take_profit = current_price + (atr_val * 2.5)  # 1.67R target
 
             return {
                 "action": "BUY",
-                "confidence": min(0.90, confidence),
-                "reason": f"Momentum: +{momentum:.1f}% ({self.momentum_lookback} bars), accel +{acceleration:.2f}%, vol {volume_ratio:.1f}x",
-                "stop_loss": current_price - (atr_val * 2),
-                "take_profit": current_price + (atr_val * 3),
+                "confidence": min(0.85, confidence),
+                "reason": f"Momentum +{momentum:.1f}% (accel {acceleration:+.1f}%)",
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
                 "indicators": {
                     "momentum_pct": round(momentum, 2),
                     "acceleration": round(acceleration, 2),
@@ -99,19 +97,22 @@ class MomentumStrategy(BaseStrategy):
                 }
             }
 
-        # SELL Signal - require negative acceleration
-        if momentum <= -effective_min_momentum and acceleration <= 0:
-            momentum_confidence = min(0.30, (abs(momentum) - effective_min_momentum) / 6.0)
-            accel_confidence = min(0.15, abs(acceleration) / 1.0) if acceleration < 0 else 0
-            volume_confidence = min(0.15, (volume_ratio - 1.2) / 2.0) if volume_ratio > 1.2 else 0
-            confidence = 0.35 + momentum_confidence + accel_confidence + volume_confidence
+        # SELL Signal - strong downward momentum
+        if momentum <= -min_mom:
+            momentum_bonus = min(0.20, (abs(momentum) - min_mom) / 4.0)
+            accel_bonus = min(0.10, abs(acceleration) / 1.0) if acceleration < 0 else 0
+            volume_bonus = min(0.10, (volume_ratio - 1.0) / 2.0) if volume_ratio > 1.0 else 0
+            confidence = 0.50 + momentum_bonus + accel_bonus + volume_bonus
+
+            stop_loss = current_price + (atr_val * 1.5)
+            take_profit = current_price - (atr_val * 2.5)
 
             return {
                 "action": "SELL",
-                "confidence": min(0.90, confidence),
-                "reason": f"Momentum: {momentum:.1f}% ({self.momentum_lookback} bars), accel {acceleration:.2f}%, vol {volume_ratio:.1f}x",
-                "stop_loss": current_price + (atr_val * 2),
-                "take_profit": current_price - (atr_val * 3),
+                "confidence": min(0.85, confidence),
+                "reason": f"Momentum {momentum:.1f}% (accel {acceleration:+.1f}%)",
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
                 "indicators": {
                     "momentum_pct": round(momentum, 2),
                     "acceleration": round(acceleration, 2),

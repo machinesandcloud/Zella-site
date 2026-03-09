@@ -35,8 +35,8 @@ class VWAPBounceStrategy(BaseStrategy):
         super().__init__(config)
         params = config.get("parameters", {})
         self.vwap_period = int(params.get("vwap_period", 20))
-        self.volume_threshold = float(params.get("volume_threshold", 1.5))
-        self.min_wick_percent = float(params.get("min_wick_percent", 2))
+        self.volume_threshold = float(params.get("volume_threshold", 1.0))  # Reduced from 1.5
+        self.min_wick_percent = float(params.get("min_wick_percent", 0.5))  # Reduced from 2.0
         self.quantity = int(params.get("quantity", 1))
 
     def generate_signals(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
@@ -82,10 +82,10 @@ class VWAPBounceStrategy(BaseStrategy):
 
             return {
                 "action": "BUY",
-                "confidence": min(0.95, confidence),
-                "reason": f"VWAP bounce: Price ${last['close']:.2f} crossed above VWAP ${current_vwap:.2f}, Volume {volume_ratio:.1f}x avg",
-                "stop_loss": last["close"] - (atr_val * 2),
-                "take_profit": last["close"] + (atr_val * 3),
+                "confidence": min(0.85, confidence),
+                "reason": f"VWAP Bounce: ${last['close']:.2f} > VWAP ${current_vwap:.2f}",
+                "stop_loss": last["close"] - (atr_val * 1.5),  # Tighter stop
+                "take_profit": last["close"] + (atr_val * 2.5),
                 "indicators": {
                     "vwap": round(current_vwap, 2),
                     "price": round(last["close"], 2),
@@ -109,10 +109,10 @@ class VWAPBounceStrategy(BaseStrategy):
 
             return {
                 "action": "SELL",
-                "confidence": min(0.95, confidence),
-                "reason": f"VWAP breakdown: Price ${last['close']:.2f} crossed below VWAP ${current_vwap:.2f}, Volume {volume_ratio:.1f}x avg",
-                "stop_loss": last["close"] + (atr_val * 2),
-                "take_profit": last["close"] - (atr_val * 3),
+                "confidence": min(0.85, confidence),
+                "reason": f"VWAP Break: ${last['close']:.2f} < VWAP ${current_vwap:.2f}",
+                "stop_loss": last["close"] + (atr_val * 1.5),  # Tighter stop
+                "take_profit": last["close"] - (atr_val * 2.5),
                 "indicators": {
                     "vwap": round(current_vwap, 2),
                     "price": round(last["close"], 2),

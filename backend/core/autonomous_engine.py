@@ -198,14 +198,15 @@ class AutonomousEngine:
         self.max_positions = self.config.get("max_positions", 5)
         self.enabled_strategies = self.config.get("enabled_strategies", "ALL")
         self.trade_frequency_profile = (
-            self.config.get("trade_frequency_profile") or settings.trade_frequency_profile or "balanced"
+            self.config.get("trade_frequency_profile") or settings.trade_frequency_profile or "active"
         ).lower()
+        # Day trading requires more trades - lower thresholds to increase frequency
         if self.trade_frequency_profile == "active":
-            self.min_confidence_threshold = 0.60
+            self.min_confidence_threshold = 0.45  # Allow more trades with tight stops
         elif self.trade_frequency_profile == "conservative":
-            self.min_confidence_threshold = 0.70
-        else:
-            self.min_confidence_threshold = 0.65
+            self.min_confidence_threshold = 0.55
+        else:  # balanced
+            self.min_confidence_threshold = 0.50
         self.time_stop_minutes = self.config.get("time_stop_minutes", 12)
         self.time_stop_min_pnl = self.config.get("time_stop_min_pnl", 0.2)  # percent
         self.max_hold_minutes = self.config.get("max_hold_minutes", 25)
@@ -2796,23 +2797,23 @@ class AutonomousEngine:
             except Exception:
                 pass
 
-            # TIGHTENED THRESHOLDS - Reduce losses by being more selective
-            # Day trading requires HIGH conviction entries only
+            # DAY TRADING THRESHOLDS - Trade frequently with tight risk management
+            # Key insight: Pro day traders trade 20-40x/day with small size and tight stops
             if in_power_hour:
-                # Still slightly lower during power hour but not reckless
-                min_confidence = 0.65 if self.risk_posture == "AGGRESSIVE" else 0.72 if self.risk_posture == "BALANCED" else 0.80
+                # Power hour = more volatility = slightly higher confidence needed
+                min_confidence = 0.50 if self.risk_posture == "AGGRESSIVE" else 0.55 if self.risk_posture == "BALANCED" else 0.60
                 min_strategies = 1  # Independent strategy mode
             else:
-                # Normal hours: Higher standards
-                min_confidence = 0.70 if self.risk_posture == "AGGRESSIVE" else 0.75 if self.risk_posture == "BALANCED" else 0.85
+                # Normal hours: Standard day trading thresholds
+                min_confidence = 0.45 if self.risk_posture == "AGGRESSIVE" else 0.50 if self.risk_posture == "BALANCED" else 0.55
                 min_strategies = 1  # Independent strategy mode
 
-            # Trade frequency profile adjustments (safe loosening)
+            # Trade frequency profile adjustments
             if self.trade_frequency_profile == "active":
-                min_confidence -= 0.05
+                min_confidence -= 0.05  # Even more trades
                 min_strategies = 1
-            elif self.trade_frequency_profile == "balanced":
-                min_confidence -= 0.02
+            elif self.trade_frequency_profile == "conservative":
+                min_confidence += 0.05  # Fewer but higher quality
 
             # Global minimum - never trade below this regardless of settings
             if adjusted_confidence < self.min_confidence_threshold:
