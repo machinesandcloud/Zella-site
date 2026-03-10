@@ -90,10 +90,16 @@ const TradeHistory = () => {
     return () => clearInterval(interval);
   }, [days]);
 
-  const totalPnl = trades.reduce((sum, t) => sum + toNumber(t.pnl, 0), 0);
-  const wins = trades.filter((t) => toNumber(t.pnl, 0) > 0).length;
-  const losses = trades.filter((t) => toNumber(t.pnl, 0) < 0).length;
-  const winRate = trades.length ? Math.round((wins / trades.length) * 100) : 0;
+  const closedTrades = trades.filter((trade) => {
+    const status = (trade.status || "").toLowerCase();
+    if (status === "open") return false;
+    return status === "closed" || Boolean(trade.exit_time);
+  });
+  const openTrades = trades.length - closedTrades.length;
+  const totalPnl = closedTrades.reduce((sum, t) => sum + toNumber(t.pnl, 0), 0);
+  const wins = closedTrades.filter((t) => toNumber(t.pnl, 0) > 0).length;
+  const losses = closedTrades.filter((t) => toNumber(t.pnl, 0) < 0).length;
+  const winRate = closedTrades.length ? Math.round((wins / closedTrades.length) * 100) : 0;
 
   return (
     <Card elevation={0} sx={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 3 }}>
@@ -116,7 +122,7 @@ const TradeHistory = () => {
         {/* Summary Stats */}
         <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
           <Box sx={{ p: 2, borderRadius: 2, bgcolor: "rgba(255,255,255,0.03)", flex: 1, textAlign: "center" }}>
-            <Typography variant="caption" color="text.secondary">Total P&L</Typography>
+            <Typography variant="caption" color="text.secondary">Closed P&L</Typography>
             <Typography
               variant="h6"
               sx={{
@@ -129,8 +135,10 @@ const TradeHistory = () => {
             </Typography>
           </Box>
           <Box sx={{ p: 2, borderRadius: 2, bgcolor: "rgba(255,255,255,0.03)", flex: 1, textAlign: "center" }}>
-            <Typography variant="caption" color="text.secondary">Trades</Typography>
-            <Typography variant="h6" sx={{ fontWeight: 700 }}>{trades.length}</Typography>
+            <Typography variant="caption" color="text.secondary">Trades (Closed / Open)</Typography>
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              {closedTrades.length} / {openTrades}
+            </Typography>
           </Box>
           <Box sx={{ p: 2, borderRadius: 2, bgcolor: "rgba(255,255,255,0.03)", flex: 1, textAlign: "center" }}>
             <Typography variant="caption" color="text.secondary">Win Rate</Typography>
