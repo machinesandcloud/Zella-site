@@ -31,6 +31,7 @@ type TradeRow = {
   entry_price?: number;
   exit_price?: number;
   strategy_name?: string;
+  strategies?: string;
   confidence?: number;
   setup_grade?: string;
 };
@@ -56,10 +57,21 @@ const formatDateTime = (dateStr?: string): string => {
   });
 };
 
-const TradeHistory = () => {
+type TradeHistoryProps = {
+  days?: number;
+  onDaysChange?: (days: number) => void;
+};
+
+const TradeHistory = ({ days: controlledDays, onDaysChange }: TradeHistoryProps) => {
   const [trades, setTrades] = useState<TradeRow[]>([]);
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState(controlledDays ?? 7);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (controlledDays && controlledDays !== days) {
+      setDays(controlledDays);
+    }
+  }, [controlledDays, days]);
 
   useEffect(() => {
     const cacheKey = `zella_trades_recent_${days}`;
@@ -111,9 +123,14 @@ const TradeHistory = () => {
             size="small"
             value={days}
             exclusive
-            onChange={(_, value) => value && setDays(value)}
+            onChange={(_, value) => {
+              if (!value) return;
+              setDays(value);
+              onDaysChange?.(value);
+            }}
           >
             <ToggleButton value={1}>Today</ToggleButton>
+            <ToggleButton value={3}>3 Days</ToggleButton>
             <ToggleButton value={7}>7 Days</ToggleButton>
             <ToggleButton value={30}>30 Days</ToggleButton>
           </ToggleButtonGroup>
@@ -254,16 +271,41 @@ const TradeHistory = () => {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        {trade.strategy_name ? (
-                          <Chip
-                            label={trade.strategy_name}
-                            size="small"
-                            variant="outlined"
-                            sx={{ height: 20, fontSize: "0.65rem" }}
-                          />
-                        ) : (
-                          <Typography variant="caption" color="text.secondary">-</Typography>
-                        )}
+                        {(() => {
+                          const strategyList = (trade.strategies || "")
+                            .split(",")
+                            .map((s) => s.trim())
+                            .filter(Boolean);
+                          const primary = trade.strategy_name || strategyList[0];
+                          if (!primary) {
+                            return <Typography variant="caption" color="text.secondary">-</Typography>;
+                          }
+                          const extras = strategyList.filter((s) => s !== primary);
+                          return (
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <Chip
+                                label={primary}
+                                size="small"
+                                variant="outlined"
+                                sx={{ height: 20, fontSize: "0.65rem" }}
+                              />
+                              {extras.length > 0 && (
+                                <Tooltip title={`Also: ${extras.join(", ")}`}>
+                                  <Chip
+                                    label={`+${extras.length}`}
+                                    size="small"
+                                    sx={{
+                                      height: 20,
+                                      fontSize: "0.65rem",
+                                      bgcolor: "rgba(255,255,255,0.08)",
+                                      color: "text.secondary"
+                                    }}
+                                  />
+                                </Tooltip>
+                              )}
+                            </Stack>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell>
                         <Typography variant="caption" color="text.secondary">

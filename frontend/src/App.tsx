@@ -51,6 +51,8 @@ const RECONNECT_RETRY_INTERVAL = 1000;
 
 const App = () => {
   const [tab, setTab] = useState(0);
+  const [tradeHistoryDays, setTradeHistoryDays] = useState(30);
+  const [strategyPeriod, setStrategyPeriod] = useState<"daily" | "three_day" | "weekly" | "monthly" | "all_time">("monthly");
   const [authRequired, setAuthRequired] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem("zella_token"));
   const [alpacaStatus, setAlpacaStatus] = useState<{
@@ -517,10 +519,38 @@ const App = () => {
         {tab === 2 && (
           <Grid container spacing={3}>
             <Grid item xs={12}>
-              <StrategyPerformancePanel />
+              <StrategyPerformancePanel
+                period={strategyPeriod}
+                onPeriodChange={(period) => {
+                  setStrategyPeriod(period);
+                  const map: Record<string, number> = {
+                    daily: 1,
+                    three_day: 3,
+                    weekly: 7,
+                    monthly: 30
+                  };
+                  if (map[period]) {
+                    setTradeHistoryDays(map[period]);
+                  }
+                }}
+              />
             </Grid>
             <Grid item xs={12}>
-              <TradeHistory />
+              <TradeHistory
+                days={tradeHistoryDays}
+                onDaysChange={(days) => {
+                  setTradeHistoryDays(days);
+                  const map: Record<number, "daily" | "three_day" | "weekly" | "monthly"> = {
+                    1: "daily",
+                    3: "three_day",
+                    7: "weekly",
+                    30: "monthly"
+                  };
+                  if (map[days]) {
+                    setStrategyPeriod(map[days]);
+                  }
+                }}
+              />
             </Grid>
           </Grid>
         )}

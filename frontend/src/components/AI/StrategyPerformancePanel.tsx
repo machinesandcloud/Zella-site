@@ -65,6 +65,7 @@ interface Trade {
   exit_time: string | null;
   status: string | null;
   strategy_name: string | null;
+  strategies?: string | null;
 }
 
 type TimePeriod = "daily" | "three_day" | "weekly" | "monthly" | "all_time";
@@ -89,11 +90,16 @@ const formatDateTime = (dateStr: string | null) => {
   });
 };
 
-const StrategyPerformancePanel = () => {
+type StrategyPerformancePanelProps = {
+  period?: TimePeriod;
+  onPeriodChange?: (period: TimePeriod) => void;
+};
+
+const StrategyPerformancePanel = ({ period, onPeriodChange }: StrategyPerformancePanelProps) => {
   const [strategies, setStrategies] = useState<StrategyPerformance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedPeriod, setSelectedPeriod] = useState<TimePeriod>("monthly");
+  const [selectedPeriod, setSelectedPeriod] = useState<TimePeriod>(period ?? "monthly");
   const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
   const [strategyTrades, setStrategyTrades] = useState<Record<string, Trade[]>>({});
   const [tradesLoading, setTradesLoading] = useState<string | null>(null);
@@ -188,6 +194,12 @@ const StrategyPerformancePanel = () => {
     };
   }, [fetchPerformance]);
 
+  useEffect(() => {
+    if (period && period !== selectedPeriod) {
+      setSelectedPeriod(period);
+    }
+  }, [period, selectedPeriod]);
+
   const toggleStrategy = (strategyName: string) => {
     if (expandedStrategy === strategyName) {
       setExpandedStrategy(null);
@@ -264,7 +276,11 @@ const StrategyPerformancePanel = () => {
         {/* Period Tabs */}
         <Tabs
           value={selectedPeriod}
-          onChange={(_, newValue) => setSelectedPeriod(newValue)}
+          onChange={(_, newValue) => {
+            const nextPeriod = newValue as TimePeriod;
+            setSelectedPeriod(nextPeriod);
+            onPeriodChange?.(nextPeriod);
+          }}
           sx={{ mb: 2, borderBottom: "1px solid rgba(255,255,255,0.1)" }}
           variant="scrollable"
           scrollButtons="auto"
@@ -462,6 +478,7 @@ const StrategyPerformancePanel = () => {
                                     <TableHead>
                                       <TableRow>
                                         <TableCell sx={{ fontSize: "0.75rem" }}>Symbol</TableCell>
+                                        <TableCell sx={{ fontSize: "0.75rem" }}>Strategies</TableCell>
                                         <TableCell sx={{ fontSize: "0.75rem" }}>Action</TableCell>
                                         <TableCell align="right" sx={{ fontSize: "0.75rem" }}>Qty</TableCell>
                                         <TableCell align="right" sx={{ fontSize: "0.75rem" }}>Entry</TableCell>
@@ -477,6 +494,43 @@ const StrategyPerformancePanel = () => {
                                             <Typography variant="caption" sx={{ fontWeight: 600 }}>
                                               {trade.symbol}
                                             </Typography>
+                                          </TableCell>
+                                          <TableCell>
+                                            {(() => {
+                                              const list = (trade.strategies || "")
+                                                .split(",")
+                                                .map((s) => s.trim())
+                                                .filter(Boolean);
+                                              const primary = trade.strategy_name || list[0];
+                                              if (!primary) {
+                                                return <Typography variant="caption" color="text.secondary">-</Typography>;
+                                              }
+                                              const extras = list.filter((s) => s !== primary);
+                                              return (
+                                                <Stack direction="row" spacing={0.5} alignItems="center">
+                                                  <Chip
+                                                    label={primary}
+                                                    size="small"
+                                                    variant="outlined"
+                                                    sx={{ height: 18, fontSize: "0.6rem" }}
+                                                  />
+                                                  {extras.length > 0 && (
+                                                    <Tooltip title={`Also: ${extras.join(", ")}`}>
+                                                      <Chip
+                                                        label={`+${extras.length}`}
+                                                        size="small"
+                                                        sx={{
+                                                          height: 18,
+                                                          fontSize: "0.6rem",
+                                                          bgcolor: "rgba(255,255,255,0.08)",
+                                                          color: "text.secondary"
+                                                        }}
+                                                      />
+                                                    </Tooltip>
+                                                  )}
+                                                </Stack>
+                                              );
+                                            })()}
                                           </TableCell>
                                           <TableCell>
                                             <Chip
