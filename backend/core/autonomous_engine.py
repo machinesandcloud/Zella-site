@@ -188,7 +188,7 @@ class AutonomousEngine:
         self.enabled = self.config.get("enabled", False)
         self.mode = self.config.get("mode", "FULL_AUTO")  # ASSISTED, SEMI_AUTO, FULL_AUTO, GOD_MODE
         self.risk_posture = self.config.get("risk_posture", "BALANCED")  # DEFENSIVE, BALANCED, AGGRESSIVE
-        self.scan_interval = self.config.get("scan_interval", 1)  # seconds between scans (1s for real-time day trading)
+        self.scan_interval = self.config.get("scan_interval", 10)  # seconds between scans (10s for free tier rate limits)
         self.scan_watchdog_threshold = self.config.get("scan_watchdog_threshold", 60)  # seconds before restarting scan loop
         self.scan_timeout_seconds = self.config.get("scan_timeout_seconds", 45)
         self.analyze_timeout_seconds = self.config.get("analyze_timeout_seconds", 45)

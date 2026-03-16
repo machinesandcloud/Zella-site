@@ -26,12 +26,12 @@ logger = logging.getLogger("alpaca_provider")
 # Persistent watchlist file
 WATCHLIST_FILE = Path("data/custom_watchlist.json")
 
-# Performance configuration - balanced for IEX free data limits
-MAX_BACKOFF_SECONDS = 30  # Recover reasonably fast
-INITIAL_BACKOFF_SECONDS = 1  # Start small
-BATCH_SIZE = 50  # Smaller batches to avoid rate limits (was 100)
+# Performance configuration - tuned for IEX free data limits (200 req/min)
+MAX_BACKOFF_SECONDS = 60  # Longer backoff on rate limit
+INITIAL_BACKOFF_SECONDS = 2  # Start with reasonable delay
+BATCH_SIZE = 25  # Smaller batches to stay under rate limits
 BAR_STABILIZATION_SECONDS = 35  # Allow late trades to settle before using last bar
-MIN_REQUEST_INTERVAL = 0.1  # 100ms between batches - fast but safe
+MIN_REQUEST_INTERVAL = 0.5  # 500ms between batches - respect rate limits
 
 
 class AlpacaMarketDataProvider(MarketDataProvider):
