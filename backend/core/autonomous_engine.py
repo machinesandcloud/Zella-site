@@ -2880,7 +2880,18 @@ class AutonomousEngine:
         account_value = float(account.get("NetLiquidation", 0) or 0)
         buying_power = float(account.get("BuyingPower", 0) or 0)
 
-        current_positions = len(self.broker.get_positions())
+        all_positions = self.broker.get_positions()
+        current_positions = len(all_positions)
+
+        # Build map of current exposure per symbol
+        MAX_SYMBOL_EXPOSURE_PCT = 0.15  # Never more than 15% of account in one symbol
+        symbol_exposure = {}
+        for pos in all_positions:
+            sym = pos.get("symbol")
+            qty = abs(float(pos.get("quantity", 0) or 0))
+            price = float(pos.get("currentPrice", 0) or pos.get("avgCost", 0) or 0)
+            if sym and qty > 0 and price > 0:
+                symbol_exposure[sym] = (qty * price) / account_value if account_value > 0 else 1.0
 
         # Check if we're in power hour for signal boost
         now = datetime.now()
@@ -2893,6 +2904,17 @@ class AutonomousEngine:
                 break
 
             symbol = opp.get("symbol")
+
+            # CRITICAL: Check if we already have max exposure in this symbol
+            current_exposure = symbol_exposure.get(symbol, 0)
+            if current_exposure >= MAX_SYMBOL_EXPOSURE_PCT:
+                self._add_decision(
+                    "SKIPPED",
+                    f"⛔ {symbol}: Already at max exposure ({current_exposure:.1%} >= {MAX_SYMBOL_EXPOSURE_PCT:.0%})",
+                    "WARNING",
+                    {"symbol": symbol, "current_exposure_pct": current_exposure, "max_allowed_pct": MAX_SYMBOL_EXPOSURE_PCT}
+                )
+                continue
             action = opp.get("recommended_action")
             confidence = opp.get("confidence", 0)
             num_strategies = opp.get("num_strategies", 0)
@@ -3213,11 +3235,24 @@ class AutonomousEngine:
                     risk_percent=risk_percent,
                     entry_price=price,
                     atr_value=atr_value,
-                    atr_multiplier=atr_multiplier
+                    atr_multiplier=atr_multiplier,
+                    max_position_pct=MAX_SYMBOL_EXPOSURE_PCT  # Cap at 15% of account
                 )
 
                 if quantity <= 0:
                     continue
+
+                # CRITICAL: Cap position to remaining allowed exposure for this symbol
+                current_sym_exposure = symbol_exposure.get(symbol, 0)
+                remaining_allowed_exposure = MAX_SYMBOL_EXPOSURE_PCT - current_sym_exposure
+                if remaining_allowed_exposure <= 0:
+                    continue  # Already at max (shouldn't happen due to check above, but safety)
+                max_shares_by_exposure = int((account_value * remaining_allowed_exposure) / price)
+                if max_shares_by_exposure < quantity:
+                    logger.info(f"📉 {symbol}: Capping position from {quantity} to {max_shares_by_exposure} shares (exposure limit)")
+                    quantity = max_shares_by_exposure
+                    if quantity <= 0:
+                        continue
 
                 # Ensure we don't exceed buying power
                 position_value = quantity * price

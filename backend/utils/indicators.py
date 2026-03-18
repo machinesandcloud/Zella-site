@@ -292,10 +292,11 @@ def calculate_position_size_atr(
     risk_percent: float,
     entry_price: float,
     atr_value: float,
-    atr_multiplier: float = 2.0
+    atr_multiplier: float = 2.0,
+    max_position_pct: float = 0.15  # Max 15% of account in one position
 ) -> int:
     """
-    Calculate position size based on ATR stop loss
+    Calculate position size based on ATR stop loss with strict caps.
     Warrior Trading formula: position_size = risk_amount / stop_loss_distance
 
     Args:
@@ -304,18 +305,28 @@ def calculate_position_size_atr(
         entry_price: Expected entry price
         atr_value: Current ATR value
         atr_multiplier: Multiplier for ATR stop (default 2x)
+        max_position_pct: Maximum position as % of account (default 15%)
 
     Returns:
         Number of shares to trade
     """
+    if entry_price <= 0 or account_value <= 0:
+        return 0
+
     risk_amount = account_value * risk_percent
     stop_distance = atr_value * atr_multiplier
 
     if stop_distance <= 0:
-        return 0
+        # Fallback: use 2% of entry price as stop distance
+        stop_distance = entry_price * 0.02
 
     shares = int(risk_amount / stop_distance)
-    return max(shares, 1)  # At least 1 share
+
+    # CRITICAL: Cap position size to max_position_pct of account
+    max_shares = int((account_value * max_position_pct) / entry_price)
+    shares = min(shares, max_shares)
+
+    return max(shares, 1) if shares > 0 else 0
 
 
 def is_power_hour(hour: int, minute: int = 0) -> bool:
