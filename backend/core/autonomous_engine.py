@@ -200,13 +200,13 @@ class AutonomousEngine:
         self.trade_frequency_profile = (
             self.config.get("trade_frequency_profile") or settings.trade_frequency_profile or "active"
         ).lower()
-        # Day trading requires more trades - lower thresholds to increase frequency
+        # Quality over quantity - higher thresholds = better win rate
         if self.trade_frequency_profile == "active":
-            self.min_confidence_threshold = 0.45  # Allow more trades with tight stops
+            self.min_confidence_threshold = 0.60  # Still require decent confidence
         elif self.trade_frequency_profile == "conservative":
-            self.min_confidence_threshold = 0.55
+            self.min_confidence_threshold = 0.75  # High quality only
         else:  # balanced
-            self.min_confidence_threshold = 0.50
+            self.min_confidence_threshold = 0.65  # Good balance
         self.time_stop_minutes = self.config.get("time_stop_minutes", 12)
         self.time_stop_min_pnl = self.config.get("time_stop_min_pnl", 0.2)  # percent
         self.max_hold_minutes = self.config.get("max_hold_minutes", 25)
@@ -2858,9 +2858,15 @@ class AutonomousEngine:
                 self._add_decision("TIME_FILTER", "Lunch chop filter - only high confidence trades allowed", "INFO", {"minutes_open": mins_open})
                 return
 
-        # Avoid last 5 minutes (erratic, EOD orders)
-        if mins_open >= 385:  # 6.5 hours = 390 minutes, so 385 = last 5 mins
-            self._add_decision("TIME_FILTER", "Skipping last 5 minutes - EOD volatility", "INFO", {"minutes_open": mins_open})
+        # Avoid afternoon/EOD (3:00 PM onwards = 330 mins after 9:30 open)
+        # This is when institutions close positions, causing erratic moves
+        if mins_open >= 330:
+            self._add_decision("TIME_FILTER", "No new entries after 3:00 PM ET - EOD risk", "INFO", {"minutes_open": mins_open})
+            return
+
+        # Avoid last 30 minutes completely (erratic, EOD orders, stop hunting)
+        if mins_open >= 360:  # 6 hours = 360 minutes = 3:30 PM ET
+            self._add_decision("TIME_FILTER", "Skipping last 30 minutes - extreme EOD volatility", "INFO", {"minutes_open": mins_open})
             return
 
         # MARKET REGIME DETECTION: Check SPY trend
@@ -2915,6 +2921,28 @@ class AutonomousEngine:
                     {"symbol": symbol, "current_exposure_pct": current_exposure, "max_allowed_pct": MAX_SYMBOL_EXPOSURE_PCT}
                 )
                 continue
+
+            # DANGEROUS STOCK FILTER - Avoid leveraged ETFs and ultra-speculative names
+            # These are designed to decay and are NOT suitable for algorithmic trading
+            BLACKLISTED_SYMBOLS = {
+                # 3x Leveraged ETFs (decay over time, extreme volatility)
+                "SOXS", "SOXL", "TQQQ", "SQQQ", "UVXY", "SVXY", "SPXU", "SPXS",
+                "UPRO", "SDOW", "UDOW", "TZA", "TNA", "LABU", "LABD", "JNUG", "JDST",
+                "NUGT", "DUST", "ERX", "ERY", "FAS", "FAZ", "TECL", "TECS",
+                # 2x Leveraged ETFs
+                "SSO", "SDS", "QLD", "QID", "UCO", "SCO",
+                # Penny stocks / meme stocks with extreme manipulation risk
+                "AMC",  # Meme stock, heavily manipulated
+            }
+            if symbol in BLACKLISTED_SYMBOLS:
+                self._add_decision(
+                    "SKIPPED",
+                    f"⛔ {symbol}: Blacklisted (leveraged ETF or high manipulation risk)",
+                    "WARNING",
+                    {"symbol": symbol, "reason": "blacklisted_dangerous_instrument"}
+                )
+                continue
+
             action = opp.get("recommended_action")
             confidence = opp.get("confidence", 0)
             num_strategies = opp.get("num_strategies", 0)
@@ -2938,23 +2966,24 @@ class AutonomousEngine:
             except Exception:
                 pass
 
-            # DAY TRADING THRESHOLDS - Trade frequently with tight risk management
-            # Key insight: Pro day traders trade 20-40x/day with small size and tight stops
+            # QUALITY THRESHOLDS - Win rate matters more than trade count
+            # Key insight: 5 winning trades beats 20 losing ones
             if in_power_hour:
-                # Power hour = more volatility = slightly higher confidence needed
-                min_confidence = 0.50 if self.risk_posture == "AGGRESSIVE" else 0.55 if self.risk_posture == "BALANCED" else 0.60
-                min_strategies = 1  # Independent strategy mode
+                # Power hour = more volatility = require stronger signals
+                min_confidence = 0.65 if self.risk_posture == "AGGRESSIVE" else 0.70 if self.risk_posture == "BALANCED" else 0.75
+                min_strategies = 2  # Require strategy agreement
             else:
-                # Normal hours: Standard day trading thresholds
-                min_confidence = 0.45 if self.risk_posture == "AGGRESSIVE" else 0.50 if self.risk_posture == "BALANCED" else 0.55
-                min_strategies = 1  # Independent strategy mode
+                # Normal hours: Solid confidence required
+                min_confidence = 0.60 if self.risk_posture == "AGGRESSIVE" else 0.65 if self.risk_posture == "BALANCED" else 0.70
+                min_strategies = 2  # Require strategy agreement
 
-            # Trade frequency profile adjustments
+            # Trade frequency profile adjustments (smaller adjustments)
             if self.trade_frequency_profile == "active":
-                min_confidence -= 0.05  # Even more trades
-                min_strategies = 1
+                min_confidence -= 0.03  # Slightly more trades
+                min_strategies = 2  # Still require agreement
             elif self.trade_frequency_profile == "conservative":
-                min_confidence += 0.05  # Fewer but higher quality
+                min_confidence += 0.05  # Higher quality
+                min_strategies = 3  # Strong consensus
 
             # Global minimum - never trade below this regardless of settings
             if adjusted_confidence < self.min_confidence_threshold:
