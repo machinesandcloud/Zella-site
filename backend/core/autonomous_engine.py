@@ -2858,15 +2858,10 @@ class AutonomousEngine:
                 self._add_decision("TIME_FILTER", "Lunch chop filter - only high confidence trades allowed", "INFO", {"minutes_open": mins_open})
                 return
 
-        # Avoid afternoon/EOD (3:00 PM onwards = 330 mins after 9:30 open)
-        # This is when institutions close positions, causing erratic moves
-        if mins_open >= 330:
-            self._add_decision("TIME_FILTER", "No new entries after 3:00 PM ET - EOD risk", "INFO", {"minutes_open": mins_open})
-            return
-
-        # Avoid last 30 minutes completely (erratic, EOD orders, stop hunting)
-        if mins_open >= 360:  # 6 hours = 360 minutes = 3:30 PM ET
-            self._add_decision("TIME_FILTER", "Skipping last 30 minutes - extreme EOD volatility", "INFO", {"minutes_open": mins_open})
+        # Only block last 15 minutes (3:45+ PM ET = 375+ mins after open)
+        # This is when EOD stop hunting is most dangerous
+        if mins_open >= 375:
+            self._add_decision("TIME_FILTER", "No new entries in last 15 minutes - EOD risk", "INFO", {"minutes_open": mins_open})
             return
 
         # MARKET REGIME DETECTION: Check SPY trend
@@ -2922,24 +2917,27 @@ class AutonomousEngine:
                 )
                 continue
 
-            # DANGEROUS STOCK FILTER - Avoid leveraged ETFs and ultra-speculative names
-            # These are designed to decay and are NOT suitable for algorithmic trading
-            BLACKLISTED_SYMBOLS = {
-                # 3x Leveraged ETFs (decay over time, extreme volatility)
+            # HIGH-RISK INSTRUMENTS - Require extra confidence for leveraged ETFs
+            # These CAN be traded but need stronger signals
+            HIGH_RISK_SYMBOLS = {
+                # 3x Leveraged ETFs (high volatility, can be profitable with right signal)
                 "SOXS", "SOXL", "TQQQ", "SQQQ", "UVXY", "SVXY", "SPXU", "SPXS",
                 "UPRO", "SDOW", "UDOW", "TZA", "TNA", "LABU", "LABD", "JNUG", "JDST",
                 "NUGT", "DUST", "ERX", "ERY", "FAS", "FAZ", "TECL", "TECS",
                 # 2x Leveraged ETFs
                 "SSO", "SDS", "QLD", "QID", "UCO", "SCO",
-                # Penny stocks / meme stocks with extreme manipulation risk
-                "AMC",  # Meme stock, heavily manipulated
             }
-            if symbol in BLACKLISTED_SYMBOLS:
+            is_high_risk = symbol in HIGH_RISK_SYMBOLS
+
+            # IN PLAY CHECK - Stock must have relative volume > 1.0 (trading at least average)
+            # This filters out dead stocks that won't move
+            rvol = opp.get("relative_volume", 0)
+            if rvol < 1.0 and not is_high_risk:  # High-risk has stricter check later
                 self._add_decision(
                     "SKIPPED",
-                    f"⛔ {symbol}: Blacklisted (leveraged ETF or high manipulation risk)",
-                    "WARNING",
-                    {"symbol": symbol, "reason": "blacklisted_dangerous_instrument"}
+                    f"⚠️ {symbol}: Not in play - RVol {rvol:.1f}x below average",
+                    "INFO",
+                    {"symbol": symbol, "rvol": rvol, "required": 1.0}
                 )
                 continue
 
@@ -2966,24 +2964,42 @@ class AutonomousEngine:
             except Exception:
                 pass
 
-            # QUALITY THRESHOLDS - Win rate matters more than trade count
-            # Key insight: 5 winning trades beats 20 losing ones
-            if in_power_hour:
-                # Power hour = more volatility = require stronger signals
+            # TIME-OF-DAY THRESHOLDS - Pro day traders trade most in morning
+            # Morning (9:30-11:30): Lower thresholds, this is prime time
+            # Midday (11:30-2:00): Lunch chop, higher thresholds
+            # Afternoon (2:00-3:45): Mixed, moderate thresholds
+            if mins_open < 120:  # First 2 hours (9:30-11:30) - PRIME TIME
+                min_confidence = 0.55 if self.risk_posture == "AGGRESSIVE" else 0.60 if self.risk_posture == "BALANCED" else 0.65
+                min_strategies = 2
+            elif mins_open < 270:  # Lunch chop (11:30-2:00)
                 min_confidence = 0.65 if self.risk_posture == "AGGRESSIVE" else 0.70 if self.risk_posture == "BALANCED" else 0.75
-                min_strategies = 2  # Require strategy agreement
-            else:
-                # Normal hours: Solid confidence required
+                min_strategies = 2
+            else:  # Afternoon (2:00-3:45)
                 min_confidence = 0.60 if self.risk_posture == "AGGRESSIVE" else 0.65 if self.risk_posture == "BALANCED" else 0.70
-                min_strategies = 2  # Require strategy agreement
+                min_strategies = 2
 
-            # Trade frequency profile adjustments (smaller adjustments)
+            # HIGH-RISK SYMBOLS (leveraged ETFs) need stronger signals
+            if is_high_risk:
+                min_confidence += 0.10  # +10% confidence required
+                min_strategies = max(min_strategies, 2)  # At least 2 strategies
+
+                # Also check relative volume for high-risk (must be "in play")
+                rvol = opp.get("relative_volume", 0)
+                if rvol < 1.5:
+                    self._add_decision(
+                        "SKIPPED",
+                        f"⚠️ {symbol}: High-risk instrument needs RVol >= 1.5x (got {rvol:.1f}x)",
+                        "INFO",
+                        {"symbol": symbol, "rvol": rvol, "required": 1.5}
+                    )
+                    continue
+
+            # Trade frequency profile adjustments
             if self.trade_frequency_profile == "active":
-                min_confidence -= 0.03  # Slightly more trades
-                min_strategies = 2  # Still require agreement
+                min_confidence -= 0.03
             elif self.trade_frequency_profile == "conservative":
-                min_confidence += 0.05  # Higher quality
-                min_strategies = 3  # Strong consensus
+                min_confidence += 0.05
+                min_strategies = 3
 
             # Global minimum - never trade below this regardless of settings
             if adjusted_confidence < self.min_confidence_threshold:
