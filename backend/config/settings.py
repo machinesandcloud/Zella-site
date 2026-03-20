@@ -26,14 +26,31 @@ class Settings(BaseSettings):
     admin_password: str = "zella-auto-login-2024"  # Auto-generated for auto-login
     auto_login_enabled: bool = True  # Enable automatic login
 
-    # Trading Defaults
+    # Trading Defaults - UPDATED per expert review recommendations
     default_trading_mode: str = "PAPER"
-    max_position_size_percent: float = 10.0
-    max_daily_loss: float = 500.0
-    max_risk_per_trade: float = 2.0
-    max_concurrent_positions: int = 5
-    max_trades_per_day: int = 12
-    max_consecutive_losses: int = 3
+    max_position_size_percent: float = 5.0  # Was 10% - reduced to limit concentration per position
+    max_daily_loss: float = 2000.0  # Was $500 - raised to 2% of $100k (must be >= max single trade loss)
+    max_risk_per_trade: float = 1.0  # Was 2% - reduced for safety during validation phase
+    max_concurrent_positions: int = 3  # Was 5 - reduced to limit portfolio correlation risk
+    max_trades_per_day: int = 15  # Allow reasonable activity
+    max_consecutive_losses: int = 4  # Was 3 - slight increase to avoid premature halt
+
+    # Execution settings - NEW per expert review
+    use_limit_orders: bool = True  # Use limit orders instead of market orders
+    limit_order_buffer_pct: float = 0.05  # 0.05% buffer above/below for limit orders
+    limit_order_timeout_seconds: int = 10  # Cancel unfilled limit orders after this time
+    track_slippage: bool = True  # Track and log slippage metrics
+    max_acceptable_slippage_pct: float = 0.3  # Alert if slippage exceeds 0.3%
+
+    # Strategy settings - NEW per expert review
+    enabled_strategy_mode: str = "PROVEN_ONLY"  # PROVEN_ONLY | ALL - only use validated strategies
+    min_confidence_threshold: float = 0.70  # Was 0.55-0.65 - raised to 70% minimum
+    min_strategies_required: int = 2  # Require at least 2 strategies to agree
+
+    # Portfolio risk settings - NEW per expert review
+    max_sector_exposure_pct: float = 30.0  # Max 30% of portfolio in one sector
+    max_total_exposure_pct: float = 60.0  # Max 60% of account deployed at once
+    correlation_check_enabled: bool = True  # Check for correlated positions
 
     # Logging
     log_level: str = "INFO"

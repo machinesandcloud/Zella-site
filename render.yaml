@@ -27,14 +27,22 @@ services:
         value: "24"
       - key: DEFAULT_TRADING_MODE
         value: PAPER
+      # UPDATED per expert review - conservative risk settings
       - key: MAX_POSITION_SIZE_PERCENT
-        value: "10"
-      - key: MAX_DAILY_LOSS
-        value: "500"
-      - key: MAX_RISK_PER_TRADE
-        value: "2"
-      - key: MAX_CONCURRENT_POSITIONS
         value: "5"
+      - key: MAX_DAILY_LOSS
+        value: "2000"
+      - key: MAX_RISK_PER_TRADE
+        value: "1"
+      - key: MAX_CONCURRENT_POSITIONS
+        value: "3"
+      # NEW execution settings
+      - key: USE_LIMIT_ORDERS
+        value: "true"
+      - key: MIN_CONFIDENCE_THRESHOLD
+        value: "0.70"
+      - key: ENABLED_STRATEGY_MODE
+        value: "PROVEN_ONLY"
       - key: SCREENER_MIN_AVG_VOLUME
         value: "100000"
       - key: SCREENER_MIN_PRICE

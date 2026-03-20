@@ -134,6 +134,57 @@ logger = logging.getLogger("autonomous_engine")
 # Persistent decision log (last N decisions)
 DECISION_LOG_FILE = Path("data/decision_log.json")
 
+# === EXPERT REVIEW FIX: Sector mapping for correlation/exposure limits ===
+# This helps prevent over-concentration in a single sector
+SYMBOL_SECTOR_MAP = {
+    # Technology
+    "AAPL": "TECH", "MSFT": "TECH", "GOOGL": "TECH", "GOOG": "TECH", "META": "TECH",
+    "NVDA": "TECH", "AMD": "TECH", "INTC": "TECH", "AVGO": "TECH", "QCOM": "TECH",
+    "CRM": "TECH", "ORCL": "TECH", "ADBE": "TECH", "NOW": "TECH", "INTU": "TECH",
+    "CSCO": "TECH", "IBM": "TECH", "MU": "TECH", "AMAT": "TECH", "LRCX": "TECH",
+    "KLAC": "TECH", "MRVL": "TECH", "SNPS": "TECH", "CDNS": "TECH", "ARM": "TECH",
+    "SMCI": "TECH", "DELL": "TECH", "HPE": "TECH", "HPQ": "TECH",
+
+    # Consumer/Retail
+    "AMZN": "CONSUMER", "TSLA": "CONSUMER", "HD": "CONSUMER", "MCD": "CONSUMER",
+    "NKE": "CONSUMER", "SBUX": "CONSUMER", "TGT": "CONSUMER", "COST": "CONSUMER",
+    "WMT": "CONSUMER", "LOW": "CONSUMER", "TJX": "CONSUMER", "ROST": "CONSUMER",
+
+    # Financial
+    "JPM": "FINANCIAL", "BAC": "FINANCIAL", "WFC": "FINANCIAL", "GS": "FINANCIAL",
+    "MS": "FINANCIAL", "C": "FINANCIAL", "BLK": "FINANCIAL", "SCHW": "FINANCIAL",
+    "AXP": "FINANCIAL", "V": "FINANCIAL", "MA": "FINANCIAL", "PYPL": "FINANCIAL",
+    "SQ": "FINANCIAL", "COIN": "FINANCIAL",
+
+    # Healthcare
+    "JNJ": "HEALTHCARE", "UNH": "HEALTHCARE", "PFE": "HEALTHCARE", "MRK": "HEALTHCARE",
+    "ABBV": "HEALTHCARE", "LLY": "HEALTHCARE", "TMO": "HEALTHCARE", "ABT": "HEALTHCARE",
+    "DHR": "HEALTHCARE", "BMY": "HEALTHCARE", "AMGN": "HEALTHCARE", "GILD": "HEALTHCARE",
+
+    # Energy
+    "XOM": "ENERGY", "CVX": "ENERGY", "COP": "ENERGY", "SLB": "ENERGY",
+    "EOG": "ENERGY", "PXD": "ENERGY", "MPC": "ENERGY", "VLO": "ENERGY",
+    "OXY": "ENERGY", "HAL": "ENERGY",
+
+    # Crypto-related
+    "MARA": "CRYPTO", "RIOT": "CRYPTO", "CLSK": "CRYPTO", "BITF": "CRYPTO",
+    "HUT": "CRYPTO", "CIFR": "CRYPTO",
+
+    # ETFs - by underlying
+    "SPY": "ETF_BROAD", "QQQ": "ETF_TECH", "IWM": "ETF_SMALL",
+    "DIA": "ETF_BROAD", "VOO": "ETF_BROAD", "VTI": "ETF_BROAD",
+    "XLK": "ETF_TECH", "XLF": "ETF_FINANCIAL", "XLE": "ETF_ENERGY",
+    "XLV": "ETF_HEALTHCARE", "XLY": "ETF_CONSUMER",
+
+    # Leveraged ETFs - BLOCKED but keeping for reference
+    "TQQQ": "LEVERAGED", "SQQQ": "LEVERAGED", "SOXL": "LEVERAGED", "SOXS": "LEVERAGED",
+    "UVXY": "LEVERAGED", "SVXY": "LEVERAGED", "SPXU": "LEVERAGED", "UPRO": "LEVERAGED",
+}
+
+def get_symbol_sector(symbol: str) -> str:
+    """Get sector for a symbol, defaulting to UNKNOWN."""
+    return SYMBOL_SECTOR_MAP.get(symbol.upper(), "UNKNOWN")
+
 
 def retry_with_backoff(func, max_retries: int = 3, base_delay: float = 0.1):
     """
@@ -259,7 +310,7 @@ class AutonomousEngine:
         self.eod_liquidation_done_today: bool = False  # Track if EOD liquidation ran today
         self.last_liquidation_date: Optional[str] = None  # Date string of last liquidation
         self.daily_pnl: float = 0.0  # Track daily P&L
-        self.daily_pnl_limit: float = -500.0  # Stop trading if down this much
+        self.daily_pnl_limit: float = -settings.max_daily_loss  # Stop trading if down this much (from settings)
 
         # Pro-level trade validator (institutional-grade filters)
         self.pro_validator = ProTradeValidator(
@@ -275,10 +326,10 @@ class AutonomousEngine:
         # Active day trading requires higher limits
         # Pro traders make 20-30+ trades/day - don't cap winners artificially
         self.discipline = TradingDisciplineEnforcer(
-            max_consecutive_losses=5,  # Allow more losses before extended cooldown
+            max_consecutive_losses=settings.max_consecutive_losses,  # From settings (default 4)
             loss_cooldown_minutes=2,   # Shorter cooldown - day trading is fast-paced
             max_daily_winners=30,      # Allow many winners - don't quit early
-            daily_loss_limit=1000.0,   # Higher daily loss limit for active trading
+            daily_loss_limit=settings.max_daily_loss,  # From settings ($2000 per expert review)
             profit_protection_threshold=500.0,  # Higher threshold before profit protection
             max_drawdown_pct=40.0      # Allow more drawdown from peak
         )
@@ -385,56 +436,85 @@ class AutonomousEngine:
         )
 
     def _initialize_strategies(self) -> Dict[str, Any]:
-        """Initialize all 37+ trading strategies including Warrior Trading patterns"""
-        # Default config for all strategies
-        default_config = {"parameters": {}, "enabled": True}
+        """
+        Initialize trading strategies.
 
-        # ATR-enabled config for Warrior Trading strategies
+        EXPERT REVIEW FIX: Only enable 5 proven strategies by default.
+        The other 32 strategies are disabled until backtested and validated.
+        """
+        # Default config - DISABLED by default per expert review
+        disabled_config = {"parameters": {}, "enabled": False}
+
+        # ATR-enabled config for proven strategies
         atr_config = {"parameters": {"use_atr_stops": True, "atr_multiplier": 2.0}, "enabled": True}
+        enabled_config = {"parameters": {}, "enabled": True}
 
-        strategies = {
-            # === WARRIOR TRADING CORE PATTERNS (Priority) ===
-            "bull_flag": BullFlagStrategy(atr_config),  # Primary momentum pattern
-            "abcd_pattern": ABCDPatternStrategy(atr_config),  # ABCD continuation pattern
-            "flat_top_breakout": FlatTopBreakoutStrategy(atr_config),  # Key resistance breakout
-            "orb": ORBStrategy(default_config),  # Opening Range Breakout
+        # Check if we should use all strategies or proven only
+        use_proven_only = getattr(settings, 'enabled_strategy_mode', 'PROVEN_ONLY') == 'PROVEN_ONLY'
 
-            # Trend Following
-            "breakout": BreakoutStrategy(default_config),
-            "ema_cross": EMACrossStrategy(default_config),
-            "htf_ema_momentum": HTFEMAMomentumStrategy(default_config),
-            "momentum": MomentumStrategy(default_config),
-            "trend_follow": TrendFollowStrategy(default_config),
-            "first_hour_trend": FirstHourTrendStrategy(default_config),
-
-            # Mean Reversion
-            "pullback": PullbackStrategy(default_config),
-            "range_trading": RangeTradingStrategy(default_config),
-            "rsi_exhaustion": RSIExhaustionStrategy(default_config),
-            "rsi_extreme_reversal": RSIExtremeReversalStrategy(default_config),
-            "vwap_bounce": VWAPBounceStrategy(default_config),
-            "nine_forty_five_reversal": NineFortyFiveReversalStrategy(default_config),
-
-            # Scalping & Day Trading
-            "scalping": ScalpingStrategy(default_config),
-            "rip_and_dip": RipAndDipStrategy(default_config),
-            "big_bid_scalp": BigBidScalpStrategy(default_config),
-
-            # Advanced Pattern Recognition
-            "retail_fakeout": RetailFakeoutStrategy(default_config),
-            "stop_hunt_reversal": StopHuntReversalStrategy(default_config),
-            "bagholder_bounce": BagholderBounceStrategy(default_config),
-            "broken_parabolic_short": BrokenParabolicShortStrategy(default_config),
-            "fake_halt_trap": FakeHaltTrapStrategy(default_config),
-
-            # Institutional & Smart Money
-            "closing_bell_liquidity_grab": ClosingBellLiquidityGrabStrategy(default_config),
-            "dark_pool_footprints": DarkPoolFootprintsStrategy(default_config),
-            "market_maker_refill": MarketMakerRefillStrategy(default_config),
-            "premarket_vwap_reclaim": PremarketVWAPReclaimStrategy(default_config),
+        # === PROVEN STRATEGIES (5 total) ===
+        # These are the only strategies enabled by default per expert review.
+        # They are classic, well-documented patterns with clear entry/exit rules.
+        proven_strategies = {
+            # 1. Opening Range Breakout - Most reliable day trading pattern
+            "orb": ORBStrategy(atr_config),
+            # 2. Momentum - Simple, effective trend continuation
+            "momentum": MomentumStrategy(atr_config),
+            # 3. VWAP Bounce - Institutional level, high probability
+            "vwap_bounce": VWAPBounceStrategy(atr_config),
+            # 4. Breakout - Classic resistance break pattern
+            "breakout": BreakoutStrategy(atr_config),
+            # 5. Trend Follow - Trade with the trend, not against
+            "trend_follow": TrendFollowStrategy(atr_config),
         }
 
-        logger.info(f"Initialized {len(strategies)} trading strategies (including Warrior Trading patterns)")
+        # === EXPERIMENTAL STRATEGIES (DISABLED by default) ===
+        # These need backtesting validation before enabling
+        experimental_strategies = {
+            # Warrior Trading patterns - need validation
+            "bull_flag": BullFlagStrategy(disabled_config),
+            "abcd_pattern": ABCDPatternStrategy(disabled_config),
+            "flat_top_breakout": FlatTopBreakoutStrategy(disabled_config),
+
+            # Other trend following - may overlap with proven ones
+            "ema_cross": EMACrossStrategy(disabled_config),
+            "htf_ema_momentum": HTFEMAMomentumStrategy(disabled_config),
+            "first_hour_trend": FirstHourTrendStrategy(disabled_config),
+
+            # Mean Reversion - counter-trend, higher risk
+            "pullback": PullbackStrategy(disabled_config),
+            "range_trading": RangeTradingStrategy(disabled_config),
+            "rsi_exhaustion": RSIExhaustionStrategy(disabled_config),
+            "rsi_extreme_reversal": RSIExtremeReversalStrategy(disabled_config),
+            "nine_forty_five_reversal": NineFortyFiveReversalStrategy(disabled_config),
+
+            # Scalping - very short-term, needs tight execution
+            "scalping": ScalpingStrategy(disabled_config),
+            "rip_and_dip": RipAndDipStrategy(disabled_config),
+            "big_bid_scalp": BigBidScalpStrategy(disabled_config),
+
+            # Advanced patterns - complex, unvalidated
+            "retail_fakeout": RetailFakeoutStrategy(disabled_config),
+            "stop_hunt_reversal": StopHuntReversalStrategy(disabled_config),
+            "bagholder_bounce": BagholderBounceStrategy(disabled_config),
+            "broken_parabolic_short": BrokenParabolicShortStrategy(disabled_config),
+            "fake_halt_trap": FakeHaltTrapStrategy(disabled_config),
+
+            # Institutional - require special data/conditions
+            "closing_bell_liquidity_grab": ClosingBellLiquidityGrabStrategy(disabled_config),
+            "dark_pool_footprints": DarkPoolFootprintsStrategy(disabled_config),
+            "market_maker_refill": MarketMakerRefillStrategy(disabled_config),
+            "premarket_vwap_reclaim": PremarketVWAPReclaimStrategy(disabled_config),
+        }
+
+        if use_proven_only:
+            strategies = proven_strategies
+            logger.info(f"🎯 PROVEN_ONLY mode: Using {len(strategies)} validated strategies")
+            logger.info(f"   Enabled: {list(strategies.keys())}")
+        else:
+            strategies = {**proven_strategies, **experimental_strategies}
+            logger.info(f"⚠️ ALL mode: Using {len(strategies)} strategies (including unvalidated)")
+
         return strategies
 
     def _load_state(self):
@@ -1634,37 +1714,61 @@ class AutonomousEngine:
                     except Exception:
                         df = None
 
-                    # Time-stop and max-hold exits to cut losers early
+                    # === EXPERT REVIEW FIX: ATR-based exits instead of fixed time ===
+                    # Time-based exits are secondary to ATR-based stops
                     ctx = self._get_trade_context(symbol)
-                    if ctx and ctx.entry_time:
-                        held_minutes = (datetime.now() - ctx.entry_time).total_seconds() / 60
-                        if held_minutes >= self.time_stop_minutes and pnl_percent < self.time_stop_min_pnl:
-                            logger.warning(f"⏱️ TIME STOP: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}%")
-                            await self._close_position(symbol, f"Time stop {self.time_stop_minutes}m (PnL {pnl_percent:.2f}%)")
-                            if symbol in position_atr:
-                                del position_atr[symbol]
-                            continue
-                        if held_minutes >= self.max_hold_minutes and pnl_percent <= 0:
-                            logger.warning(f"⏱️ MAX HOLD EXIT: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}%")
-                            await self._close_position(symbol, f"Max hold {self.max_hold_minutes}m (PnL {pnl_percent:.2f}%)")
-                            if symbol in position_atr:
-                                del position_atr[symbol]
-                            continue
 
-                    # Get ATR for this symbol if not cached
+                    # Get ATR early for exit calculations
                     if symbol not in position_atr:
                         try:
-                            if df is not None and len(df) > 0:
+                            if df is not None and len(df) >= 14:
                                 atr_series = atr(df, 14)
-                                position_atr[symbol] = atr_series.iloc[-1] if len(atr_series) > 0 else current_price * 0.02
+                                position_atr[symbol] = float(atr_series.iloc[-1]) if len(atr_series) > 0 else current_price * 0.02
                             else:
-                                position_atr[symbol] = current_price * 0.02  # Default 2% of price
-                        except Exception as e:
-                            logger.debug(f"ATR calculation failed for {symbol}, using 2% default: {e}")
+                                position_atr[symbol] = current_price * 0.02
+                        except Exception:
                             position_atr[symbol] = current_price * 0.02
-
                     current_atr = position_atr.get(symbol, current_price * 0.02)
 
+                    # PRIMARY: ATR-based stop loss (2x ATR from entry)
+                    atr_stop_distance = current_atr * 2.0
+                    atr_stop_price = entry_price - atr_stop_distance if is_long else entry_price + atr_stop_distance
+
+                    if is_long and current_price <= atr_stop_price:
+                        loss_pct = ((entry_price - current_price) / entry_price) * 100
+                        logger.warning(f"🛑 ATR STOP: {symbol} hit ${atr_stop_price:.2f} (2x ATR), loss {loss_pct:.2f}%")
+                        await self._close_position(symbol, f"ATR stop (2x ATR = ${atr_stop_distance:.2f})")
+                        if symbol in position_atr:
+                            del position_atr[symbol]
+                        continue
+                    elif not is_long and current_price >= atr_stop_price:
+                        loss_pct = ((current_price - entry_price) / entry_price) * 100
+                        logger.warning(f"🛑 ATR STOP: {symbol} hit ${atr_stop_price:.2f} (2x ATR), loss {loss_pct:.2f}%")
+                        await self._close_position(symbol, f"ATR stop (2x ATR = ${atr_stop_distance:.2f})")
+                        if symbol in position_atr:
+                            del position_atr[symbol]
+                        continue
+
+                    # SECONDARY: Extended time stop only for significantly losing positions
+                    # Time-based is now backup, not primary exit
+                    if ctx and ctx.entry_time:
+                        held_minutes = (datetime.now() - ctx.entry_time).total_seconds() / 60
+                        # Only use time stop for extended holds (30+ min) that are still losing
+                        if held_minutes >= 30 and pnl_percent < -1.0:
+                            logger.warning(f"⏱️ EXTENDED TIME STOP: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}%")
+                            await self._close_position(symbol, f"Extended time stop {held_minutes:.0f}m (PnL {pnl_percent:.2f}%)")
+                            if symbol in position_atr:
+                                del position_atr[symbol]
+                            continue
+                        # Max hold only for flat/losing positions after 45 min
+                        if held_minutes >= 45 and pnl_percent <= 0.5:
+                            logger.warning(f"⏱️ MAX HOLD EXIT: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}%")
+                            await self._close_position(symbol, f"Max hold {held_minutes:.0f}m (PnL {pnl_percent:.2f}%)")
+                            if symbol in position_atr:
+                                del position_atr[symbol]
+                            continue
+
+                    # ATR already calculated above in exit logic
                     # === ELITE SCALE-OUT SYSTEM ===
                     # Check if we have a scale-out plan for this position
                     if symbol in self.elite_position_manager.positions:
@@ -2712,10 +2816,12 @@ class AutonomousEngine:
         """
         Check circuit breakers for extreme market volatility.
 
+        EXPERT REVIEW FIX: Enhanced circuit breakers with multiple safeguards.
+
         Returns:
             Tuple of (can_trade: bool, reason: str)
         """
-        # Check SPY movement for market-wide volatility
+        # === CIRCUIT BREAKER 1: SPY volatility ===
         try:
             with self._cache_lock:
                 spy_data = self._spy_data_cache
@@ -2724,22 +2830,73 @@ class AutonomousEngine:
                 spy_current = float(spy_data.iloc[-1].get("close", 0))
                 if spy_open > 0:
                     spy_change_pct = abs((spy_current - spy_open) / spy_open * 100)
-                    # Halt on >3% SPY move (extreme volatility)
-                    if spy_change_pct > 3.0:
+                    # Halt on >2.5% SPY move (lowered from 3%)
+                    if spy_change_pct > 2.5:
+                        self._add_decision(
+                            "CIRCUIT_BREAKER",
+                            f"🚨 HALT: SPY moved {spy_change_pct:.1f}% - extreme volatility",
+                            "CRITICAL",
+                            {"spy_change": spy_change_pct, "threshold": 2.5}
+                        )
                         return False, f"Circuit breaker: SPY moved {spy_change_pct:.1f}% - extreme volatility"
-                    # Reduce exposure on >2% SPY move
-                    if spy_change_pct > 2.0:
-                        logger.warning(f"⚠️ SPY moved {spy_change_pct:.1f}% - reducing position sizes")
+                    # Warning on >1.5% SPY move
+                    if spy_change_pct > 1.5:
+                        logger.warning(f"⚠️ SPY moved {spy_change_pct:.1f}% - elevated volatility")
         except Exception as e:
             logger.debug(f"Circuit breaker check error: {e}")
 
-        # Check consecutive losses (already in discipline enforcer, but add hard limit here)
-        if self.risk_manager.consecutive_losses >= 5:
-            return False, "Circuit breaker: 5+ consecutive losses - cooling off"
+        # === CIRCUIT BREAKER 2: Consecutive losses ===
+        if self.risk_manager.consecutive_losses >= 4:  # Lowered from 5
+            self._add_decision(
+                "CIRCUIT_BREAKER",
+                f"🚨 HALT: {self.risk_manager.consecutive_losses} consecutive losses",
+                "CRITICAL",
+                {"consecutive_losses": self.risk_manager.consecutive_losses}
+            )
+            return False, f"Circuit breaker: {self.risk_manager.consecutive_losses} consecutive losses - cooling off"
 
-        # Check daily loss limit hit
+        # === CIRCUIT BREAKER 3: Daily loss limit ===
         if self.daily_pnl <= self.daily_pnl_limit:
+            self._add_decision(
+                "CIRCUIT_BREAKER",
+                f"🚨 HALT: Daily loss limit ${abs(self.daily_pnl):.2f} hit",
+                "CRITICAL",
+                {"daily_pnl": self.daily_pnl, "limit": self.daily_pnl_limit}
+            )
             return False, f"Circuit breaker: Daily loss limit ${abs(self.daily_pnl_limit):.0f} hit"
+
+        # === CIRCUIT BREAKER 4: Drawdown from daily high (NEW) ===
+        # If we were up and now giving back >50% of gains, pause
+        try:
+            if hasattr(self, 'discipline') and hasattr(self.discipline, 'daily_high_pnl'):
+                daily_high = self.discipline.daily_high_pnl
+                if daily_high > 100:  # Only if we had meaningful gains
+                    drawdown_from_high = daily_high - self.daily_pnl
+                    drawdown_pct = (drawdown_from_high / daily_high) * 100 if daily_high > 0 else 0
+                    if drawdown_pct > 50:
+                        self._add_decision(
+                            "CIRCUIT_BREAKER",
+                            f"🚨 HALT: Giving back {drawdown_pct:.0f}% of daily gains",
+                            "WARNING",
+                            {"daily_high": daily_high, "current_pnl": self.daily_pnl, "drawdown_pct": drawdown_pct}
+                        )
+                        return False, f"Circuit breaker: Giving back {drawdown_pct:.0f}% of daily gains"
+        except Exception:
+            pass
+
+        # === CIRCUIT BREAKER 5: Trade count limit (NEW) ===
+        # Don't overtrade - max 15 trades per day
+        try:
+            if self.risk_manager.trades_today >= settings.max_trades_per_day:
+                self._add_decision(
+                    "CIRCUIT_BREAKER",
+                    f"🚨 HALT: Max trades ({settings.max_trades_per_day}) reached for today",
+                    "WARNING",
+                    {"trades_today": self.risk_manager.trades_today, "limit": settings.max_trades_per_day}
+                )
+                return False, f"Circuit breaker: Max {settings.max_trades_per_day} trades per day reached"
+        except Exception:
+            pass
 
         return True, ""
 
@@ -2884,15 +3041,38 @@ class AutonomousEngine:
         all_positions = self.broker.get_positions()
         current_positions = len(all_positions)
 
-        # Build map of current exposure per symbol
-        MAX_SYMBOL_EXPOSURE_PCT = 0.15  # Never more than 15% of account in one symbol
+        # Build map of current exposure per symbol AND per sector
+        MAX_SYMBOL_EXPOSURE_PCT = 0.05  # Was 0.15, reduced to 5% per expert review
+        MAX_SECTOR_EXPOSURE_PCT = getattr(settings, 'max_sector_exposure_pct', 30.0) / 100.0
+        MAX_TOTAL_EXPOSURE_PCT = getattr(settings, 'max_total_exposure_pct', 60.0) / 100.0
+
         symbol_exposure = {}
+        sector_exposure = {}  # Track exposure by sector
+        total_exposure = 0.0
+
         for pos in all_positions:
             sym = pos.get("symbol")
             qty = abs(float(pos.get("quantity", 0) or 0))
             price = float(pos.get("currentPrice", 0) or pos.get("avgCost", 0) or 0)
             if sym and qty > 0 and price > 0:
-                symbol_exposure[sym] = (qty * price) / account_value if account_value > 0 else 1.0
+                position_exposure = (qty * price) / account_value if account_value > 0 else 1.0
+                symbol_exposure[sym] = position_exposure
+                total_exposure += position_exposure
+
+                # Track sector exposure
+                sector = get_symbol_sector(sym)
+                sector_exposure[sector] = sector_exposure.get(sector, 0) + position_exposure
+
+        # Check total portfolio exposure
+        if total_exposure >= MAX_TOTAL_EXPOSURE_PCT:
+            logger.warning(f"⚠️ Total exposure {total_exposure:.1%} >= max {MAX_TOTAL_EXPOSURE_PCT:.0%} - no new trades")
+            self._add_decision(
+                "EXPOSURE_LIMIT",
+                f"Total portfolio exposure at limit ({total_exposure:.1%})",
+                "WARNING",
+                {"total_exposure": total_exposure, "max_allowed": MAX_TOTAL_EXPOSURE_PCT}
+            )
+            return
 
         # Check if we're in power hour for signal boost
         now = datetime.now()
@@ -2914,6 +3094,19 @@ class AutonomousEngine:
                     f"⛔ {symbol}: Already at max exposure ({current_exposure:.1%} >= {MAX_SYMBOL_EXPOSURE_PCT:.0%})",
                     "WARNING",
                     {"symbol": symbol, "current_exposure_pct": current_exposure, "max_allowed_pct": MAX_SYMBOL_EXPOSURE_PCT}
+                )
+                continue
+
+            # === EXPERT REVIEW FIX: Sector exposure check ===
+            # Prevent over-concentration in a single sector (correlation risk)
+            symbol_sector = get_symbol_sector(symbol)
+            current_sector_exposure = sector_exposure.get(symbol_sector, 0)
+            if current_sector_exposure >= MAX_SECTOR_EXPOSURE_PCT and symbol_sector != "UNKNOWN":
+                self._add_decision(
+                    "SKIPPED",
+                    f"⛔ {symbol}: Sector {symbol_sector} at max exposure ({current_sector_exposure:.1%})",
+                    "WARNING",
+                    {"symbol": symbol, "sector": symbol_sector, "sector_exposure": current_sector_exposure}
                 )
                 continue
 
@@ -2964,42 +3157,38 @@ class AutonomousEngine:
             except Exception:
                 pass
 
-            # TIME-OF-DAY THRESHOLDS - Pro day traders trade most in morning
-            # Morning (9:30-11:30): Lower thresholds, this is prime time
-            # Midday (11:30-2:00): Lunch chop, higher thresholds
-            # Afternoon (2:00-3:45): Mixed, moderate thresholds
+            # TIME-OF-DAY THRESHOLDS - UPDATED per expert review
+            # Raised all thresholds to 70-80% minimum to only take high-quality trades
+            # Morning (9:30-11:30): Best opportunities, still require high confidence
+            # Midday (11:30-2:00): Lunch chop, very high thresholds
+            # Afternoon (2:00-3:45): Mixed, high thresholds
             if mins_open < 120:  # First 2 hours (9:30-11:30) - PRIME TIME
-                min_confidence = 0.55 if self.risk_posture == "AGGRESSIVE" else 0.60 if self.risk_posture == "BALANCED" else 0.65
+                min_confidence = 0.70 if self.risk_posture == "AGGRESSIVE" else 0.72 if self.risk_posture == "BALANCED" else 0.75
                 min_strategies = 2
-            elif mins_open < 270:  # Lunch chop (11:30-2:00)
-                min_confidence = 0.65 if self.risk_posture == "AGGRESSIVE" else 0.70 if self.risk_posture == "BALANCED" else 0.75
-                min_strategies = 2
+            elif mins_open < 270:  # Lunch chop (11:30-2:00) - AVOID unless very strong
+                min_confidence = 0.78 if self.risk_posture == "AGGRESSIVE" else 0.80 if self.risk_posture == "BALANCED" else 0.82
+                min_strategies = 3  # Require MORE strategy agreement during lunch
             else:  # Afternoon (2:00-3:45)
-                min_confidence = 0.60 if self.risk_posture == "AGGRESSIVE" else 0.65 if self.risk_posture == "BALANCED" else 0.70
+                min_confidence = 0.72 if self.risk_posture == "AGGRESSIVE" else 0.75 if self.risk_posture == "BALANCED" else 0.78
                 min_strategies = 2
 
-            # HIGH-RISK SYMBOLS (leveraged ETFs) need stronger signals
+            # HIGH-RISK SYMBOLS (leveraged ETFs) - BLOCKED per expert review
+            # These are too dangerous without proper validation
             if is_high_risk:
-                min_confidence += 0.10  # +10% confidence required
-                min_strategies = max(min_strategies, 2)  # At least 2 strategies
+                self._add_decision(
+                    "SKIPPED",
+                    f"🚫 {symbol}: Leveraged ETF blocked - too risky without validation",
+                    "WARNING",
+                    {"symbol": symbol, "reason": "high_risk_blocked"}
+                )
+                continue
 
-                # Also check relative volume for high-risk (must be "in play")
-                rvol = opp.get("relative_volume", 0)
-                if rvol < 1.5:
-                    self._add_decision(
-                        "SKIPPED",
-                        f"⚠️ {symbol}: High-risk instrument needs RVol >= 1.5x (got {rvol:.1f}x)",
-                        "INFO",
-                        {"symbol": symbol, "rvol": rvol, "required": 1.5}
-                    )
-                    continue
-
-            # Trade frequency profile adjustments
-            if self.trade_frequency_profile == "active":
-                min_confidence -= 0.03
-            elif self.trade_frequency_profile == "conservative":
+            # Trade frequency profile adjustments - UPDATED per expert review
+            # No longer reducing confidence for "active" mode - quality over quantity
+            if self.trade_frequency_profile == "conservative":
                 min_confidence += 0.05
                 min_strategies = 3
+            # "active" and "balanced" use the already-high thresholds above
 
             # Global minimum - never trade below this regardless of settings
             if adjusted_confidence < self.min_confidence_threshold:
@@ -3413,42 +3602,65 @@ class AutonomousEngine:
                 import time as time_module
                 exec_start = time_module.perf_counter()
 
-                # === STEALTH EXECUTION ===
-                # Split orders to avoid detection by competing algos
-                if use_stealth and quantity > 50:
-                    with self._edge_lock:
-                        stealth_order = self.edge_engine.prepare_stealth_order(
-                            symbol=symbol,
-                            quantity=quantity,
-                            side=action,
-                            edge=edge_analysis or {}
-                        )
+                # === EXPERT REVIEW FIX: Use limit orders instead of market orders ===
+                # This reduces slippage and improves execution quality
+                use_limit_orders = getattr(settings, 'use_limit_orders', True)
+                limit_buffer_pct = getattr(settings, 'limit_order_buffer_pct', 0.05) / 100.0
+                arrival_price = price  # Track for slippage calculation
 
-                    # Execute slices with delays (simplified - full implementation would be async)
-                    total_filled = 0
-                    orders = []
-                    for i, slice_qty in enumerate(stealth_order.slices):
-                        if slice_qty <= 0:
-                            continue
-                        with LATENCY.timed(f"order_execution_{symbol}_slice_{i}"):
-                            slice_order = self.broker.place_market_order(symbol, slice_qty, action)
-                            if slice_order and not slice_order.get("error"):
-                                orders.append(slice_order)
-                                total_filled += slice_qty
-                        # Small delay between slices (to avoid detection)
-                        if i < len(stealth_order.slices) - 1:
-                            time_module.sleep(stealth_order.timing_delays_ms[i] / 1000.0)
+                if use_limit_orders and hasattr(self.broker, 'place_limit_order'):
+                    # Calculate limit price with buffer
+                    if action == "BUY":
+                        limit_price = price * (1 + limit_buffer_pct)  # Slightly above for buy
+                    else:
+                        limit_price = price * (1 - limit_buffer_pct)  # Slightly below for sell
 
-                    order = orders[0] if orders else None
-                    if total_filled > 0:
-                        logger.info(f"   STEALTH: Executed {total_filled} shares in {len(orders)} slices")
-                else:
+                    logger.info(f"   📋 Using LIMIT order @ ${limit_price:.2f} (buffer: {limit_buffer_pct*100:.2f}%)")
+
                     with LATENCY.timed(f"order_execution_{symbol}"):
                         order = retry_with_backoff(
-                            lambda s=symbol, q=quantity, a=action: self.broker.place_market_order(s, q, a),
+                            lambda s=symbol, q=quantity, a=action, lp=limit_price: self.broker.place_limit_order(s, q, a, lp),
                             max_retries=3,
                             base_delay=0.1
                         )
+                else:
+                    # Fallback to market order (stealth or regular)
+                    # === STEALTH EXECUTION ===
+                    # Split orders to avoid detection by competing algos
+                    if use_stealth and quantity > 50:
+                        with self._edge_lock:
+                            stealth_order = self.edge_engine.prepare_stealth_order(
+                                symbol=symbol,
+                                quantity=quantity,
+                                side=action,
+                                edge=edge_analysis or {}
+                            )
+
+                        # Execute slices with delays (simplified - full implementation would be async)
+                        total_filled = 0
+                        orders = []
+                        for i, slice_qty in enumerate(stealth_order.slices):
+                            if slice_qty <= 0:
+                                continue
+                            with LATENCY.timed(f"order_execution_{symbol}_slice_{i}"):
+                                slice_order = self.broker.place_market_order(symbol, slice_qty, action)
+                                if slice_order and not slice_order.get("error"):
+                                    orders.append(slice_order)
+                                    total_filled += slice_qty
+                            # Small delay between slices (to avoid detection)
+                            if i < len(stealth_order.slices) - 1:
+                                time_module.sleep(stealth_order.timing_delays_ms[i] / 1000.0)
+
+                        order = orders[0] if orders else None
+                        if total_filled > 0:
+                            logger.info(f"   STEALTH: Executed {total_filled} shares in {len(orders)} slices")
+                    else:
+                        with LATENCY.timed(f"order_execution_{symbol}"):
+                            order = retry_with_backoff(
+                                lambda s=symbol, q=quantity, a=action: self.broker.place_market_order(s, q, a),
+                                max_retries=3,
+                                base_delay=0.1
+                            )
 
                 exec_elapsed_ms = (time_module.perf_counter() - exec_start) * 1000
                 if exec_elapsed_ms > 10:
