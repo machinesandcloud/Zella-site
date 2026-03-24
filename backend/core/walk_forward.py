@@ -30,12 +30,14 @@ class WalkForwardWindow:
     # In-sample period (training)
     in_sample_start: datetime
     in_sample_end: datetime
-    in_sample_result: Optional[BacktestResult] = None
-    in_sample_metrics: Optional[PerformanceMetrics] = None
 
     # Out-of-sample period (validation)
     out_of_sample_start: datetime
     out_of_sample_end: datetime
+
+    # Results/metrics (optional)
+    in_sample_result: Optional[BacktestResult] = None
+    in_sample_metrics: Optional[PerformanceMetrics] = None
     out_of_sample_result: Optional[BacktestResult] = None
     out_of_sample_metrics: Optional[PerformanceMetrics] = None
 
