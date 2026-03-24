@@ -26,3 +26,6 @@ class User(Base):
     account_snapshots = relationship(
         "AccountSnapshot", back_populates="user", cascade="all, delete-orphan"
     )
+    backtest_runs = relationship(
+        "BacktestRun", back_populates="user", cascade="all, delete-orphan"
+    )

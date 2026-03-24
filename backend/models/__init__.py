@@ -4,6 +4,7 @@ from .user import User
 from .trade import Trade
 from .order import Order
 from .account import AccountSnapshot, StrategyPerformance
+from .backtest import BacktestRun, BacktestTrade, BacktestStatus
 
 __all__ = [
     "Base",
@@ -12,4 +13,7 @@ __all__ = [
     "Order",
     "AccountSnapshot",
     "StrategyPerformance",
+    "BacktestRun",
+    "BacktestTrade",
+    "BacktestStatus",
 ]
