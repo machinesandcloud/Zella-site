@@ -337,6 +337,11 @@ class AutonomousEngine:
         # Track SPY data for relative strength
         self._spy_data_cache: Optional[pd.DataFrame] = None
         self._spy_cache_time: Optional[datetime] = None
+
+        # VIX cache (refresh every 5 minutes — VIX doesn't move that fast)
+        self._vix_level: float = 0.0
+        self._vix_cache_time: Optional[datetime] = None
+        self._vix_cache_ttl_seconds: int = 300
         self._daily_data_cache: Dict[str, pd.DataFrame] = {}
         self._daily_data_cache_time: Optional[datetime] = None
         self._daily_data_cache_ttl_seconds = 15 * 60
@@ -3289,7 +3294,10 @@ class AutonomousEngine:
                 # Get current positions for correlation check
                 current_pos_list = self.broker.get_positions()
 
-                # Run pro validation
+                # ATR in dollars for minimum tradeability check
+                atr_dollars = opp.get("atr", price * atr_percent / 100)
+
+                # Run pro validation — VIX is now live, not hardcoded 0
                 validation = self.pro_validator.validate_trade(
                     symbol=symbol,
                     bid=bid,
@@ -3300,8 +3308,9 @@ class AutonomousEngine:
                     atr_percent=atr_percent,
                     current_positions=current_pos_list,
                     daily_pnl=self.daily_pnl,
-                    vix_level=0,  # TODO: Add VIX fetch
-                    minutes_since_open=minutes_since_open(now=now)
+                    vix_level=self._vix_level,
+                    minutes_since_open=minutes_since_open(now=now),
+                    atr_dollars=atr_dollars
                 )
 
                 if not validation["approved"]:
@@ -3335,6 +3344,20 @@ class AutonomousEngine:
                         if spy_bars:
                             self._spy_data_cache = pd.DataFrame(spy_bars)
                             self._spy_cache_time = datetime.now()
+
+                    # Refresh VIX every 5 minutes for volatility regime detection
+                    vix_stale = (
+                        self._vix_cache_time is None or
+                        (datetime.now() - self._vix_cache_time).seconds > self._vix_cache_ttl_seconds
+                    )
+                    if vix_stale and hasattr(self.market_data, "get_vix"):
+                        try:
+                            self._vix_level = self.market_data.get_vix()
+                            self._vix_cache_time = datetime.now()
+                            if self._vix_level > 0:
+                                logger.debug(f"VIX refreshed: {self._vix_level:.1f}")
+                        except Exception as vix_err:
+                            logger.debug(f"VIX fetch failed (non-critical): {vix_err}")
 
                     if bars_5m and bars_15m and bars_1h and self._spy_data_cache is not None:
                         df_5m = pd.DataFrame(bars_5m)

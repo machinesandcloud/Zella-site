@@ -271,22 +271,122 @@ def check_volatility_regime(
     }
 
 
+def check_atr_minimum(
+    atr_dollars: float,
+    price: float,
+    min_atr_dollars: float = 0.75
+) -> Dict[str, Any]:
+    """
+    Check if the stock has enough intraday range to be worth trading.
+
+    PRO TIP: A stock with a $0.20 ATR can't generate meaningful intraday
+    moves. You need at least $0.75 of daily range to have tradeable swings
+    after accounting for spread and slippage. Research shows $1.00+ ATR
+    produces the best risk-adjusted results.
+
+    Args:
+        atr_dollars: Stock's ATR in dollar terms
+        price: Current stock price
+        min_atr_dollars: Minimum ATR in dollars (default $0.75 per research)
+
+    Returns:
+        Dict with 'acceptable' bool and details
+    """
+    if atr_dollars <= 0 or price <= 0:
+        return {"acceptable": True, "atr_dollars": 0, "reason": "ATR data unavailable"}
+
+    atr_percent = (atr_dollars / price) * 100
+    acceptable = atr_dollars >= min_atr_dollars
+
+    return {
+        "acceptable": acceptable,
+        "atr_dollars": round(atr_dollars, 2),
+        "atr_percent": round(atr_percent, 2),
+        "min_required": min_atr_dollars,
+        "reason": None if acceptable else f"ATR ${atr_dollars:.2f} below minimum ${min_atr_dollars:.2f}"
+    }
+
+
+def check_reward_risk_ratio(
+    entry_price: float,
+    stop_loss: float,
+    take_profit: float,
+    action: str,
+    min_rr_ratio: float = 2.0
+) -> Dict[str, Any]:
+    """
+    Check if the trade setup offers sufficient reward vs risk.
+
+    PRO TIP: A 40% win rate is profitable with 2.5:1 R/R. The same 40%
+    win rate is a losing strategy at 1:1. Research from Zarattini/Aziz (2024)
+    and prop firm data confirms minimum 2:1 R/R is required for positive
+    expectancy at typical day trading win rates.
+
+    Args:
+        entry_price: Planned entry price
+        stop_loss: Stop loss price
+        take_profit: Take profit price
+        action: 'BUY' or 'SELL'
+        min_rr_ratio: Minimum reward-to-risk ratio (default 2.0)
+
+    Returns:
+        Dict with 'acceptable' bool and calculated ratio
+    """
+    if not stop_loss or not take_profit or entry_price <= 0:
+        return {
+            "acceptable": True,  # Can't check without levels — don't block
+            "rr_ratio": 0,
+            "risk": 0,
+            "reward": 0,
+            "reason": "No stop/target levels provided"
+        }
+
+    if action.upper() == "BUY":
+        risk = entry_price - stop_loss
+        reward = take_profit - entry_price
+    else:
+        risk = stop_loss - entry_price
+        reward = entry_price - take_profit
+
+    if risk <= 0:
+        return {
+            "acceptable": False,
+            "rr_ratio": 0,
+            "risk": round(risk, 2),
+            "reward": round(reward, 2),
+            "reason": f"Stop loss on wrong side of entry (risk=${risk:.2f})"
+        }
+
+    rr_ratio = reward / risk
+    acceptable = rr_ratio >= min_rr_ratio
+
+    return {
+        "acceptable": acceptable,
+        "rr_ratio": round(rr_ratio, 2),
+        "risk": round(risk, 2),
+        "reward": round(reward, 2),
+        "min_required": min_rr_ratio,
+        "reason": None if acceptable else f"R/R {rr_ratio:.2f}:1 below minimum {min_rr_ratio}:1 (risk=${risk:.2f}, reward=${reward:.2f})"
+    }
+
+
 def check_volume_quality(
     current_volume: int,
     avg_volume: int,
-    min_relative_volume: float = 0.5,
+    min_relative_volume: float = 1.5,
     min_absolute_volume: int = 100000
 ) -> Dict[str, Any]:
     """
     Check if volume is sufficient for clean entry/exit.
 
     PRO TIP: Low volume = wide spreads, slippage, and trapped positions.
-    Never trade a stock that doesn't have enough liquidity to exit quickly.
+    Research (Zarattini 2024) shows 1.5x minimum relative volume is required
+    for reliable intraday setups. Ideally 3x+ for momentum plays ("Stocks in Play").
 
     Args:
         current_volume: Current session volume
         avg_volume: Average daily volume
-        min_relative_volume: Minimum ratio of current to average
+        min_relative_volume: Minimum ratio of current to average (default 1.5x per research)
         min_absolute_volume: Minimum absolute volume required
 
     Returns:
@@ -332,12 +432,16 @@ class ProTradeValidator:
         max_spread_percent: float = 0.15,
         max_sector_positions: int = 2,
         profit_protection_threshold: float = 300.0,
-        drawdown_limit_percent: float = 30.0
+        drawdown_limit_percent: float = 30.0,
+        min_atr_dollars: float = 0.75,
+        min_rr_ratio: float = 2.0
     ):
         self.max_spread_percent = max_spread_percent
         self.max_sector_positions = max_sector_positions
         self.profit_protection_threshold = profit_protection_threshold
         self.drawdown_limit_percent = drawdown_limit_percent
+        self.min_atr_dollars = min_atr_dollars
+        self.min_rr_ratio = min_rr_ratio
 
         # Track daily high for profit protection
         self.daily_high_pnl = 0.0
@@ -369,7 +473,11 @@ class ProTradeValidator:
         current_positions: List[Dict[str, Any]],
         daily_pnl: float,
         vix_level: float = 0,
-        minutes_since_open: int = 60
+        minutes_since_open: int = 60,
+        atr_dollars: float = 0,
+        stop_loss: float = 0,
+        take_profit: float = 0,
+        action: str = "BUY"
     ) -> Dict[str, Any]:
         """
         Run all pro-level validations on a potential trade.
@@ -393,17 +501,27 @@ class ProTradeValidator:
         if not spread_check["acceptable"]:
             rejections.append(f"Spread: {spread_check['reason']}")
 
-        # 3. Check volume
+        # 3. Check volume (1.5x minimum per research)
         volume_check = check_volume_quality(current_volume, avg_volume)
         if not volume_check["acceptable"]:
             rejections.append(f"Volume: {volume_check['reason']}")
 
-        # 4. Check sector correlation
+        # 4. Check ATR minimum (reject untradeable low-volatility stocks)
+        atr_check = check_atr_minimum(atr_dollars, price, self.min_atr_dollars)
+        if not atr_check["acceptable"]:
+            rejections.append(f"ATR: {atr_check['reason']}")
+
+        # 5. Check reward:risk ratio (minimum 2:1 per research)
+        rr_check = check_reward_risk_ratio(price, stop_loss, take_profit, action, self.min_rr_ratio)
+        if not rr_check["acceptable"]:
+            rejections.append(f"R/R: {rr_check['reason']}")
+
+        # 6. Check sector correlation
         correlation_check = check_sector_correlation(symbol, current_positions, self.max_sector_positions)
         if not correlation_check["acceptable"]:
             rejections.append(f"Correlation: {correlation_check['reason']}")
 
-        # 5. Check profit protection
+        # 7. Check profit protection
         profit_check = check_profit_protection(
             daily_pnl, self.daily_high_pnl,
             self.profit_protection_threshold, self.drawdown_limit_percent
@@ -411,7 +529,7 @@ class ProTradeValidator:
         if profit_check["should_halt"]:
             rejections.append(f"Profit protection: {profit_check['reason']}")
 
-        # 6. Check volatility regime (for adjustments, not rejection)
+        # 8. Check volatility regime (for position size/stop adjustments, not hard rejection)
         vol_check = check_volatility_regime(vix_level, atr_percent)
         adjustments["position_size_multiplier"] = vol_check["position_size_multiplier"]
         adjustments["stop_loss_multiplier"] = vol_check["stop_loss_multiplier"]
@@ -419,7 +537,9 @@ class ProTradeValidator:
         adjustments["volatility_regime"] = vol_check["regime"]
 
         if vol_check["regime"] == "HIGH_VOLATILITY":
-            warnings.append(f"High volatility detected - reducing size 50%, widening stops")
+            warnings.append(f"High volatility (VIX regime) — reducing size 50%, widening stops")
+        elif vol_check["regime"] == "ELEVATED":
+            warnings.append(f"Elevated volatility — reducing size 25%, widening stops")
 
         approved = len(rejections) == 0
 
@@ -432,6 +552,8 @@ class ProTradeValidator:
             "checks": {
                 "spread": spread_check,
                 "volume": volume_check,
+                "atr": atr_check,
+                "reward_risk": rr_check,
                 "correlation": correlation_check,
                 "profit_protection": profit_check,
                 "volatility": vol_check

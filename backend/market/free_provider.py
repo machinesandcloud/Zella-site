@@ -33,6 +33,28 @@ class FreeMarketDataProvider(MarketDataProvider):
     def get_universe(self) -> List[str]:
         return self._universe
 
+    def get_vix(self) -> float:
+        """
+        Fetch current VIX level from Yahoo Finance (^VIX).
+
+        Used for volatility regime detection:
+          VIX < 15  → calm market, momentum strategies favored
+          VIX 15-25 → normal, all strategies active
+          VIX > 25  → elevated, reduce size / widen stops
+          VIX > 30  → high volatility, mean-reversion mode
+
+        Returns:
+            VIX level as float, or 0.0 if unavailable
+        """
+        try:
+            payload = self._yahoo_quote(["^VIX"])
+            results = payload.get("quoteResponse", {}).get("result", [])
+            if results:
+                return float(results[0].get("regularMarketPrice", 0))
+        except Exception as e:
+            logger.warning(f"Failed to fetch VIX: {e}")
+        return 0.0
+
     def _yahoo_chart(self, symbol: str, interval: str, range_param: str) -> Dict[str, Any]:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
         params = {"interval": interval, "range": range_param}
