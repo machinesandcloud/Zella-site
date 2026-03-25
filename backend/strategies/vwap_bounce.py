@@ -35,9 +35,11 @@ class VWAPBounceStrategy(BaseStrategy):
         super().__init__(config)
         params = config.get("parameters", {})
         self.vwap_period = int(params.get("vwap_period", 20))
-        self.volume_threshold = float(params.get("volume_threshold", 1.0))  # Reduced from 1.5
-        self.min_wick_percent = float(params.get("min_wick_percent", 0.5))  # Reduced from 2.0
+        self.volume_threshold = float(params.get("volume_threshold", 1.5))  # Research minimum: 1.5x
+        self.min_wick_percent = float(params.get("min_wick_percent", 0.5))
         self.quantity = int(params.get("quantity", 1))
+        # Bars above/below VWAP required for trend mode (research: sustained trend > crossover)
+        self.trend_bars_required = int(params.get("trend_bars_required", 3))
 
     def generate_signals(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         """
@@ -65,54 +67,49 @@ class VWAPBounceStrategy(BaseStrategy):
         # Calculate price distance from VWAP
         vwap_distance = ((last["close"] - current_vwap) / current_vwap * 100) if current_vwap > 0 else 0
 
-        # Calculate ATR for stop loss
+        # Calculate ATR for stop loss / take profit
         atr_val = atr(df, 14).iloc[-1] if len(df) >= 14 else last["close"] * 0.02
 
-        # BUY Signal: Price crosses above VWAP
-        if (
+        # --- TREND MODE: sustained position above/below VWAP (Zarattini 2024 approach) ---
+        # Count consecutive bars on same side of VWAP — trend is stronger than one crossover
+        n = min(self.trend_bars_required, len(recent_df) - 1)
+        bars_above = all(
+            recent_df["close"].iloc[-i - 1] > vw.iloc[-i - 1]
+            for i in range(n)
+        )
+        bars_below = all(
+            recent_df["close"].iloc[-i - 1] < vw.iloc[-i - 1]
+            for i in range(n)
+        )
+
+        # --- CROSSOVER MODE: classic VWAP bounce ---
+        crossover_buy = (
             prev["close"] < prev_vwap
             and last["close"] > current_vwap
             and volume_ratio >= self.volume_threshold
             and wick_percent >= self.min_wick_percent
-        ):
-            # Confidence based on volume strength and VWAP distance
-            vol_confidence = min(1.0, volume_ratio / 3.0)  # Max confidence at 3x volume
-            cross_confidence = min(1.0, abs(vwap_distance) / 1.0)  # Distance from VWAP
-            confidence = 0.5 + (vol_confidence * 0.3) + (cross_confidence * 0.2)
-
-            return {
-                "action": "BUY",
-                "confidence": min(0.85, confidence),
-                "reason": f"VWAP Bounce: ${last['close']:.2f} > VWAP ${current_vwap:.2f}",
-                "stop_loss": last["close"] - (atr_val * 1.5),  # Tighter stop
-                "take_profit": last["close"] + (atr_val * 2.5),
-                "indicators": {
-                    "vwap": round(current_vwap, 2),
-                    "price": round(last["close"], 2),
-                    "vwap_distance_pct": round(vwap_distance, 2),
-                    "volume_ratio": round(volume_ratio, 2),
-                    "wick_percent": round(wick_percent, 2),
-                    "atr": round(atr_val, 2),
-                }
-            }
-
-        # SELL Signal: Price crosses below VWAP
-        if (
+        )
+        crossover_sell = (
             prev["close"] > prev_vwap
             and last["close"] < current_vwap
             and volume_ratio >= self.volume_threshold
             and wick_percent >= self.min_wick_percent
-        ):
+        )
+
+        # BUY Signal: crossover OR sustained trend above VWAP with volume
+        if crossover_buy or (bars_above and volume_ratio >= self.volume_threshold):
             vol_confidence = min(1.0, volume_ratio / 3.0)
             cross_confidence = min(1.0, abs(vwap_distance) / 1.0)
-            confidence = 0.5 + (vol_confidence * 0.3) + (cross_confidence * 0.2)
+            trend_bonus = 0.08 if bars_above and not crossover_buy else 0  # Trend mode is higher confidence
+            confidence = 0.50 + (vol_confidence * 0.30) + (cross_confidence * 0.20) + trend_bonus
 
+            mode = "Trend" if bars_above and not crossover_buy else "Bounce"
             return {
-                "action": "SELL",
-                "confidence": min(0.85, confidence),
-                "reason": f"VWAP Break: ${last['close']:.2f} < VWAP ${current_vwap:.2f}",
-                "stop_loss": last["close"] + (atr_val * 1.5),  # Tighter stop
-                "take_profit": last["close"] - (atr_val * 2.5),
+                "action": "BUY",
+                "confidence": min(0.88, confidence),
+                "reason": f"VWAP {mode}: ${last['close']:.2f} > VWAP ${current_vwap:.2f} ({volume_ratio:.1f}x vol)",
+                "stop_loss": last["close"] - (atr_val * 1.5),
+                "take_profit": last["close"] + (atr_val * 3.75),  # 2.5:1 R/R (was 1.67:1)
                 "indicators": {
                     "vwap": round(current_vwap, 2),
                     "price": round(last["close"], 2),
@@ -120,6 +117,32 @@ class VWAPBounceStrategy(BaseStrategy):
                     "volume_ratio": round(volume_ratio, 2),
                     "wick_percent": round(wick_percent, 2),
                     "atr": round(atr_val, 2),
+                    "mode": mode,
+                }
+            }
+
+        # SELL Signal: crossover OR sustained trend below VWAP with volume
+        if crossover_sell or (bars_below and volume_ratio >= self.volume_threshold):
+            vol_confidence = min(1.0, volume_ratio / 3.0)
+            cross_confidence = min(1.0, abs(vwap_distance) / 1.0)
+            trend_bonus = 0.08 if bars_below and not crossover_sell else 0
+            confidence = 0.50 + (vol_confidence * 0.30) + (cross_confidence * 0.20) + trend_bonus
+
+            mode = "Trend" if bars_below and not crossover_sell else "Break"
+            return {
+                "action": "SELL",
+                "confidence": min(0.88, confidence),
+                "reason": f"VWAP {mode}: ${last['close']:.2f} < VWAP ${current_vwap:.2f} ({volume_ratio:.1f}x vol)",
+                "stop_loss": last["close"] + (atr_val * 1.5),
+                "take_profit": last["close"] - (atr_val * 3.75),  # 2.5:1 R/R (was 1.67:1)
+                "indicators": {
+                    "vwap": round(current_vwap, 2),
+                    "price": round(last["close"], 2),
+                    "vwap_distance_pct": round(vwap_distance, 2),
+                    "volume_ratio": round(volume_ratio, 2),
+                    "wick_percent": round(wick_percent, 2),
+                    "atr": round(atr_val, 2),
+                    "mode": mode,
                 }
             }
 

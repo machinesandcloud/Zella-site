@@ -60,9 +60,13 @@ class MomentumStrategy(BaseStrategy):
         else:
             acceleration = 0
 
-        # Volume analysis (bonus, not requirement)
+        # Volume analysis — 1.5x minimum required (research standard for "Stocks in Play")
         vol_avg = df["volume"].tail(20).mean() if len(df) >= 20 else df["volume"].mean()
         volume_ratio = df["volume"].iloc[-1] / vol_avg if vol_avg > 0 else 1.0
+
+        # Hard volume gate: momentum without volume is a trap
+        if volume_ratio < 1.5:
+            return None
 
         # Calculate ATR for tight stops
         atr_val = atr(df, 14).iloc[-1] if len(df) >= 14 else current_price * 0.02
@@ -78,9 +82,9 @@ class MomentumStrategy(BaseStrategy):
             volume_bonus = min(0.10, (volume_ratio - 1.0) / 2.0) if volume_ratio > 1.0 else 0
             confidence = 0.50 + momentum_bonus + accel_bonus + volume_bonus
 
-            # Tight ATR-based stops for day trading
-            stop_loss = current_price - (atr_val * 1.5)  # Tighter stop
-            take_profit = current_price + (atr_val * 2.5)  # 1.67R target
+            # ATR-based stops: 1.5x stop, 3.75x target = 2.5:1 R/R (research minimum is 2:1)
+            stop_loss = current_price - (atr_val * 1.5)
+            take_profit = current_price + (atr_val * 3.75)
 
             return {
                 "action": "BUY",

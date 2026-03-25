@@ -3163,19 +3163,27 @@ class AutonomousEngine:
                 pass
 
             # TIME-OF-DAY THRESHOLDS - UPDATED per expert review
-            # Raised all thresholds to 70-80% minimum to only take high-quality trades
-            # Morning (9:30-11:30): Best opportunities, still require high confidence
-            # Midday (11:30-2:00): Lunch chop, very high thresholds
-            # Afternoon (2:00-3:45): Mixed, high thresholds
+            # Morning (9:30-11:30): Best opportunities, lower bar
+            # Midday (11:30-2:00): Lunch chop — raised to 82-86% (research: choppy, fakeouts)
+            # Afternoon (2:00-3:45): Mixed, moderate thresholds
             if mins_open < 120:  # First 2 hours (9:30-11:30) - PRIME TIME
                 min_confidence = 0.70 if self.risk_posture == "AGGRESSIVE" else 0.72 if self.risk_posture == "BALANCED" else 0.75
                 min_strategies = 2
             elif mins_open < 270:  # Lunch chop (11:30-2:00) - AVOID unless very strong
-                min_confidence = 0.78 if self.risk_posture == "AGGRESSIVE" else 0.80 if self.risk_posture == "BALANCED" else 0.82
+                min_confidence = 0.82 if self.risk_posture == "AGGRESSIVE" else 0.84 if self.risk_posture == "BALANCED" else 0.86
                 min_strategies = 3  # Require MORE strategy agreement during lunch
             else:  # Afternoon (2:00-3:45)
                 min_confidence = 0.72 if self.risk_posture == "AGGRESSIVE" else 0.75 if self.risk_posture == "BALANCED" else 0.78
                 min_strategies = 2
+
+            # DAY-OF-WEEK FILTER (research: Tue/Wed have 2-4% higher win rates)
+            # Mon/Fri: gap risk, options expiry noise → raise bar by 0.03
+            # Tue/Wed: most reliable trending days → lower bar by 0.03
+            day_of_week = now.weekday()  # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri
+            if day_of_week in (1, 2):  # Tuesday, Wednesday
+                min_confidence -= 0.03
+            elif day_of_week in (0, 4):  # Monday, Friday
+                min_confidence += 0.03
 
             # HIGH-RISK SYMBOLS (leveraged ETFs) - BLOCKED per expert review
             # These are too dangerous without proper validation
