@@ -60,12 +60,12 @@ class MomentumStrategy(BaseStrategy):
         else:
             acceleration = 0
 
-        # Volume analysis — 1.5x minimum required (research standard for "Stocks in Play")
+        # Volume analysis — 1.5x ideal; 1.2x hard minimum; below that skip
         vol_avg = df["volume"].tail(20).mean() if len(df) >= 20 else df["volume"].mean()
         volume_ratio = df["volume"].iloc[-1] / vol_avg if vol_avg > 0 else 1.0
 
-        # Hard volume gate: momentum without volume is a trap
-        if volume_ratio < 1.5:
+        # Volume gate: below 1.2x is a trap — penalise 1.2-1.5x via lower confidence
+        if volume_ratio < 1.2:
             return None
 
         # Calculate ATR for tight stops

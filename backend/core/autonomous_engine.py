@@ -3169,9 +3169,9 @@ class AutonomousEngine:
             if mins_open < 120:  # First 2 hours (9:30-11:30) - PRIME TIME
                 min_confidence = 0.70 if self.risk_posture == "AGGRESSIVE" else 0.72 if self.risk_posture == "BALANCED" else 0.75
                 min_strategies = 2
-            elif mins_open < 270:  # Lunch chop (11:30-2:00) - AVOID unless very strong
-                min_confidence = 0.82 if self.risk_posture == "AGGRESSIVE" else 0.84 if self.risk_posture == "BALANCED" else 0.86
-                min_strategies = 3  # Require MORE strategy agreement during lunch
+            elif mins_open < 270:  # Lunch chop (11:30-2:00) - higher bar but still tradeable
+                min_confidence = 0.76 if self.risk_posture == "AGGRESSIVE" else 0.78 if self.risk_posture == "BALANCED" else 0.80
+                min_strategies = 2
             else:  # Afternoon (2:00-3:45)
                 min_confidence = 0.72 if self.risk_posture == "AGGRESSIVE" else 0.75 if self.risk_posture == "BALANCED" else 0.78
                 min_strategies = 2

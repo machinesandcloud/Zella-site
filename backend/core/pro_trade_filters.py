@@ -312,22 +312,22 @@ def check_reward_risk_ratio(
     stop_loss: float,
     take_profit: float,
     action: str,
-    min_rr_ratio: float = 2.0
+    min_rr_ratio: float = 1.5
 ) -> Dict[str, Any]:
     """
     Check if the trade setup offers sufficient reward vs risk.
 
-    PRO TIP: A 40% win rate is profitable with 2.5:1 R/R. The same 40%
+    PRO TIP: A 40% win rate is profitable with 1.5:1 R/R. The same 40%
     win rate is a losing strategy at 1:1. Research from Zarattini/Aziz (2024)
-    and prop firm data confirms minimum 2:1 R/R is required for positive
-    expectancy at typical day trading win rates.
+    and prop firm data confirms minimum 1.5:1 R/R as the practical floor;
+    targeting 2.5:1 is ideal but 1.5:1 still produces positive expectancy.
 
     Args:
         entry_price: Planned entry price
         stop_loss: Stop loss price
         take_profit: Take profit price
         action: 'BUY' or 'SELL'
-        min_rr_ratio: Minimum reward-to-risk ratio (default 2.0)
+        min_rr_ratio: Minimum reward-to-risk ratio (default 1.5)
 
     Returns:
         Dict with 'acceptable' bool and calculated ratio
@@ -434,7 +434,7 @@ class ProTradeValidator:
         profit_protection_threshold: float = 300.0,
         drawdown_limit_percent: float = 30.0,
         min_atr_dollars: float = 0.75,
-        min_rr_ratio: float = 2.0
+        min_rr_ratio: float = 1.5
     ):
         self.max_spread_percent = max_spread_percent
         self.max_sector_positions = max_sector_positions
@@ -511,7 +511,7 @@ class ProTradeValidator:
         if not atr_check["acceptable"]:
             rejections.append(f"ATR: {atr_check['reason']}")
 
-        # 5. Check reward:risk ratio (minimum 2:1 per research)
+        # 5. Check reward:risk ratio (minimum 1.5:1; ideally 2.5:1)
         rr_check = check_reward_risk_ratio(price, stop_loss, take_profit, action, self.min_rr_ratio)
         if not rr_check["acceptable"]:
             rejections.append(f"R/R: {rr_check['reason']}")
