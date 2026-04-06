@@ -396,6 +396,7 @@ class MarketScreener:
         daily_df: Optional[pd.DataFrame] = None,
         market_status: Optional[Dict[str, Any]] = None,
         session_info: Optional[Dict[str, Any]] = None,
+        bypass_volume: bool = False,
     ) -> Dict[str, Any]:
         """
         Evaluate a symbol and return DETAILED results including pass/fail for each filter.
@@ -467,15 +468,19 @@ class MarketScreener:
         vol_passed = avg_volume >= volume_floor
         if not vol_passed and in_play:
             vol_passed = avg_volume >= in_play_volume_floor
+        if not vol_passed and bypass_volume:
+            vol_passed = True
         result["filters"]["volume"] = {
             "passed": vol_passed,
             "value": int(avg_volume),
             "threshold": int(volume_floor),
             "in_play_floor": int(in_play_volume_floor),
             "in_play": in_play,
+            "bypass_volume": bypass_volume,
             "reason": (
                 f"Avg vol {int(avg_volume):,} {'≥' if vol_passed else '<'} {int(volume_floor):,}"
                 + (f" (in-play floor {int(in_play_volume_floor):,})" if in_play else "")
+                + (" (TOP-N VOLUME BYPASS)" if bypass_volume and avg_volume < volume_floor else "")
             ),
         }
         if not vol_passed:
@@ -702,16 +707,43 @@ class MarketScreener:
         daily_data: Optional[Dict[str, pd.DataFrame]] = None,
         market_status: Optional[Dict[str, Dict[str, Any]]] = None,
         session_info: Optional[Dict[str, Any]] = None,
+        guarantee_top_n_volume: int = 10,
     ) -> tuple:
         """
         Rank all symbols and return both passed and failed evaluations.
         Returns: (passed_list, all_evaluations)
+
+        guarantee_top_n_volume: Always bypass the absolute volume threshold for the top N
+        symbols by actual current volume. This ensures the highest-volume stocks in the
+        universe always get fully evaluated even when market-wide volume is depressed.
+        Other filters (trend, rvol, ATR, etc.) still apply to them.
         """
+        # Pre-rank universe by actual volume so the top N are never blocked by the
+        # absolute volume threshold alone. We use avg daily volume from the raw bars.
+        volume_ranked: List[str] = []
+        if guarantee_top_n_volume > 0:
+            vol_estimates: List[tuple] = []
+            for symbol, df in market_data.items():
+                try:
+                    df_clean = df.dropna(subset=["volume"])
+                    if len(df_clean) >= 5:
+                        avg_vol = float(df_clean["volume"].mean())
+                        vol_estimates.append((symbol, avg_vol))
+                except Exception:
+                    pass
+            vol_estimates.sort(key=lambda x: x[1], reverse=True)
+            volume_ranked = [s for s, _ in vol_estimates[:guarantee_top_n_volume]]
+            if volume_ranked:
+                logger.info(
+                    f"Volume guarantee: top {len(volume_ranked)} by volume will bypass absolute threshold: {volume_ranked}"
+                )
+
         all_evaluations = []
         passed = []
 
         for symbol, df in market_data.items():
             daily_df = daily_data.get(symbol) if daily_data else None
+            bypass_vol = symbol in volume_ranked
             try:
                 evaluation = self.evaluate_symbol_detailed(
                     symbol,
@@ -721,6 +753,7 @@ class MarketScreener:
                     daily_df=daily_df,
                     market_status=market_status.get(symbol) if market_status else None,
                     session_info=session_info,
+                    bypass_volume=bypass_vol,
                 )
             except Exception as e:
                 logger.warning(f"Screener evaluation failed for {symbol}: {e}")
