@@ -3004,7 +3004,7 @@ class AutonomousEngine:
             return
 
         # TIME-OF-DAY FILTER: Avoid dangerous trading periods
-        now = datetime.now()
+        now = self._get_market_now()
         mins_open = minutes_since_open(now=now)
 
         # Avoid first 5 minutes (too volatile, spreads wide)
