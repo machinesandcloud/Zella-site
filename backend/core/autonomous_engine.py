@@ -1421,7 +1421,10 @@ class AutonomousEngine:
 
                     # Determine scan interval based on market hours
                     is_market_open = self._is_market_hours()
-                    current_scan_interval = self.scan_interval if is_market_open else 15
+                    # Pre-market: slow scans (90s) — no trades can execute anyway and
+                    # rapid scanning hits Alpaca IEX rate limits (causes 40+ symbols to
+                    # return no data). Regular hours: use configured scan_interval.
+                    current_scan_interval = self.scan_interval if is_market_open else 90
                     self.last_scan_time = datetime.now()
 
                     # 1. Scan market for opportunities

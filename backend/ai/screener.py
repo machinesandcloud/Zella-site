@@ -199,7 +199,13 @@ class MarketScreener:
         return pct, score, days_to_cover
 
     def _daily_trend_metrics(self, daily_df: Optional[pd.DataFrame]) -> Dict[str, Any]:
-        """Compute daily trend metrics using SMA20/50."""
+        """Compute daily trend metrics using SMA20/50.
+
+        Accepts BOTH confirmed uptrends and confirmed downtrends — only rejects
+        choppy/ranging stocks where price is caught between the two SMAs.
+        A confirmed downtrend is valid for short setups; requiring uptrend-only
+        blocks the entire short side of the market.
+        """
         if daily_df is None:
             return {"available": False}
         df_clean = daily_df.dropna(subset=["open", "high", "low", "close", "volume"])
@@ -209,13 +215,16 @@ class MarketScreener:
         sma20 = sma(close, 20).iloc[-1]
         sma50 = sma(close, 50).iloc[-1]
         last_close = float(close.iloc[-1])
-        trend_ok = last_close >= sma20 and sma20 >= sma50
+        is_uptrend = last_close >= sma20 and sma20 >= sma50
+        is_downtrend = last_close <= sma20 and sma20 <= sma50
+        trend_ok = is_uptrend or is_downtrend  # Accept either — reject ranging/choppy
         return {
             "available": True,
             "last_close": last_close,
             "sma20": float(sma20),
             "sma50": float(sma50),
             "trend_ok": trend_ok,
+            "trend_direction": "UP" if is_uptrend else "DOWN" if is_downtrend else "RANGING",
         }
 
     def calculate_gap(self, df: pd.DataFrame) -> Dict[str, float]:

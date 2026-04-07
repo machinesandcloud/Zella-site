@@ -58,7 +58,13 @@ services:
       - key: SCREENER_MIN_VOLATILITY
         value: "0.2"
       - key: SCREENER_MIN_RELATIVE_VOLUME
-        value: "1.0"
+        value: "1.5"
+      - key: SCREENER_MIN_RELATIVE_VOLUME_LOW_FLOAT
+        value: "2.0"
+      - key: SCREENER_MIN_RELATIVE_VOLUME_MID_FLOAT
+        value: "1.5"
+      - key: SCREENER_MIN_RELATIVE_VOLUME_LARGE_FLOAT
+        value: "1.2"
       - key: DATABASE_URL
         fromDatabase:
           name: zella-ai-db
