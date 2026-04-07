@@ -44,13 +44,19 @@ services:
       - key: ENABLED_STRATEGY_MODE
         value: "PROVEN_ONLY"
       - key: SCREENER_MIN_AVG_VOLUME
-        value: "100000"
+        value: "15000"
+      - key: SCREENER_MIN_AVG_VOLUME_LOW_FLOAT
+        value: "10000"
+      - key: SCREENER_MIN_AVG_VOLUME_MID_FLOAT
+        value: "20000"
+      - key: SCREENER_MIN_AVG_VOLUME_LARGE_FLOAT
+        value: "50000"
       - key: SCREENER_MIN_PRICE
         value: "1"
       - key: SCREENER_MAX_PRICE
         value: "500"
       - key: SCREENER_MIN_VOLATILITY
-        value: "0.002"
+        value: "0.2"
       - key: SCREENER_MIN_RELATIVE_VOLUME
         value: "1.0"
       - key: DATABASE_URL

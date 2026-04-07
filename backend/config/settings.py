@@ -79,14 +79,16 @@ class Settings(BaseSettings):
     polygon_api_key: str = ""
     polygon_base_url: str = "https://api.polygon.io"
 
-    # Screener defaults - lowered for pre-market and early morning trading
-    screener_min_avg_volume: float = 200000  # Balanced liquidity threshold
-    screener_min_avg_volume_low_float: float = 100000  # Low float names trade on lower averages
-    screener_min_avg_volume_mid_float: float = 300000  # Mid float liquidity target
-    screener_min_avg_volume_large_float: float = 1000000  # Large float should be very liquid
-    screener_min_price: float = 1.0  # Allow penny stocks
+    # Screener defaults — calibrated for Alpaca IEX data feed (IEX = ~0.3% of real market volume)
+    # Real AAPL volume: 60M/day → IEX shows ~200-300k. Thresholds must reflect IEX scale.
+    # Relative volume filter handles quality — absolute volume just blocks zero-liquidity stocks.
+    screener_min_avg_volume: float = 15000   # IEX scale floor (real equivalent ~5M/day)
+    screener_min_avg_volume_low_float: float = 10000   # Low float: smaller absolute volume ok
+    screener_min_avg_volume_mid_float: float = 20000   # Mid float (21M-500M shares)
+    screener_min_avg_volume_large_float: float = 50000  # Large float / ETFs
+    screener_min_price: float = 1.0  # Allow stocks above $1
     screener_max_price: float = 500.0  # Focus on tradeable range
-    screener_min_volatility: float = 0.002  # Lower volatility threshold
+    screener_min_volatility: float = 0.2  # ATR % minimum (0.2% = barely moves; 0.5%+ is active)
     screener_min_relative_volume: float = 1.5  # Balanced relative volume threshold
     screener_min_relative_volume_low_float: float = 2.0  # Low float momentum needs higher rvol
     screener_min_relative_volume_mid_float: float = 1.5

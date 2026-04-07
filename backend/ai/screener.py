@@ -538,16 +538,17 @@ class MarketScreener:
             result["rejection_reason"] = f"Price ${last_price:.2f} outside range ${self.min_price}-${self.max_price}"
             return result
 
-        # Volatility Filter
-        vol_check_passed = features["volatility"] >= self.min_volatility
+        # Volatility Filter — use ATR% (stable across sessions) not rolling std dev
+        # Rolling std dev of returns is near-zero pre-market/flat sessions; ATR is not
+        vol_check_passed = atr_percent >= self.min_volatility
         result["filters"]["volatility"] = {
             "passed": vol_check_passed,
-            "value": round(features["volatility"], 4),
+            "value": round(atr_percent, 2),
             "threshold": self.min_volatility,
-            "reason": f"Volatility {features['volatility']:.4f} {'≥' if vol_check_passed else '<'} {self.min_volatility}"
+            "reason": f"ATR% {atr_percent:.2f}% {'≥' if vol_check_passed else '<'} {self.min_volatility}%"
         }
         if not vol_check_passed:
-            result["rejection_reason"] = f"Low volatility ({features['volatility']:.4f} < {self.min_volatility})"
+            result["rejection_reason"] = f"Low ATR ({atr_percent:.2f}% < {self.min_volatility}%)"
             return result
 
         # Daily Trend Filter (SMA20/50 on daily bars)
@@ -826,7 +827,9 @@ class MarketScreener:
             return None
         if not (self.min_price <= last_price <= self.max_price):
             return None
-        if features["volatility"] < self.min_volatility:
+        atr_series_s = atr(df_clean, 14)
+        atr_pct_s = (float(atr_series_s.iloc[-1]) / last_price * 100) if len(atr_series_s) > 0 and last_price > 0 else 0.0
+        if atr_pct_s < self.min_volatility:
             return None
 
         # Daily Trend Filter (SMA20/50 on daily bars)
