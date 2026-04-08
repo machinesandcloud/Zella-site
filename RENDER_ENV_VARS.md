@@ -59,9 +59,14 @@ Last updated: 2026-04-08
 
 ## Screener — Volume (IEX-scale)
 
-> Alpaca IEX feed reports ~0.3% of real exchange volume.
-> AAPL's real 60M daily volume appears as ~200k on IEX.
-> These thresholds are calibrated for IEX, not full SIP data.
+> **Data feed: Alpaca IEX (free plan)** — IEX is a single exchange reporting ~3% of
+> total US equity volume. AAPL's real 60M daily volume appears as ~200k on IEX.
+> All volume thresholds are calibrated for IEX scale.
+>
+> **Implication:** VWAP and relative volume are directionally correct but not precise.
+> Upgrading to Alpaca Unlimited (SIP feed) would give full market data — one config
+> change (`ALPACA_DATA_FEED=sip`). Until then, Yahoo Finance supplements daily bars
+> for VIX, SPY trend, and daily volume context.
 
 | Key | Value | Notes |
 |-----|-------|-------|
