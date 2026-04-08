@@ -40,7 +40,7 @@ class BreakoutStrategy(BaseStrategy):
         super().__init__(config)
         params = config.get("parameters", {})
         self.breakout_lookback = int(params.get("breakout_lookback", 20))
-        self.volume_threshold = float(params.get("volume_threshold", 1.0))  # Reduced from 1.5
+        self.volume_threshold = float(params.get("volume_threshold", 1.5))
         self.quantity = int(params.get("quantity", 1))
 
     def generate_signals(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:

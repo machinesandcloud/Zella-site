@@ -18,7 +18,7 @@ captures the initial institutional activity and direction.
 """
 
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, time as dtime
 
 import pandas as pd
 
@@ -61,6 +61,28 @@ class ORBStrategy(BaseStrategy):
         if len(df) < opening_bars + 1:
             return None
 
+        # GUARD: Opening range must be COMPLETE before trading it.
+        # We need at least opening_bars + 2 extra bars of post-range price action
+        # to confirm the breakout is sustained, not just touching the range edge.
+        min_bars_needed = opening_bars + 2
+        if len(df) < min_bars_needed:
+            return None
+
+        # Also check wall-clock time if timestamps are available
+        if "date" in df.columns:
+            try:
+                import pandas as pd
+                last_ts = pd.to_datetime(df["date"].iloc[-1], utc=True)
+                import pytz
+                et = pytz.timezone("America/New_York")
+                last_ts_et = last_ts.astimezone(et)
+                market_open_today = last_ts_et.replace(hour=9, minute=30, second=0, microsecond=0)
+                minutes_since_open = (last_ts_et - market_open_today).total_seconds() / 60
+                if minutes_since_open < self.opening_range_minutes + 5:
+                    return None  # Range not yet closed
+            except Exception:
+                pass  # If timestamps fail, fall through to bar-count check
+
         # Calculate opening range
         opening_range = df.iloc[:opening_bars]
         range_high = opening_range["high"].max()
@@ -71,14 +93,16 @@ class ORBStrategy(BaseStrategy):
         last = df.iloc[-1]
         current_price = last["close"]
 
-        # Range must have some size (at least 0.1% - very loose)
+        # Range must have some size (at least 0.3% - meaningful move)
         range_pct = (range_size / range_low * 100) if range_low > 0 else 0
-        if range_pct < 0.1:
+        if range_pct < 0.3:
             return None
 
-        # Volume analysis (informational, not blocking)
-        vol_avg = df["volume"].mean()
+        # Volume must confirm breakout — require 1.5x average (not just informational)
+        vol_avg = df["volume"].tail(20).mean()
         volume_ratio = last["volume"] / vol_avg if vol_avg > 0 else 1.0
+        if volume_ratio < 1.5:
+            return None
 
         # Calculate ATR for stops
         atr_val = atr(df, 14).iloc[-1] if len(df) >= 14 else current_price * 0.02

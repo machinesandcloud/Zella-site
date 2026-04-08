@@ -2702,6 +2702,33 @@ class AutonomousEngine:
                     sell_signals = [s for s in strategy_signals if s["action"] == "SELL"]
 
                     # Calculate aggregate confidence
+                    # Inverse ETF conflict: if the opposite instrument already has a signal,
+                    # keep the higher-confidence one only to avoid contradictory positions
+                    INVERSE_PAIRS = {
+                        "SOXL": "SOXS", "SOXS": "SOXL",
+                        "TQQQ": "SQQQ", "SQQQ": "TQQQ",
+                        "UPRO": "SPXU", "SPXU": "UPRO",
+                        "UDOW": "SDOW", "SDOW": "UDOW",
+                        "TNA": "TZA", "TZA": "TNA",
+                        "LABU": "LABD", "LABD": "LABU",
+                        "NUGT": "DUST", "DUST": "NUGT",
+                        "JNUG": "JDST", "JDST": "JNUG",
+                    }
+                    inverse = INVERSE_PAIRS.get(symbol)
+                    if inverse:
+                        existing = next((a for a in analyzed if a.get("symbol") == inverse), None)
+                        if existing:
+                            existing_conf = existing.get("confidence", 0)
+                            current_conf = max((s["confidence"] for s in (buy_signals + sell_signals)), default=0)
+                            if current_conf <= existing_conf:
+                                self._add_decision(
+                                    "SKIPPED",
+                                    f"⛔ {symbol}: Inverse conflict with {inverse} ({existing_conf:.0%}) — dropping lower-confidence signal",
+                                    "INFO",
+                                    {"symbol": symbol, "inverse": inverse}
+                                )
+                                continue  # Drop the weaker one
+
                     if buy_signals:
                         avg_confidence = sum(s["confidence"] for s in buy_signals) / len(buy_signals)
                         strategy_names = [s["strategy"] for s in buy_signals]
@@ -3041,6 +3068,19 @@ class AutonomousEngine:
             # Don't trade in extreme conditions
             self._add_decision("REGIME_FILTER", "Extreme volatility detected - halting new entries", "HALT", {"regime": market_regime})
             return
+        elif market_regime == "TRENDING_DOWN":
+            # Confirmed downtrend: drop long signals, keep short signals only
+            before = len(opportunities)
+            opportunities = [o for o in opportunities if o.get("recommended_action") == "SELL"]
+            dropped = before - len(opportunities)
+            self._add_decision(
+                "REGIME_FILTER",
+                f"Confirmed downtrend — {dropped} long signals dropped, shorts only",
+                "WARNING",
+                {"regime": market_regime, "remaining": len(opportunities)}
+            )
+            if not opportunities:
+                return
 
         account = self.broker.get_account_summary()
         account_value = float(account.get("NetLiquidation", 0) or 0)
@@ -3421,14 +3461,14 @@ class AutonomousEngine:
                         elif setup_grade == "C":
                             factors = elite_analysis.get("grade_details", {}).get("factors", [])
                             factor_str = ", ".join(factors[:3]) if factors else "marginal"
-                            logger.info(f"⚠️ {symbol} GRADE C - Skipping marginal setup")
+                            logger.info(f"⚠️ {symbol} GRADE C - Trading at 50% size")
+                            elite_size_mult = 0.5  # Reduce size instead of skipping
                             self._add_decision(
                                 "CONSIDERING",
-                                f"⚠️ {symbol} GRADE C: Skipping marginal setup ({factor_str})",
+                                f"⚠️ {symbol} GRADE C: {factor_str} → 50% position size",
                                 "INFO",
-                                {"symbol": symbol, "grade": setup_grade, "factors": factors}
+                                {"symbol": symbol, "grade": setup_grade, "factors": factors, "size_mult": 0.5}
                             )
-                            continue
 
                         # Passed elite grading - log the analysis
                         factors = elite_analysis.get("grade_details", {}).get("factors", [])

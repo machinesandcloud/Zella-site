@@ -98,10 +98,15 @@ class VWAPBounceStrategy(BaseStrategy):
 
         # BUY Signal: crossover OR sustained trend above VWAP with volume
         if crossover_buy or (bars_above and volume_ratio >= self.volume_threshold):
-            vol_confidence = min(1.0, volume_ratio / 3.0)
-            cross_confidence = min(1.0, abs(vwap_distance) / 1.0)
-            trend_bonus = 0.08 if bars_above and not crossover_buy else 0  # Trend mode is higher confidence
-            confidence = 0.50 + (vol_confidence * 0.30) + (cross_confidence * 0.20) + trend_bonus
+            # Proximity: tighter to VWAP = cleaner bounce (reward <0.5% distance)
+            proximity_score = 0.20 if abs(vwap_distance) < 0.5 else 0.10 if abs(vwap_distance) < 1.0 else 0.03
+            # Wick: large rejection wick signals institutional support
+            wick_score = min(0.20, wick_percent / 5.0)
+            # Volume: reward 1.5x-3x range; diminishing above 3x (climactic, not sustainable)
+            vol_score = min(0.20, (volume_ratio - 1.5) / 1.5) if volume_ratio >= 1.5 else 0
+            # Trend bonus only for multi-bar sustained trend above VWAP
+            trend_bonus = 0.10 if bars_above and not crossover_buy else 0
+            confidence = 0.40 + proximity_score + wick_score + vol_score + trend_bonus
 
             mode = "Trend" if bars_above and not crossover_buy else "Bounce"
             return {
@@ -123,10 +128,11 @@ class VWAPBounceStrategy(BaseStrategy):
 
         # SELL Signal: crossover OR sustained trend below VWAP with volume
         if crossover_sell or (bars_below and volume_ratio >= self.volume_threshold):
-            vol_confidence = min(1.0, volume_ratio / 3.0)
-            cross_confidence = min(1.0, abs(vwap_distance) / 1.0)
-            trend_bonus = 0.08 if bars_below and not crossover_sell else 0
-            confidence = 0.50 + (vol_confidence * 0.30) + (cross_confidence * 0.20) + trend_bonus
+            proximity_score = 0.20 if abs(vwap_distance) < 0.5 else 0.10 if abs(vwap_distance) < 1.0 else 0.03
+            wick_score = min(0.20, wick_percent / 5.0)
+            vol_score = min(0.20, (volume_ratio - 1.5) / 1.5) if volume_ratio >= 1.5 else 0
+            trend_bonus = 0.10 if bars_below and not crossover_sell else 0
+            confidence = 0.40 + proximity_score + wick_score + vol_score + trend_bonus
 
             mode = "Trend" if bars_below and not crossover_sell else "Break"
             return {
