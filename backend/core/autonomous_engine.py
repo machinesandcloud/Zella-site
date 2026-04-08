@@ -3123,7 +3123,7 @@ class AutonomousEngine:
             return
 
         # Check if we're in power hour for signal boost
-        now = datetime.now()
+        now = self._get_market_now()  # Always ET-aware — datetime.now() is UTC on Render
         in_power_hour = is_power_hour(now.hour, now.minute)
         time_mult = power_hour_multiplier(now.hour, now.minute)
 
@@ -4079,7 +4079,13 @@ class AutonomousEngine:
         return None
 
     def _get_market_now(self) -> datetime:
-        """Get market-aware current time (Alpaca clock if available)."""
+        """Get market-aware current time in Eastern Time.
+
+        Render servers run in UTC. Always return a timezone-aware ET datetime
+        so that market_session() and minutes_since_open() work correctly.
+        Falling back to naive datetime.now() returns UTC which market_session
+        misinterprets as ET (4:55 PM UTC → 'afterhours' → minutes_since_open=-1).
+        """
         clock = self._get_market_clock()
         ts = clock.get("timestamp") if clock else None
         if isinstance(ts, datetime):
@@ -4089,7 +4095,8 @@ class AutonomousEngine:
                 return ts.astimezone(EASTERN)
             except Exception:
                 return ts
-        return datetime.now()
+        # Always use timezone-aware ET — never naive datetime.now() (UTC on Render)
+        return datetime.now(tz=EASTERN)
 
     def _get_market_session_info(self) -> Dict[str, Any]:
         """Return market session info using Alpaca clock when possible."""
