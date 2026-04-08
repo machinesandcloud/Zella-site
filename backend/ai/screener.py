@@ -518,9 +518,12 @@ class MarketScreener:
         result["data"]["halted"] = halted
         result["data"]["luld_indicator"] = luld_indicator
 
-        # Premarket Volume Filter (for gappers or during premarket)
+        # Premarket Volume Filter — only during actual pre-market session.
+        # Do NOT apply to gappers during regular hours: a stock that gapped down
+        # on tariff news at 9:30 AM already has regular-hours volume as confirmation.
+        # Applying this during regular hours blocks the entire gap-down universe.
         session = session_info or market_session()
-        premarket_required = has_timestamp and (session.get("premarket", False) or gap_info.get("is_gapper", False))
+        premarket_required = has_timestamp and session.get("premarket", False)
         if self.require_premarket_volume and premarket_required:
             premarket_passed = premarket_volume >= self.min_premarket_volume
             result["filters"]["premarket_volume"] = {
@@ -824,9 +827,9 @@ class MarketScreener:
         in_play, in_play_reason = self._in_play_flags(symbol, gap_info, relative_volume, premarket_volume)
         in_play_volume_floor = volume_floor * self.in_play_volume_multiplier
 
-        # Premarket volume filter (only if timestamps exist and we're in premarket or a gapper)
+        # Premarket volume filter — only during actual pre-market session
         session = market_session()
-        premarket_required = has_timestamp and (session.get("premarket", False) or gap_info.get("is_gapper", False))
+        premarket_required = has_timestamp and session.get("premarket", False)
         if self.require_premarket_volume and premarket_required:
             if premarket_volume < self.min_premarket_volume:
                 return None

@@ -3188,16 +3188,18 @@ class AutonomousEngine:
             elif day_of_week in (0, 4):  # Monday, Friday
                 min_confidence += 0.03
 
-            # HIGH-RISK SYMBOLS (leveraged ETFs) - BLOCKED per expert review
-            # These are too dangerous without proper validation
+            # HIGH-RISK SYMBOLS (leveraged ETFs) - require stronger signal, not full block
+            # SQQQ/SOXS are valid instruments in a downtrend market — blocking them entirely
+            # means missing directional plays. Raise the bar instead: 85% confidence + 3 strategies.
             if is_high_risk:
-                self._add_decision(
-                    "SKIPPED",
-                    f"🚫 {symbol}: Leveraged ETF blocked - too risky without validation",
-                    "WARNING",
-                    {"symbol": symbol, "reason": "high_risk_blocked"}
-                )
-                continue
+                if adjusted_confidence < 0.85 or num_strategies < 3:
+                    self._add_decision(
+                        "SKIPPED",
+                        f"⚠️ {symbol}: Leveraged ETF — needs 85%+ confidence and 3+ strategies (got {adjusted_confidence:.0%}, {num_strategies})",
+                        "INFO",
+                        {"symbol": symbol, "confidence": adjusted_confidence, "num_strategies": num_strategies}
+                    )
+                    continue
 
             # Trade frequency profile adjustments - UPDATED per expert review
             # No longer reducing confidence for "active" mode - quality over quantity
@@ -3325,11 +3327,12 @@ class AutonomousEngine:
                 )
 
                 if not validation["approved"]:
+                    rejection_summary = "; ".join(validation["rejections"]) if validation["rejections"] else "unknown"
                     for rejection in validation["rejections"]:
                         logger.info(f"⛔ {symbol} REJECTED: {rejection}")
                     self._add_decision(
                         "REJECTED",
-                        f"{symbol} failed pro validation",
+                        f"{symbol} failed pro validation: {rejection_summary}",
                         "INFO",
                         {"rejections": validation["rejections"], "symbol": symbol}
                     )
