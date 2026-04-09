@@ -274,20 +274,24 @@ def check_volatility_regime(
 def check_atr_minimum(
     atr_dollars: float,
     price: float,
-    min_atr_dollars: float = 0.75
+    min_atr_dollars: float = 0.75,
+    min_atr_percent: float = 0.5
 ) -> Dict[str, Any]:
     """
     Check if the stock has enough intraday range to be worth trading.
 
-    PRO TIP: A stock with a $0.20 ATR can't generate meaningful intraday
-    moves. You need at least $0.75 of daily range to have tradeable swings
-    after accounting for spread and slippage. Research shows $1.00+ ATR
-    produces the best risk-adjusted results.
+    Uses ATR% (relative to price) as the primary check so low-priced stocks
+    are not penalized by an absolute dollar threshold. A $6 stock needs a
+    $0.03 ATR (0.5%) to be tradeable — not $0.75 (12.5% of price).
+
+    The screener already checks ATR% >= 0.2%; this is a secondary guard
+    that also catches zero-movement stocks missed by the screener.
 
     Args:
         atr_dollars: Stock's ATR in dollar terms
         price: Current stock price
-        min_atr_dollars: Minimum ATR in dollars (default $0.75 per research)
+        min_atr_dollars: Absolute minimum (only enforced for stocks > $15)
+        min_atr_percent: Minimum ATR as % of price (primary check, all stocks)
 
     Returns:
         Dict with 'acceptable' bool and details
@@ -296,14 +300,30 @@ def check_atr_minimum(
         return {"acceptable": True, "atr_dollars": 0, "reason": "ATR data unavailable"}
 
     atr_percent = (atr_dollars / price) * 100
-    acceptable = atr_dollars >= min_atr_dollars
+
+    # Primary check: ATR% relative to price (works for all price levels)
+    pct_ok = atr_percent >= min_atr_percent
+
+    # Secondary check: absolute minimum only for stocks above $15
+    # (a $6 stock with $0.03 ATR = 0.5% is fine; a $50 stock with $0.03 ATR is dead)
+    abs_ok = True
+    if price > 15:
+        abs_ok = atr_dollars >= min_atr_dollars
+
+    acceptable = pct_ok and abs_ok
+
+    reason = None
+    if not pct_ok:
+        reason = f"ATR {atr_percent:.2f}% below minimum {min_atr_percent:.1f}% of price"
+    elif not abs_ok:
+        reason = f"ATR ${atr_dollars:.2f} below minimum ${min_atr_dollars:.2f}"
 
     return {
         "acceptable": acceptable,
         "atr_dollars": round(atr_dollars, 2),
         "atr_percent": round(atr_percent, 2),
         "min_required": min_atr_dollars,
-        "reason": None if acceptable else f"ATR ${atr_dollars:.2f} below minimum ${min_atr_dollars:.2f}"
+        "reason": reason
     }
 
 
@@ -374,32 +394,53 @@ def check_volume_quality(
     current_volume: int,
     avg_volume: int,
     min_relative_volume: float = 1.5,
-    min_absolute_volume: int = 100000
+    min_absolute_volume: int = 10000,
+    minutes_since_open: int = 60
 ) -> Dict[str, Any]:
     """
     Check if volume is sufficient for clean entry/exit.
 
-    PRO TIP: Low volume = wide spreads, slippage, and trapped positions.
-    Research (Zarattini 2024) shows 1.5x minimum relative volume is required
-    for reliable intraday setups. Ideally 3x+ for momentum plays ("Stocks in Play").
+    Uses time-adjusted RVol so that partial-session volume is compared fairly
+    against a pro-rated daily average. At 10:00 AM (30 min in), we'd expect
+    roughly 12% of daily volume — so current_volume / (avg_volume * 0.12).
+
+    The screener already validates RVol using bar-level data; this is a
+    secondary check against completely dead stocks. Absolute minimum is
+    calibrated for Alpaca IEX feed (~3% of real market volume).
 
     Args:
-        current_volume: Current session volume
-        avg_volume: Average daily volume
-        min_relative_volume: Minimum ratio of current to average (default 1.5x per research)
-        min_absolute_volume: Minimum absolute volume required
+        current_volume: Current session volume (IEX scale)
+        avg_volume: Average daily volume (IEX scale)
+        min_relative_volume: Minimum time-adjusted relative volume
+        min_absolute_volume: Minimum absolute IEX-scale volume (default 10k)
+        minutes_since_open: Minutes elapsed since market open
 
     Returns:
         Dict with 'acceptable' bool and details
     """
     if avg_volume <= 0:
         return {
-            "acceptable": False,
-            "reason": "No average volume data",
+            "acceptable": True,  # No data — don't block; screener already checked
+            "reason": None,
             "relative_volume": 0
         }
 
-    relative_volume = current_volume / avg_volume if avg_volume > 0 else 0
+    # Time-adjust expected volume: use a simple linear model
+    # First 30 min (~12% of day), then 30-60 min (~8%), then ~5% per 30 min thereafter
+    session_minutes = 390  # 6.5 hour trading day
+    elapsed = max(1, min(minutes_since_open, session_minutes))
+    # Volume distribution: first hour has ~25% of daily volume, rest is spread evenly
+    if elapsed <= 30:
+        expected_fraction = 0.12 * (elapsed / 30)
+    elif elapsed <= 60:
+        expected_fraction = 0.12 + 0.13 * ((elapsed - 30) / 30)
+    else:
+        expected_fraction = 0.25 + 0.75 * ((elapsed - 60) / (session_minutes - 60))
+
+    expected_fraction = max(0.05, min(expected_fraction, 1.0))
+    adjusted_avg = avg_volume * expected_fraction
+
+    relative_volume = current_volume / adjusted_avg if adjusted_avg > 0 else 0
 
     volume_ok = current_volume >= min_absolute_volume
     relative_ok = relative_volume >= min_relative_volume
@@ -410,13 +451,14 @@ def check_volume_quality(
     if not volume_ok:
         reasons.append(f"Volume {current_volume:,} below minimum {min_absolute_volume:,}")
     if not relative_ok:
-        reasons.append(f"Relative volume {relative_volume:.2f}x below minimum {min_relative_volume}x")
+        reasons.append(f"Relative volume {relative_volume:.2f}x below minimum {min_relative_volume}x (time-adjusted)")
 
     return {
         "acceptable": acceptable,
         "current_volume": current_volume,
         "avg_volume": avg_volume,
         "relative_volume": round(relative_volume, 2),
+        "expected_fraction": round(expected_fraction, 3),
         "reason": "; ".join(reasons) if reasons else None
     }
 
@@ -501,8 +543,11 @@ class ProTradeValidator:
         if not spread_check["acceptable"]:
             rejections.append(f"Spread: {spread_check['reason']}")
 
-        # 3. Check volume (1.5x minimum per research)
-        volume_check = check_volume_quality(current_volume, avg_volume)
+        # 3. Check volume (time-adjusted RVol — partial-session vs pro-rated daily avg)
+        volume_check = check_volume_quality(
+            current_volume, avg_volume,
+            minutes_since_open=minutes_since_open
+        )
         if not volume_check["acceptable"]:
             rejections.append(f"Volume: {volume_check['reason']}")
 
