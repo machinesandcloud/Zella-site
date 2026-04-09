@@ -3298,6 +3298,25 @@ class AutonomousEngine:
                 )
                 continue
 
+            # HIGH-CONFIDENCE SINGLE-STRATEGY EXCEPTION
+            # In prime morning hours (first 2h) a single strategy at ≥80% confidence is
+            # more reliable than two strategies at 70%. The ProValidator and circuit breakers
+            # still act as backstops, so allowing it here is safe.
+            single_strat_confidence_threshold = 0.75 if self.risk_posture == "AGGRESSIVE" else 0.78
+            if (
+                num_strategies == 1
+                and mins_open < 120
+                and adjusted_confidence >= single_strat_confidence_threshold
+                and not is_high_risk
+            ):
+                min_strategies = 1
+                self._add_decision(
+                    "CONSIDERING",
+                    f"✅ {symbol}: Single high-confidence strategy exception ({strategies[0] if strategies else '?'} @ {adjusted_confidence:.0%})",
+                    "INFO",
+                    {"symbol": symbol, "num_strategies": num_strategies, "confidence": adjusted_confidence}
+                )
+
             if num_strategies < min_strategies:
                 self._add_decision(
                     "CONSIDERING",
