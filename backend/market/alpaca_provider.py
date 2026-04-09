@@ -97,7 +97,7 @@ class AlpacaMarketDataProvider(MarketDataProvider):
 
         # Historical bars cache with short TTL for freshness
         self._bars_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
-        self._bars_cache_ttl = 15.0  # 15 seconds - faster for intraday trading
+        self._bars_cache_ttl = 30.0  # 30 seconds - keeps stale data available during rate limit backoffs
         self._bars_cache_lock = threading.Lock()
 
         # Rate limiting - ONLY on actual 429 errors, no preemptive delays
@@ -521,9 +521,15 @@ class AlpacaMarketDataProvider(MarketDataProvider):
         if cached is not None:
             return cached
 
-        # If rate limited, return empty (don't block)
+        # If rate limited, return stale cache if available rather than empty
+        # Returning empty causes the entire scan to show 0/101 symbols with data
         if self._is_rate_limited():
-            logger.debug(f"Rate limited, skipping bars fetch for {symbol}")
+            with self._bars_cache_lock:
+                stale = self._bars_cache.get(cache_key)
+            if stale:
+                logger.debug(f"Rate limited — returning stale cache for {symbol}")
+                return stale[1]  # (timestamp, data) tuple
+            logger.debug(f"Rate limited and no cache for {symbol} — skipping")
             return []
 
         try:
