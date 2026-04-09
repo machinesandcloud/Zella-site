@@ -674,7 +674,7 @@ class AutonomousEngine:
             if symbol not in self._symbol_states:
                 self._symbol_states[symbol] = SymbolState(symbol=symbol)
             state = self._symbol_states[symbol]
-            state.last_seen = datetime.now()
+            state.last_seen = datetime.now(tz=EASTERN)
             return state
 
     def _prune_background_tasks(self) -> None:
@@ -785,7 +785,7 @@ class AutonomousEngine:
                 # Same signal as before - ignore to prevent duplicate trades
                 return False
             state.last_signal = signal
-            state.last_signal_time = datetime.now()
+            state.last_signal_time = datetime.now(tz=EASTERN)
             return True
 
     def _create_trade_context(
@@ -2857,6 +2857,10 @@ class AutonomousEngine:
             Tuple of (can_trade: bool, reason: str)
         """
         # === CIRCUIT BREAKER 1: SPY volatility ===
+        # Two-part check:
+        #   a) Hard halt if SPY is CURRENTLY moving fast (panic/crash in progress)
+        #   b) Reduced threshold if SPY is down big from open BUT has since stabilized
+        # This prevents blocking ALL trading for the rest of the day after a gap-down open.
         try:
             with self._cache_lock:
                 spy_data = self._spy_data_cache
@@ -2865,17 +2869,32 @@ class AutonomousEngine:
                 spy_current = float(spy_data.iloc[-1].get("close", 0))
                 if spy_open > 0:
                     spy_change_pct = abs((spy_current - spy_open) / spy_open * 100)
-                    # Halt on >2.5% SPY move (lowered from 3%)
-                    if spy_change_pct > 2.5:
+
+                    # Check if the market has stabilized in the last 6 bars (30 min)
+                    # If recent range < 1.5%, trading at the new level is acceptable
+                    recent_bars = spy_data.tail(6)
+                    recent_high = recent_bars["high"].max() if "high" in recent_bars.columns else spy_current
+                    recent_low = recent_bars["low"].min() if "low" in recent_bars.columns else spy_current
+                    recent_range_pct = ((recent_high - recent_low) / recent_low * 100) if recent_low > 0 else 0
+                    market_stabilized = recent_range_pct < 1.5
+
+                    # Hard halt: SPY moved >4% from open AND market is still moving
+                    if spy_change_pct > 4.0 and not market_stabilized:
                         self._add_decision(
                             "CIRCUIT_BREAKER",
-                            f"🚨 HALT: SPY moved {spy_change_pct:.1f}% - extreme volatility",
+                            f"🚨 HALT: SPY moved {spy_change_pct:.1f}% and still volatile (range {recent_range_pct:.1f}%)",
                             "CRITICAL",
-                            {"spy_change": spy_change_pct, "threshold": 2.5}
+                            {"spy_change": spy_change_pct, "recent_range_pct": recent_range_pct}
                         )
-                        return False, f"Circuit breaker: SPY moved {spy_change_pct:.1f}% - extreme volatility"
-                    # Warning on >1.5% SPY move
-                    if spy_change_pct > 1.5:
+                        return False, f"Circuit breaker: SPY moved {spy_change_pct:.1f}% - extreme volatility in progress"
+
+                    # Soft halt: SPY moved >4% AND market hasn't stabilized yet (< 6 bars of calm)
+                    if spy_change_pct > 4.0:
+                        # Market stabilized at new level — allow trading with elevated awareness
+                        logger.info(f"⚠️ SPY moved {spy_change_pct:.1f}% but stabilized (range {recent_range_pct:.1f}%) — allowing cautious trading")
+
+                    # Warning on >2% SPY move
+                    if spy_change_pct > 2.0:
                         logger.warning(f"⚠️ SPY moved {spy_change_pct:.1f}% - elevated volatility")
         except Exception as e:
             logger.debug(f"Circuit breaker check error: {e}")
@@ -3600,7 +3619,7 @@ class AutonomousEngine:
                         if bars:
                             edge_data = pd.DataFrame(bars)
                             symbol_state.bars_cache = edge_data
-                            symbol_state.bars_cache_time = datetime.now()
+                            symbol_state.bars_cache_time = datetime.now(tz=EASTERN)
 
                     if edge_data is not None and len(edge_data) > 50:
                         with self._edge_lock:
