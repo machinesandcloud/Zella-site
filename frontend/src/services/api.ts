@@ -399,6 +399,11 @@ export const runBacktest = async (payload: Record<string, unknown>) => {
   return data;
 };
 
+export const fetchBacktestStrategies = async (): Promise<Array<{ name: string; display_name: string }>> => {
+  const { data } = await api.get("/api/backtest/strategies");
+  return data;
+};
+
 export const fetchStrategies = async () => {
   const { data } = await api.get("/api/strategies");
   return data;
