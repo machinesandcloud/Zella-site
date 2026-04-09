@@ -35,7 +35,7 @@ class VWAPBounceStrategy(BaseStrategy):
         super().__init__(config)
         params = config.get("parameters", {})
         self.vwap_period = int(params.get("vwap_period", 20))
-        self.volume_threshold = float(params.get("volume_threshold", 1.5))  # Research minimum: 1.5x
+        self.volume_threshold = float(params.get("volume_threshold", 1.0))  # Was 1.5x — IEX feed shows ~3% of real volume so ratio comparisons are noisy; screener already passed RVol > 1.5x upstream
         self.min_wick_percent = float(params.get("min_wick_percent", 0.5))
         self.quantity = int(params.get("quantity", 1))
         # Bars above/below VWAP required for trend mode (research: sustained trend > crossover)

@@ -32,7 +32,7 @@ class MomentumStrategy(BaseStrategy):
         super().__init__(config)
         params = config.get("parameters", {})
         self.momentum_lookback = int(params.get("momentum_lookback", 10))
-        self.min_momentum = float(params.get("min_momentum", 1.5))
+        self.min_momentum = float(params.get("min_momentum", 0.8))  # Was 1.5% — too high for IEX 5-min bars; 0.8% captures real intraday moves
         self.quantity = int(params.get("quantity", 1))
 
     def generate_signals(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:

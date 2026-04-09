@@ -84,30 +84,44 @@ class TrendFollowStrategy(BaseStrategy):
         # Calculate ATR
         atr_val = atr(df, 14).iloc[-1] if len(df) >= 14 else current_price * 0.02
 
-        # PULLBACK FILTER: Only enter when price has recently touched or is near EMA20.
-        # Entering mid-trend when price is extended above/below EMA20 produces late entries
-        # with little remaining upside and high risk of mean-reversion into the stop.
-        # Require price came within 1.5% of fast EMA in the last 3 bars.
+        # TWO VALID ENTRY TYPES — both are structurally sound, neither is "mid-trend extended":
+        #
+        # 1. FRESH BREAKOUT (trend_bars <= 5): EMA cross just happened — best possible entry,
+        #    price is near EMA20 by definition, full trend length ahead.
+        #
+        # 2. PULLBACK ENTRY: Trend is established, but price has pulled back and is touching
+        #    or near EMA20 (within 1.5%). This is "buy the dip in an uptrend."
+        #
+        # What we block: mid-trend entries where price has been running for 10+ bars AND
+        # is extended >1.5% above EMA20 — those have little upside and tight-stop risk.
         recent_closes = df["close"].tail(3)
         recent_fast = fast.tail(3)
         proximity_pct = ((recent_closes - recent_fast).abs() / recent_fast * 100).min()
-        price_near_ema = proximity_pct <= 1.5
 
-        # BUY Signal: Uptrend (Fast EMA > Slow EMA) WITH pullback confirmation
-        if current_fast > current_slow and price_near_ema:
+        fresh_breakout = trend_bars <= 5           # Just crossed — best entry
+        price_near_ema = proximity_pct <= 1.5      # Pullback to EMA — quality re-entry
+        valid_entry = fresh_breakout or price_near_ema
+
+        # BUY Signal: Uptrend (Fast EMA > Slow EMA) with fresh breakout OR pullback
+        if current_fast > current_slow and valid_entry:
             # Confidence based on trend strength
-            spread_confidence = min(0.3, ema_spread_abs / 3.0)  # Stronger spread = better
-            duration_confidence = min(0.3, trend_bars / 20.0)  # Longer trend = better
+            spread_confidence = min(0.3, ema_spread_abs / 3.0)
+            duration_confidence = min(0.3, trend_bars / 20.0)
             volume_confidence = min(0.2, (volume_ratio - 1) * 0.1) if volume_ratio > 1 else 0
-            # Proximity bonus: tighter to EMA = better entry
-            proximity_bonus = min(0.1, (1.5 - proximity_pct) / 15.0) if proximity_pct < 1.5 else 0
+            # Entry type bonus — fresh breakout gets a boost (best possible entry point)
+            if fresh_breakout:
+                entry_bonus = 0.10
+                entry_type = f"fresh cross ({trend_bars} bars)"
+            else:
+                entry_bonus = min(0.10, (1.5 - proximity_pct) / 15.0)
+                entry_type = f"pullback {proximity_pct:.1f}% from EMA"
 
-            confidence = 0.3 + spread_confidence + duration_confidence + volume_confidence + proximity_bonus
+            confidence = 0.3 + spread_confidence + duration_confidence + volume_confidence + entry_bonus
 
             return {
                 "action": "BUY",
                 "confidence": min(0.95, confidence),
-                "reason": f"Uptrend pullback: EMA{self.fast_ema} ${current_fast:.2f} > EMA{self.slow_ema} ${current_slow:.2f} (+{ema_spread:.2f}%), {trend_bars} bars, price {proximity_pct:.1f}% from EMA",
+                "reason": f"Uptrend {entry_type}: EMA{self.fast_ema} ${current_fast:.2f} > EMA{self.slow_ema} ${current_slow:.2f} (+{ema_spread:.2f}%)",
                 "stop_loss": current_slow - (atr_val * 1),
                 "take_profit": current_price + (atr_val * 3),
                 "indicators": {
@@ -123,20 +137,24 @@ class TrendFollowStrategy(BaseStrategy):
                 }
             }
 
-        # SELL Signal: Downtrend (Fast EMA < Slow EMA) WITH pullback confirmation
-        # Only fire when price has pulled back up toward EMA20 (not when already extended below)
-        if current_fast < current_slow and price_near_ema:
+        # SELL Signal: Downtrend (Fast EMA < Slow EMA) with fresh cross OR pullback
+        if current_fast < current_slow and valid_entry:
             spread_confidence = min(0.3, ema_spread_abs / 3.0)
             duration_confidence = min(0.3, trend_bars / 20.0)
             volume_confidence = min(0.2, (volume_ratio - 1) * 0.1) if volume_ratio > 1 else 0
-            proximity_bonus = min(0.1, (1.5 - proximity_pct) / 15.0) if proximity_pct < 1.5 else 0
+            if fresh_breakout:
+                entry_bonus = 0.10
+                entry_type = f"fresh cross ({trend_bars} bars)"
+            else:
+                entry_bonus = min(0.10, (1.5 - proximity_pct) / 15.0)
+                entry_type = f"pullback {proximity_pct:.1f}% from EMA"
 
-            confidence = 0.3 + spread_confidence + duration_confidence + volume_confidence + proximity_bonus
+            confidence = 0.3 + spread_confidence + duration_confidence + volume_confidence + entry_bonus
 
             return {
                 "action": "SELL",
                 "confidence": min(0.95, confidence),
-                "reason": f"Downtrend pullback: EMA{self.fast_ema} ${current_fast:.2f} < EMA{self.slow_ema} ${current_slow:.2f} ({ema_spread:.2f}%), {trend_bars} bars, price {proximity_pct:.1f}% from EMA",
+                "reason": f"Downtrend {entry_type}: EMA{self.fast_ema} ${current_fast:.2f} < EMA{self.slow_ema} ${current_slow:.2f} ({ema_spread:.2f}%)",
                 "stop_loss": current_slow + (atr_val * 1),
                 "take_profit": current_price - (atr_val * 3),
                 "indicators": {
