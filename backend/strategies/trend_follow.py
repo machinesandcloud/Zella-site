@@ -84,20 +84,31 @@ class TrendFollowStrategy(BaseStrategy):
         # Calculate ATR
         atr_val = atr(df, 14).iloc[-1] if len(df) >= 14 else current_price * 0.02
 
-        # BUY Signal: Uptrend (Fast EMA > Slow EMA)
-        if current_fast > current_slow:
+        # PULLBACK FILTER: Only enter when price has recently touched or is near EMA20.
+        # Entering mid-trend when price is extended above/below EMA20 produces late entries
+        # with little remaining upside and high risk of mean-reversion into the stop.
+        # Require price came within 1.5% of fast EMA in the last 3 bars.
+        recent_closes = df["close"].tail(3)
+        recent_fast = fast.tail(3)
+        proximity_pct = ((recent_closes - recent_fast).abs() / recent_fast * 100).min()
+        price_near_ema = proximity_pct <= 1.5
+
+        # BUY Signal: Uptrend (Fast EMA > Slow EMA) WITH pullback confirmation
+        if current_fast > current_slow and price_near_ema:
             # Confidence based on trend strength
             spread_confidence = min(0.3, ema_spread_abs / 3.0)  # Stronger spread = better
             duration_confidence = min(0.3, trend_bars / 20.0)  # Longer trend = better
             volume_confidence = min(0.2, (volume_ratio - 1) * 0.1) if volume_ratio > 1 else 0
+            # Proximity bonus: tighter to EMA = better entry
+            proximity_bonus = min(0.1, (1.5 - proximity_pct) / 15.0) if proximity_pct < 1.5 else 0
 
-            confidence = 0.3 + spread_confidence + duration_confidence + volume_confidence
+            confidence = 0.3 + spread_confidence + duration_confidence + volume_confidence + proximity_bonus
 
             return {
                 "action": "BUY",
                 "confidence": min(0.95, confidence),
-                "reason": f"Uptrend: Fast EMA ${current_fast:.2f} > Slow EMA ${current_slow:.2f} (+{ema_spread:.2f}%), {trend_bars} bars",
-                "stop_loss": current_slow - (atr_val * 1),  # Stop below slow EMA
+                "reason": f"Uptrend pullback: EMA{self.fast_ema} ${current_fast:.2f} > EMA{self.slow_ema} ${current_slow:.2f} (+{ema_spread:.2f}%), {trend_bars} bars, price {proximity_pct:.1f}% from EMA",
+                "stop_loss": current_slow - (atr_val * 1),
                 "take_profit": current_price + (atr_val * 3),
                 "indicators": {
                     "fast_ema": round(current_fast, 2),
@@ -108,21 +119,24 @@ class TrendFollowStrategy(BaseStrategy):
                     "price": round(current_price, 2),
                     "volume_ratio": round(volume_ratio, 2),
                     "atr": round(atr_val, 2),
+                    "proximity_to_ema_pct": round(proximity_pct, 2),
                 }
             }
 
-        # SELL Signal: Downtrend (Fast EMA < Slow EMA)
-        if current_fast < current_slow:
+        # SELL Signal: Downtrend (Fast EMA < Slow EMA) WITH pullback confirmation
+        # Only fire when price has pulled back up toward EMA20 (not when already extended below)
+        if current_fast < current_slow and price_near_ema:
             spread_confidence = min(0.3, ema_spread_abs / 3.0)
             duration_confidence = min(0.3, trend_bars / 20.0)
             volume_confidence = min(0.2, (volume_ratio - 1) * 0.1) if volume_ratio > 1 else 0
+            proximity_bonus = min(0.1, (1.5 - proximity_pct) / 15.0) if proximity_pct < 1.5 else 0
 
-            confidence = 0.3 + spread_confidence + duration_confidence + volume_confidence
+            confidence = 0.3 + spread_confidence + duration_confidence + volume_confidence + proximity_bonus
 
             return {
                 "action": "SELL",
                 "confidence": min(0.95, confidence),
-                "reason": f"Downtrend: Fast EMA ${current_fast:.2f} < Slow EMA ${current_slow:.2f} ({ema_spread:.2f}%), {trend_bars} bars",
+                "reason": f"Downtrend pullback: EMA{self.fast_ema} ${current_fast:.2f} < EMA{self.slow_ema} ${current_slow:.2f} ({ema_spread:.2f}%), {trend_bars} bars, price {proximity_pct:.1f}% from EMA",
                 "stop_loss": current_slow + (atr_val * 1),
                 "take_profit": current_price - (atr_val * 3),
                 "indicators": {
@@ -134,6 +148,7 @@ class TrendFollowStrategy(BaseStrategy):
                     "price": round(current_price, 2),
                     "volume_ratio": round(volume_ratio, 2),
                     "atr": round(atr_val, 2),
+                    "proximity_to_ema_pct": round(proximity_pct, 2),
                 }
             }
 

@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     enabled_strategy_mode: str = "PROVEN_ONLY"  # PROVEN_ONLY | ALL - only use validated strategies
     min_confidence_threshold: float = 0.70  # Was 0.55-0.65 - raised to 70% minimum
     min_strategies_required: int = 2  # Require at least 2 strategies to agree
+    allow_short_selling: bool = False  # Short selling requires margin account + borrow availability
 
     # Portfolio risk settings - NEW per expert review
     max_sector_exposure_pct: float = 30.0  # Max 30% of portfolio in one sector

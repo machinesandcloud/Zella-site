@@ -3206,6 +3206,19 @@ class AutonomousEngine:
             num_strategies = opp.get("num_strategies", 0)
             strategies = opp.get("strategies", [])
 
+            # SHORTING GUARD: Skip SELL signals unless short selling is explicitly enabled.
+            # Short selling requires a margin account with confirmed borrow availability.
+            # On a cash/paper account, short orders silently fail or get rejected by the broker.
+            allow_shorting = getattr(settings, "allow_short_selling", False)
+            if action == "SELL" and not allow_shorting:
+                self._add_decision(
+                    "SKIPPED",
+                    f"⛔ {symbol}: Short selling disabled (SELL signal skipped)",
+                    "INFO",
+                    {"symbol": symbol, "confidence": confidence, "reason": "short_selling_disabled"}
+                )
+                continue
+
             # Apply power hour boost to confidence
             adjusted_confidence = confidence * time_mult
 
@@ -3575,10 +3588,12 @@ class AutonomousEngine:
                         atr_value = price * 0.02
 
                 # ATR-based position sizing (Warrior Trading formula)
-                # TIGHTENED: Risk 0.5-1.5% of account, stop at 1.5x ATR
-                # Smaller losses = more chances to be profitable
+                # Stop at 2x ATR — matches the monitoring system which also fires at 2x ATR.
+                # Using the same multiplier everywhere ensures position sizing is accurate
+                # (1.5x here vs 2x in monitoring was causing undersized positions and 0.75:1
+                # effective R at the 1R scale-out, which drags expectancy below breakeven).
                 base_risk_percent = 0.005 if self.risk_posture == "DEFENSIVE" else 0.01 if self.risk_posture == "BALANCED" else 0.015
-                base_atr_multiplier = 1.5  # 1.5x ATR stop loss (tighter than before)
+                base_atr_multiplier = 2.0  # 2x ATR stop — matches monitoring stop in position manager
 
                 # Apply volatility regime adjustments from pro validator
                 # AND elite system grade multiplier (A=100%, B=75%, etc.)
