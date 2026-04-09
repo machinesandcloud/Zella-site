@@ -98,8 +98,12 @@ def check_spread_quality(
     spread_percent = (spread / price) * 100
 
     # Tighter standards for lower-priced stocks
-    if price < 10:
-        effective_max = max_spread_percent * 1.5  # Allow slightly wider for penny stocks
+    # For sub-$5 stocks, a 1-cent spread = 0.2–0.5% — minimum tick means spread
+    # can't be tighter than 1 penny regardless of liquidity.
+    if price < 5:
+        effective_max = max_spread_percent * 3.0   # ~0.45% — allows 2-cent spread on $4 stock
+    elif price < 10:
+        effective_max = max_spread_percent * 1.5   # ~0.22%
     elif price < 50:
         effective_max = max_spread_percent
     else:
