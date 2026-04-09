@@ -3711,6 +3711,9 @@ class AutonomousEngine:
                     else:
                         limit_price = price * (1 - limit_buffer_pct)  # Slightly below for sell
 
+                    # Alpaca requires prices in whole-cent increments (no sub-penny)
+                    limit_price = round(limit_price, 2)
+
                     logger.info(f"   📋 Using LIMIT order @ ${limit_price:.2f} (buffer: {limit_buffer_pct*100:.2f}%)")
 
                     with LATENCY.timed(f"order_execution_{symbol}"):

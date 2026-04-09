@@ -275,7 +275,7 @@ def check_atr_minimum(
     atr_dollars: float,
     price: float,
     min_atr_dollars: float = 0.75,
-    min_atr_percent: float = 0.5
+    min_atr_percent: float = 0.3
 ) -> Dict[str, Any]:
     """
     Check if the stock has enough intraday range to be worth trading.
@@ -291,7 +291,7 @@ def check_atr_minimum(
         atr_dollars: Stock's ATR in dollar terms
         price: Current stock price
         min_atr_dollars: Absolute minimum (only enforced for stocks > $15)
-        min_atr_percent: Minimum ATR as % of price (primary check, all stocks)
+        min_atr_percent: Minimum ATR as % of price (primary check, all stocks; default 0.3%)
 
     Returns:
         Dict with 'acceptable' bool and details
@@ -314,7 +314,7 @@ def check_atr_minimum(
 
     reason = None
     if not pct_ok:
-        reason = f"ATR {atr_percent:.2f}% below minimum {min_atr_percent:.1f}% of price"
+        reason = f"ATR {atr_percent:.2f}% below minimum {min_atr_percent:.2f}% of price"
     elif not abs_ok:
         reason = f"ATR ${atr_dollars:.2f} below minimum ${min_atr_dollars:.2f}"
 
