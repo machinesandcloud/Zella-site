@@ -541,25 +541,35 @@ class PositionManager:
         """Create a scaling out plan for a new position."""
         risk = abs(entry_price - stop_loss)
 
+        # 25 / 50 / 25 scale-out tiers:
+        #   - Take only 25% off at 1R (locking in a partial win, protecting against reversal)
+        #   - Take 50% off at 2R (the bulk of profit captured on confirmed winners)
+        #   - Let 25% run to 3R (runner)
+        # This keeps more shares working on the winners vs the old 50/25/25 which bailed
+        # half the position at a 1:1 R/R, leaving very little for the larger targets.
+        qty_25a = round(quantity * 0.25)   # 1R exit: 25%
+        qty_50  = round(quantity * 0.50)   # 2R exit: 50%
+        qty_final = quantity - qty_25a - qty_50  # exact remainder at 3R
+
         scale_levels = [
             {
                 "level": "1R",
                 "price": take_profit_1r,
-                "quantity": int(quantity * 0.50),  # 50% at 1R
+                "quantity": qty_25a,  # 25% at 1R — partial lock-in
                 "executed": False,
-                "action": "SCALE_OUT_50_PCT"
+                "action": "SCALE_OUT_50_PCT"  # action name kept for compatibility
             },
             {
                 "level": "2R",
                 "price": take_profit_2r,
-                "quantity": int(quantity * 0.25),  # 25% at 2R
+                "quantity": qty_50,   # 50% at 2R — bulk of profit
                 "executed": False,
-                "action": "SCALE_OUT_25_PCT"
+                "action": "SCALE_OUT_25_PCT"  # action name kept for compatibility
             },
             {
                 "level": "3R",
                 "price": take_profit_3r,
-                "quantity": quantity - int(quantity * 0.75),  # Remaining at 3R
+                "quantity": qty_final,  # remaining 25% runner
                 "executed": False,
                 "action": "CLOSE_REMAINING"
             }
@@ -667,25 +677,30 @@ class PositionManager:
             scaled_1r = plan_data.get("scaled_1r", False)
             scaled_2r = plan_data.get("scaled_2r", False)
 
+            # Mirror create_scale_plan: 25/50/25 tiers, exact remainder at 3R
+            _qty_25a  = round(quantity * 0.25)
+            _qty_50   = round(quantity * 0.50)
+            _qty_final = quantity - _qty_25a - _qty_50
+
             scale_levels = [
                 {
                     "level": "1R",
                     "price": take_profit_1r,
-                    "quantity": int(quantity * 0.50),
+                    "quantity": _qty_25a,
                     "executed": scaled_1r,
                     "action": "SCALE_OUT_50_PCT"
                 },
                 {
                     "level": "2R",
                     "price": take_profit_2r,
-                    "quantity": int(quantity * 0.25),
+                    "quantity": _qty_50,
                     "executed": scaled_2r,
                     "action": "SCALE_OUT_25_PCT"
                 },
                 {
                     "level": "3R",
                     "price": take_profit_3r,
-                    "quantity": quantity - int(quantity * 0.75),
+                    "quantity": _qty_final,
                     "executed": False,
                     "action": "CLOSE_REMAINING"
                 }
@@ -694,9 +709,9 @@ class PositionManager:
             # Calculate remaining quantity
             remaining = quantity
             if scaled_1r:
-                remaining -= int(quantity * 0.50)
+                remaining -= _qty_25a
             if scaled_2r:
-                remaining -= int(quantity * 0.25)
+                remaining -= _qty_50
 
             plan = PositionScaleOut(
                 symbol=symbol,

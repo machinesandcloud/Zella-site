@@ -457,7 +457,7 @@ class AutonomousEngine:
         # Check if we should use all strategies or proven only
         use_proven_only = getattr(settings, 'enabled_strategy_mode', 'PROVEN_ONLY') == 'PROVEN_ONLY'
 
-        # === PROVEN STRATEGIES (5 total) ===
+        # === PROVEN STRATEGIES (6 total) ===
         # These are the only strategies enabled by default per expert review.
         # They are classic, well-documented patterns with clear entry/exit rules.
         proven_strategies = {
@@ -471,6 +471,10 @@ class AutonomousEngine:
             "breakout": BreakoutStrategy(atr_config),
             # 5. Trend Follow - Trade with the trend, not against
             "trend_follow": TrendFollowStrategy(atr_config),
+            # 6. Flat Top Breakout - Warrior Trading pattern; screener already detects
+            #    FLAT_TOP on qualified stocks, so this strategy directly validates the
+            #    screener signal. Enabled as the 6th proven strategy.
+            "flat_top_breakout": FlatTopBreakoutStrategy(atr_config),
         }
 
         # === EXPERIMENTAL STRATEGIES (DISABLED by default) ===
@@ -479,7 +483,6 @@ class AutonomousEngine:
             # Warrior Trading patterns - need validation
             "bull_flag": BullFlagStrategy(disabled_config),
             "abcd_pattern": ABCDPatternStrategy(disabled_config),
-            "flat_top_breakout": FlatTopBreakoutStrategy(disabled_config),
 
             # Other trend following - may overlap with proven ones
             "ema_cross": EMACrossStrategy(disabled_config),
@@ -1765,19 +1768,21 @@ class AutonomousEngine:
                             del position_atr[symbol]
                         continue
 
-                    # SECONDARY: Extended time stop only for significantly losing positions
-                    # Time-based is now backup, not primary exit
+                    # SECONDARY: Time-based stop — backup to ATR stop, fires sooner
+                    # Tighter thresholds preserve capital: a position down -0.75% after
+                    # 20 min has not found buyers and is unlikely to recover intraday.
                     if ctx and ctx.entry_time:
                         held_minutes = (datetime.now() - ctx.entry_time).total_seconds() / 60
-                        # Only use time stop for extended holds (30+ min) that are still losing
-                        if held_minutes >= 30 and pnl_percent < -1.0:
+                        # Extended time stop: 20 min holding a losing position (was 30min/-1.0%)
+                        if held_minutes >= 20 and pnl_percent < -0.75:
                             logger.warning(f"⏱️ EXTENDED TIME STOP: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}%")
                             await self._close_position(symbol, f"Extended time stop {held_minutes:.0f}m (PnL {pnl_percent:.2f}%)")
                             if symbol in position_atr:
                                 del position_atr[symbol]
                             continue
-                        # Max hold only for flat/losing positions after 45 min
-                        if held_minutes >= 45 and pnl_percent <= 0.5:
+                        # Max hold: flat or barely positive after 35 min (was 45min/0.5%)
+                        # If price hasn't moved enough to cover costs after 35 min, exit.
+                        if held_minutes >= 35 and pnl_percent <= 0.3:
                             logger.warning(f"⏱️ MAX HOLD EXIT: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}%")
                             await self._close_position(symbol, f"Max hold {held_minutes:.0f}m (PnL {pnl_percent:.2f}%)")
                             if symbol in position_atr:
@@ -2845,14 +2850,38 @@ class AutonomousEngine:
         return analyzed
 
     def _rank_opportunities(self, analyzed: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Rank opportunities by quality"""
-        # Sort by number of strategies agreeing and confidence
-        ranked = sorted(
-            analyzed,
-            key=lambda x: (x.get("num_strategies", 0), x.get("confidence", 0)),
-            reverse=True
-        )
+        """Rank opportunities by composite quality score.
 
+        Weights:
+          - num_strategies (0.40): multi-strategy agreement is the strongest signal
+          - confidence     (0.35): raw signal quality from strategy engine
+          - relative_volume(0.15): in-play momentum — high RVol = real participation
+          - atr_percent    (0.10): needs range to generate profit
+        Bonuses: news catalyst (+10%), gap play (+5%)
+        """
+        def _score(opp: Dict[str, Any]) -> float:
+            strategies  = opp.get("num_strategies", 0)
+            confidence  = opp.get("confidence", 0)                       # 0-1
+            rvol        = min(opp.get("relative_volume", 1.0), 10.0)     # cap at 10x
+            atr_pct     = min(opp.get("atr_percent", 0.0), 5.0) / 5.0   # normalise 0-1
+
+            # Scale confidence and atr to same magnitude as strategies (0-5 range)
+            score = (
+                strategies * 0.40 +
+                confidence * 5.0 * 0.35 +
+                rvol       * 0.15 +
+                atr_pct    * 5.0 * 0.10
+            )
+
+            # Bonus multipliers for catalysts that sustain moves
+            if opp.get("news_catalyst"):
+                score *= 1.10
+            if opp.get("is_gapper"):
+                score *= 1.05
+
+            return score
+
+        ranked = sorted(analyzed, key=_score, reverse=True)
         return ranked[:self.max_positions]
 
     def _check_circuit_breakers(self) -> Tuple[bool, str]:
@@ -3306,9 +3335,13 @@ class AutonomousEngine:
             except Exception:
                 learned_threshold = None
             if learned_threshold:
-                # Average our threshold with learned threshold (weighted 60/40 toward our setting)
-                # This prevents learning from making us too conservative
-                min_confidence = (min_confidence * 0.6) + (learned_threshold * 0.4)
+                # Only let learning RAISE the bar — never lower it.
+                # The learned default is 0.45, which is below our time-of-day minimums
+                # (0.70-0.80). The old 60/40 blend actively dragged min_confidence DOWN
+                # on every trade, letting in setups that fail the time-of-day filter.
+                # Now: if the bot's past performance suggests the bar should be higher,
+                # we use that; otherwise we stick with our calibrated threshold.
+                min_confidence = max(min_confidence, learned_threshold)
 
             if adjusted_confidence < min_confidence:
                 self._add_decision(
@@ -3600,7 +3633,10 @@ class AutonomousEngine:
                 # Using the same multiplier everywhere ensures position sizing is accurate
                 # (1.5x here vs 2x in monitoring was causing undersized positions and 0.75:1
                 # effective R at the 1R scale-out, which drags expectancy below breakeven).
-                base_risk_percent = 0.005 if self.risk_posture == "DEFENSIVE" else 0.01 if self.risk_posture == "BALANCED" else 0.015
+                # Risk per trade: DEFENSIVE=0.5%, BALANCED=1.5%, AGGRESSIVE=2.0%
+                # Raised BALANCED from 1.0% → 1.5% so winning trades generate meaningful
+                # returns. Stop width (2x ATR) is unchanged — only position size increases.
+                base_risk_percent = 0.005 if self.risk_posture == "DEFENSIVE" else 0.015 if self.risk_posture == "BALANCED" else 0.020
                 base_atr_multiplier = 2.0  # 2x ATR stop — matches monitoring stop in position manager
 
                 # Apply volatility regime adjustments from pro validator
@@ -3619,6 +3655,20 @@ class AutonomousEngine:
                 )
 
                 if quantity <= 0:
+                    continue
+
+                # Minimum order size — never place orders smaller than 10 shares.
+                # Micro-orders (1-2 shares) waste commissions, pollute position
+                # tracking, and produce scale-out rounding artifacts.
+                MIN_ORDER_SIZE = 10
+                if quantity < MIN_ORDER_SIZE:
+                    logger.info(f"⏭️ {symbol}: Calculated size {quantity} below minimum {MIN_ORDER_SIZE} shares — skipping")
+                    self._add_decision(
+                        "SKIPPED",
+                        f"⏭️ {symbol}: Position too small ({quantity} shares < {MIN_ORDER_SIZE} minimum)",
+                        "INFO",
+                        {"symbol": symbol, "quantity": quantity, "min_order_size": MIN_ORDER_SIZE}
+                    )
                     continue
 
                 # CRITICAL: Cap position to remaining allowed exposure for this symbol

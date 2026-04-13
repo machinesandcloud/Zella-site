@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     default_trading_mode: str = "PAPER"
     max_position_size_percent: float = 5.0  # Was 10% - reduced to limit concentration per position
     max_daily_loss: float = 2000.0  # Was $500 - raised to 2% of $100k (must be >= max single trade loss)
-    max_risk_per_trade: float = 1.0  # Was 2% - reduced for safety during validation phase
+    max_risk_per_trade: float = 1.5  # Raised from 1.0% — BALANCED posture now risks 1.5% per trade
     max_concurrent_positions: int = 3  # Was 5 - reduced to limit portfolio correlation risk
     max_trades_per_day: int = 15  # Allow reasonable activity
     max_consecutive_losses: int = 4  # Was 3 - slight increase to avoid premature halt
