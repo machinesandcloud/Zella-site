@@ -539,6 +539,7 @@ class AutonomousEngine:
                     self.daily_pnl = state.get("daily_pnl", 0.0)
                     self.eod_liquidation_done_today = state.get("eod_liquidation_done_today", False)
                     self.last_liquidation_date = state.get("last_liquidation_date", None)
+                    self._last_daily_reset_date = state.get("last_daily_reset_date", None)
 
                     # Decision history (for context continuity)
                     self.decisions = state.get("decisions", [])
@@ -639,6 +640,7 @@ class AutonomousEngine:
                 "daily_pnl": self.daily_pnl,
                 "eod_liquidation_done_today": self.eod_liquidation_done_today,
                 "last_liquidation_date": self.last_liquidation_date,
+                "last_daily_reset_date": getattr(self, '_last_daily_reset_date', None),
 
                 # Decision history (keep last 50 for context)
                 "decisions": self.decisions[:100],
@@ -1110,16 +1112,22 @@ class AutonomousEngine:
         # Skip integration validation on startup (too slow, can hang)
         self._integration_validated = True
 
-        # Reset daily tracking
-        today = datetime.now().strftime("%Y-%m-%d")
-        if self.last_liquidation_date != today:
+        # Reset daily tracking — use ET date (Render server runs UTC)
+        # Compare the ET trading date stored in state against today's ET date.
+        # The old condition (last_liquidation_date != today) failed on restarts within
+        # the same trading day because last_liquidation_date == today, so daily_pnl was
+        # never reset and carried negative balances across sessions.
+        et_today = datetime.now(tz=EASTERN).strftime("%Y-%m-%d")
+        last_reset_date = getattr(self, '_last_daily_reset_date', None)
+        if last_reset_date != et_today:
+            self._last_daily_reset_date = et_today
             self.eod_liquidation_done_today = False
             self.daily_pnl = 0.0
             try:
                 self.discipline.reset_daily()
             except Exception as e:
                 logger.warning(f"Failed to reset daily discipline counters: {e}")
-            logger.info("📅 New trading day - daily counters reset")
+            logger.info(f"📅 New trading day ({et_today} ET) - daily counters reset")
 
         # =====================================================
         # START BACKGROUND TASKS
