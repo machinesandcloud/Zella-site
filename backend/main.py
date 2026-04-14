@@ -270,8 +270,9 @@ async def resilience_watchdog():
                             "mode": "FULL_AUTO",
                             "risk_posture": "BALANCED",
                             "scan_interval": 10,  # 10s for free tier rate limits
-                            "max_positions": 5,
+                            "max_positions": app_settings.max_concurrent_positions,  # Use settings (3)
                             "enabled_strategies": "ALL",
+                            "trade_frequency_profile": app_settings.trade_frequency_profile,
                         },
                     )
 
@@ -452,8 +453,9 @@ async def on_startup() -> None:
                     "mode": "FULL_AUTO",
                     "risk_posture": "BALANCED",
                     "scan_interval": 10,  # 10s for free tier rate limits
-                    "max_positions": 5,
-                    "enabled_strategies": "ALL"
+                    "max_positions": app_settings.max_concurrent_positions,  # Use settings (3), not hardcoded 5
+                    "enabled_strategies": "ALL",
+                    "trade_frequency_profile": app_settings.trade_frequency_profile,  # balanced
                 }
             )
 
