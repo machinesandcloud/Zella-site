@@ -312,6 +312,12 @@ class AutonomousEngine:
         self.daily_pnl: float = 0.0  # Track daily P&L
         self.daily_pnl_limit: float = -settings.max_daily_loss  # Stop trading if down this much (from settings)
 
+        # Re-entry cooldown: after any stop-out, block re-entry for 20 min on that symbol.
+        # Prevents immediately re-entering a position that was just stopped out. The market
+        # needs time to prove the direction before we risk capital again on the same name.
+        self._stopped_symbols: Dict[str, datetime] = {}  # symbol -> time of stop-out
+        self._reentry_cooldown_minutes: int = 20
+
         # Pro-level trade validator (institutional-grade filters)
         self.pro_validator = ProTradeValidator(
             max_spread_percent=0.15,  # Max 0.15% spread
@@ -1757,6 +1763,7 @@ class AutonomousEngine:
                         loss_pct = ((entry_price - current_price) / entry_price) * 100
                         logger.warning(f"🛑 ATR STOP: {symbol} hit ${atr_stop_price:.2f} (2x ATR), loss {loss_pct:.2f}%")
                         await self._close_position(symbol, f"ATR stop (2x ATR = ${atr_stop_distance:.2f})")
+                        self._stopped_symbols[symbol] = datetime.now()  # start re-entry cooldown
                         if symbol in position_atr:
                             del position_atr[symbol]
                         continue
@@ -1764,25 +1771,48 @@ class AutonomousEngine:
                         loss_pct = ((current_price - entry_price) / entry_price) * 100
                         logger.warning(f"🛑 ATR STOP: {symbol} hit ${atr_stop_price:.2f} (2x ATR), loss {loss_pct:.2f}%")
                         await self._close_position(symbol, f"ATR stop (2x ATR = ${atr_stop_distance:.2f})")
+                        self._stopped_symbols[symbol] = datetime.now()  # start re-entry cooldown
                         if symbol in position_atr:
                             del position_atr[symbol]
                         continue
 
                     # SECONDARY: Time-based stop — backup to ATR stop, fires sooner
-                    # Tighter thresholds preserve capital: a position down -0.75% after
-                    # 20 min has not found buyers and is unlikely to recover intraday.
+                    # Smarter exit: before stopping out on time, check if the trend is
+                    # still intact. If EMA20 is still above EMA50 (for longs) and price
+                    # has not broken below the entry ATR band, the setup may still be
+                    # valid — give it more room rather than exiting prematurely.
                     if ctx and ctx.entry_time:
                         held_minutes = (datetime.now() - ctx.entry_time).total_seconds() / 60
-                        # Extended time stop: 20 min holding a losing position (was 30min/-1.0%)
+                        # Extended time stop: 30 min (raised from 20) holding a losing position
+                        # BUT only if trend has broken down. If trend is still intact, hold to 40 min.
                         if held_minutes >= 20 and pnl_percent < -0.75:
-                            logger.warning(f"⏱️ EXTENDED TIME STOP: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}%")
-                            await self._close_position(symbol, f"Extended time stop {held_minutes:.0f}m (PnL {pnl_percent:.2f}%)")
-                            if symbol in position_atr:
-                                del position_atr[symbol]
-                            continue
-                        # Max hold: flat or barely positive after 35 min (was 45min/0.5%)
-                        # If price hasn't moved enough to cover costs after 35 min, exit.
-                        if held_minutes >= 35 and pnl_percent <= 0.3:
+                            trend_broken = True  # default: assume broken
+                            if df is not None and len(df) >= 50:
+                                try:
+                                    fast_ema = ema(df["close"], 20)
+                                    slow_ema = ema(df["close"], 50)
+                                    # Trend still intact if EMA20 > EMA50 for a long position
+                                    if is_long and float(fast_ema.iloc[-1]) > float(slow_ema.iloc[-1]):
+                                        trend_broken = False
+                                    elif not is_long and float(fast_ema.iloc[-1]) < float(slow_ema.iloc[-1]):
+                                        trend_broken = False
+                                except Exception:
+                                    trend_broken = True
+
+                            # If trend intact, give extra 10 min before stopping
+                            effective_time_limit = 30 if trend_broken else 40
+                            if held_minutes >= effective_time_limit:
+                                exit_reason = "trend broken" if trend_broken else "trend intact but time limit reached"
+                                logger.warning(f"⏱️ EXTENDED TIME STOP: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}% ({exit_reason})")
+                                await self._close_position(symbol, f"Extended time stop {held_minutes:.0f}m (PnL {pnl_percent:.2f}%)")
+                                if pnl_percent < 0:
+                                    self._stopped_symbols[symbol] = datetime.now()  # cooldown only on losses
+                                if symbol in position_atr:
+                                    del position_atr[symbol]
+                                continue
+                        # Max hold: flat or barely positive after 40 min (raised from 35)
+                        # If price hasn't moved enough to cover costs after 40 min, exit.
+                        if held_minutes >= 40 and pnl_percent <= 0.3:
                             logger.warning(f"⏱️ MAX HOLD EXIT: {symbol} {held_minutes:.0f}m, PnL {pnl_percent:.2f}%")
                             await self._close_position(symbol, f"Max hold {held_minutes:.0f}m (PnL {pnl_percent:.2f}%)")
                             if symbol in position_atr:
@@ -3190,6 +3220,25 @@ class AutonomousEngine:
 
             symbol = opp.get("symbol")
 
+            # RE-ENTRY COOLDOWN: Block re-entry within 20 min of a stop-out on this symbol.
+            # Prevents immediately re-entering a position that just got stopped — the market
+            # needs time to prove direction before we risk capital again on the same name.
+            if symbol in self._stopped_symbols:
+                stop_time = self._stopped_symbols[symbol]
+                minutes_since_stop = (datetime.now() - stop_time).total_seconds() / 60
+                if minutes_since_stop < self._reentry_cooldown_minutes:
+                    remaining = int(self._reentry_cooldown_minutes - minutes_since_stop)
+                    self._add_decision(
+                        "SKIPPED",
+                        f"⏳ {symbol}: Re-entry cooldown active ({remaining}m remaining after stop-out)",
+                        "INFO",
+                        {"symbol": symbol, "cooldown_remaining_minutes": remaining}
+                    )
+                    continue
+                else:
+                    # Cooldown expired — clear it
+                    del self._stopped_symbols[symbol]
+
             # CRITICAL: Check if we already have max exposure in this symbol
             current_exposure = symbol_exposure.get(symbol, 0)
             if current_exposure >= MAX_SYMBOL_EXPOSURE_PCT:
@@ -3297,6 +3346,32 @@ class AutonomousEngine:
             elif day_of_week in (0, 4):  # Monday, Friday
                 min_confidence += 0.03
 
+            # SPY DIRECTION FILTER: align long/short bias with market direction.
+            # Going long into a falling SPY burns capital on counter-trend trades.
+            # If SPY is falling from its open, raise bar for longs; if rising, lower it.
+            # This prevents the bot from fighting the tape on broad market down days.
+            try:
+                with self._cache_lock:
+                    spy_data = self._spy_data_cache
+                if spy_data is not None and len(spy_data) >= 2:
+                    spy_open = float(spy_data.iloc[0].get("open", 0))
+                    spy_current = float(spy_data.iloc[-1].get("close", 0))
+                    if spy_open > 0:
+                        spy_change_pct = (spy_current - spy_open) / spy_open * 100
+                        if action == "BUY":
+                            if spy_change_pct < -1.0:
+                                # SPY down >1% from open — market headwind for longs
+                                min_confidence += 0.05
+                                logger.debug(f"📉 SPY down {spy_change_pct:.1f}% — raising long bar +5% for {symbol}")
+                            elif spy_change_pct < -0.5:
+                                # SPY moderately down — small headwind
+                                min_confidence += 0.02
+                            elif spy_change_pct > 1.0:
+                                # SPY up >1% — tailwind for longs, can lower bar slightly
+                                min_confidence -= 0.02
+            except Exception:
+                pass  # SPY filter is best-effort, never block on error
+
             # HIGH-RISK SYMBOLS (leveraged ETFs) - require stronger signal, not full block
             # SQQQ/SOXS are valid instruments in a downtrend market — blocking them entirely
             # means missing directional plays. Raise the bar instead: 85% confidence + 3 strategies.
@@ -3358,13 +3433,23 @@ class AutonomousEngine:
             # align. Requiring 2+ effectively blocks almost all valid trades.
             # Allow single strategy through if confidence is high enough for the time of day.
             # ProValidator, circuit breakers, and confidence floor all remain as backstops.
+            #
+            # OPENING LOCKOUT (first 30 min): Never allow single-strategy trades.
+            # 9:30-10:00 AM is the most volatile period — trend_follow alone fires on
+            # almost every stock in a trending market, creating flood of false entries.
+            # ORB hasn't completed its range yet, VWAP signals are unreliable.
+            # Require 2+ strategies to agree before we risk capital.
             if num_strategies == 1 and not is_high_risk:
-                if mins_open < 120:
-                    # Prime morning: lower bar
-                    single_strat_threshold = 0.75 if self.risk_posture == "AGGRESSIVE" else 0.78
+                if mins_open < 30:
+                    # Opening 30 min: hard lockout — require 2+ strategies no exceptions
+                    single_strat_threshold = 1.01  # impossible → stays blocked
+                elif mins_open < 120:
+                    # 10:00-11:30 AM: raise bar significantly vs old 75%/78%
+                    # trend_follow saturates at 95% in any bull market — need higher gate
+                    single_strat_threshold = 0.85 if self.risk_posture == "AGGRESSIVE" else 0.88
                 elif mins_open < 270:
                     # Midday: raise bar to compensate for choppier conditions
-                    single_strat_threshold = 0.82 if self.risk_posture == "AGGRESSIVE" else 0.85
+                    single_strat_threshold = 0.88 if self.risk_posture == "AGGRESSIVE" else 0.90
                 else:
                     # Afternoon: require 2+ (riskier, keep the gate)
                     single_strat_threshold = 1.01  # impossible → stays blocked
@@ -3560,14 +3645,14 @@ class AutonomousEngine:
                         elif setup_grade == "C":
                             factors = elite_analysis.get("grade_details", {}).get("factors", [])
                             factor_str = ", ".join(factors[:3]) if factors else "marginal"
-                            logger.info(f"⚠️ {symbol} GRADE C - Trading at 50% size")
-                            elite_size_mult = 0.5  # Reduce size instead of skipping
+                            logger.info(f"⛔ {symbol} GRADE C - Setup rejected (weak setup burns loss budget)")
                             self._add_decision(
-                                "CONSIDERING",
-                                f"⚠️ {symbol} GRADE C: {factor_str} → 50% position size",
-                                "INFO",
-                                {"symbol": symbol, "grade": setup_grade, "factors": factors, "size_mult": 0.5}
+                                "REJECTED",
+                                f"❌ {symbol} GRADE C: {factor_str} → skipped (only A/A+/B allowed)",
+                                "WARNING",
+                                {"symbol": symbol, "grade": setup_grade, "factors": factors}
                             )
+                            continue
 
                         # Passed elite grading - log the analysis
                         factors = elite_analysis.get("grade_details", {}).get("factors", [])
@@ -3642,6 +3727,22 @@ class AutonomousEngine:
                 # Apply volatility regime adjustments from pro validator
                 # AND elite system grade multiplier (A=100%, B=75%, etc.)
                 combined_size_mult = position_size_mult * elite_size_mult
+
+                # EARNINGS/NEWS RISK REDUCTION: binary events (earnings, FDA) can gap
+                # violently in either direction. Cap position at 50% of normal size.
+                # Previously these stocks received a score BONUS with no size penalty —
+                # that rewarded exposure to binary risk instead of managing it.
+                news_catalyst = opp.get("news_catalyst", "")
+                if news_catalyst in ("EARNINGS", "FDA"):
+                    combined_size_mult *= 0.5
+                    logger.info(f"📰 {symbol}: {news_catalyst} event — position size reduced 50% (binary risk)")
+                    self._add_decision(
+                        "CONSIDERING",
+                        f"📰 {symbol}: {news_catalyst} → 50% position size (binary event risk)",
+                        "INFO",
+                        {"symbol": symbol, "news_catalyst": news_catalyst, "size_mult": combined_size_mult}
+                    )
+
                 risk_percent = base_risk_percent * combined_size_mult
                 atr_multiplier = base_atr_multiplier * stop_mult
 
