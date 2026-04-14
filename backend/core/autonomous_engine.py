@@ -1755,6 +1755,17 @@ class AutonomousEngine:
                             position_atr[symbol] = current_price * 0.02
                     current_atr = position_atr.get(symbol, current_price * 0.02)
 
+                    # MINIMUM HOLD TIME: never exit within 5 minutes of entry.
+                    # The first 5 minutes of a position are pure noise — normal
+                    # bid/ask spread and micro-volatility constantly triggers stops
+                    # on positions that would have been profitable. Let the trade breathe.
+                    held_minutes_early = 0.0
+                    if ctx and ctx.entry_time:
+                        held_minutes_early = (datetime.now() - ctx.entry_time).total_seconds() / 60
+                    if held_minutes_early < 5.0:
+                        await asyncio.sleep(5)
+                        continue
+
                     # PRIMARY: ATR-based stop loss (2x ATR from entry)
                     atr_stop_distance = current_atr * 2.0
                     atr_stop_price = entry_price - atr_stop_distance if is_long else entry_price + atr_stop_distance
@@ -3123,9 +3134,14 @@ class AutonomousEngine:
         now = self._get_market_now()
         mins_open = minutes_since_open(now=now)
 
-        # Avoid first 5 minutes (too volatile, spreads wide)
-        if mins_open < 5:
-            self._add_decision("TIME_FILTER", "Skipping first 5 minutes - spreads too wide", "INFO", {"minutes_open": mins_open})
+        # HARD BLOCK: first 30 minutes — no entries at all.
+        # 9:30-10:00 AM is pure noise: spreads are wide, algos are probing,
+        # ORB range isn't set, and trend_follow fires on everything.
+        # Every real prop trader waits for the dust to settle.
+        # This single rule eliminates the morning loss pattern that has been
+        # hitting the daily limit and locking out the profitable afternoon.
+        if mins_open < 30:
+            self._add_decision("TIME_FILTER", f"Opening lockout ({mins_open:.0f}m < 30m) - no entries until 10:00 AM", "INFO", {"minutes_open": mins_open})
             return
 
         # Avoid lunch chop (11:30-1:00 ET = 120-210 minutes after open)
@@ -3427,57 +3443,20 @@ class AutonomousEngine:
                 )
                 continue
 
-            # HIGH-CONFIDENCE SINGLE-STRATEGY EXCEPTION
-            # ema_cross/orb/breakout/vwap_bounce fire on specific events (crossover bar,
-            # first 30min, bounce level) while trend_follow fires continuously — they rarely
-            # align. Requiring 2+ effectively blocks almost all valid trades.
-            # Allow single strategy through if confidence is high enough for the time of day.
-            # ProValidator, circuit breakers, and confidence floor all remain as backstops.
-            #
-            # OPENING LOCKOUT (first 30 min): Never allow single-strategy trades.
-            # 9:30-10:00 AM is the most volatile period — trend_follow alone fires on
-            # almost every stock in a trending market, creating flood of false entries.
-            # ORB hasn't completed its range yet, VWAP signals are unreliable.
-            # Require 2+ strategies to agree before we risk capital.
-            if num_strategies == 1 and not is_high_risk:
-                if mins_open < 30:
-                    # Opening 30 min: hard lockout — require 2+ strategies no exceptions
-                    single_strat_threshold = 1.01  # impossible → stays blocked
-                elif mins_open < 120:
-                    # 10:00-11:30 AM: raise bar significantly vs old 75%/78%
-                    # trend_follow saturates at 95% in any bull market — need higher gate
-                    single_strat_threshold = 0.85 if self.risk_posture == "AGGRESSIVE" else 0.88
-                elif mins_open < 270:
-                    # Midday: raise bar to compensate for choppier conditions
-                    single_strat_threshold = 0.88 if self.risk_posture == "AGGRESSIVE" else 0.90
-                else:
-                    # Afternoon: require 2+ (riskier, keep the gate)
-                    single_strat_threshold = 1.01  # impossible → stays blocked
-
-                if adjusted_confidence >= single_strat_threshold:
-                    min_strategies = 1
-                    self._add_decision(
-                        "CONSIDERING",
-                        f"✅ {symbol}: Single high-confidence strategy exception ({strategies[0] if strategies else '?'} @ {adjusted_confidence:.0%})",
-                        "INFO",
-                        {"symbol": symbol, "num_strategies": num_strategies, "confidence": adjusted_confidence}
-                    )
-
+            # ALWAYS REQUIRE 2+ STRATEGIES — no exceptions.
+            # trend_follow fires at 91-95% on every stock in a trending market.
+            # A single lagging indicator is not an edge — it's just noise.
+            # Real confluence means at least two independent methods agree:
+            # trend_follow + vwap_bounce, or trend_follow + momentum, etc.
+            # Removing the single-strategy exception is the #1 win-rate improvement.
             if num_strategies < min_strategies:
                 self._add_decision(
-                    "CONSIDERING",
-                    f"⚠️ {symbol}: Only {num_strategies} strategies agree (need {min_strategies}+)",
+                    "SKIPPED",
+                    f"⏭️ {symbol}: Only {num_strategies} strategy agrees (need {min_strategies}+) — {', '.join(strategies)}",
                     "INFO",
                     {"symbol": symbol, "num_strategies": num_strategies, "required": min_strategies, "strategies": strategies}
                 )
                 continue
-            elif min_strategies == 1 and num_strategies >= 1:
-                self._add_decision(
-                    "SYSTEM",
-                    f"✅ {symbol}: Independent strategy mode (single strategy allowed)",
-                    "INFO",
-                    {"symbol": symbol, "num_strategies": num_strategies}
-                )
 
             # Log that we're actively considering this trade
             self._add_decision(
@@ -3721,7 +3700,7 @@ class AutonomousEngine:
                 # Risk per trade: DEFENSIVE=0.5%, BALANCED=1.5%, AGGRESSIVE=2.0%
                 # Raised BALANCED from 1.0% → 1.5% so winning trades generate meaningful
                 # returns. Stop width (2x ATR) is unchanged — only position size increases.
-                base_risk_percent = 0.005 if self.risk_posture == "DEFENSIVE" else 0.015 if self.risk_posture == "BALANCED" else 0.020
+                base_risk_percent = 0.005 if self.risk_posture == "DEFENSIVE" else 0.010 if self.risk_posture == "BALANCED" else 0.015
                 base_atr_multiplier = 2.0  # 2x ATR stop — matches monitoring stop in position manager
 
                 # Apply volatility regime adjustments from pro validator
@@ -4084,9 +4063,20 @@ class AutonomousEngine:
 
             quantity = position.get("quantity", 0)
             current_price = position.get("currentPrice", 0)
-            unrealized_pnl = position.get("unrealizedPnL", 0)
+            entry_price = position.get("avgPrice", 0) or position.get("avgCost", 0)
 
-            logger.info(f"Closing {symbol}: {reason} (P&L: ${unrealized_pnl:.2f})")
+            # CRITICAL: Don't trust broker's unrealizedPnL — Alpaca paper trading
+            # returns $0 for this field intermittently, making daily_pnl always 0.
+            # Calculate it ourselves from entry price, current price, and quantity.
+            broker_pnl = position.get("unrealizedPnL", 0) or 0
+            if entry_price > 0 and current_price > 0 and quantity != 0:
+                calculated_pnl = (current_price - entry_price) * quantity
+                # If broker value looks reasonable (non-zero), trust it; else use calculated
+                unrealized_pnl = broker_pnl if abs(broker_pnl) > 0.01 else calculated_pnl
+            else:
+                unrealized_pnl = broker_pnl
+
+            logger.info(f"Closing {symbol}: {reason} (P&L: ${unrealized_pnl:.2f}, entry=${entry_price:.2f}, current=${current_price:.2f}, qty={quantity})")
 
             order = self.broker.place_market_order(symbol, abs(quantity), "SELL" if quantity > 0 else "BUY")
 
@@ -4122,22 +4112,101 @@ class AutonomousEngine:
                 pnl=unrealized_pnl,
             )
 
+            # TRADE JOURNAL: append every closed trade to disk so we can track
+            # win rates, average win/loss, and which strategies are profitable.
+            self._write_trade_journal(
+                symbol=symbol,
+                entry_price=entry_price,
+                exit_price=current_price,
+                quantity=quantity,
+                pnl=unrealized_pnl,
+                reason=reason,
+            )
+
             self._add_decision(
                 "CLOSE",
-                f"Closed {symbol}: {reason}",
-                "INFO",
+                f"Closed {symbol}: {reason} | P&L: ${unrealized_pnl:+.2f} | Day: ${self.daily_pnl:+.2f}",
+                "SUCCESS" if unrealized_pnl >= 0 else "WARNING",
                 {
                     "quantity": quantity,
-                    "price": current_price,
+                    "entry_price": entry_price,
+                    "exit_price": current_price,
                     "order_id": order_id,
                     "pnl": unrealized_pnl,
-                    "daily_pnl": self.daily_pnl
+                    "daily_pnl": self.daily_pnl,
+                    "exit_reason": reason,
                 }
             )
 
         except Exception as e:
             logger.error(f"Error closing {symbol}: {e}")
             self._add_decision("ERROR", f"Failed to close {symbol}: {str(e)}", "ERROR", {})
+
+    def _write_trade_journal(
+        self,
+        symbol: str,
+        entry_price: float,
+        exit_price: float,
+        quantity: int,
+        pnl: float,
+        reason: str,
+    ) -> None:
+        """Append closed trade to data/trade_journal.json for win-rate analysis."""
+        import os
+        import json as _json
+        try:
+            journal_path = os.path.join(os.path.dirname(__file__), "..", "data", "trade_journal.json")
+            journal_path = os.path.normpath(journal_path)
+
+            trades: list = []
+            if os.path.exists(journal_path):
+                try:
+                    with open(journal_path, "r") as f:
+                        trades = _json.load(f)
+                except Exception:
+                    trades = []
+
+            # Get strategy info from recent decisions
+            strategies_used = []
+            for dec in reversed(self.decisions[-20:]):
+                if dec.get("type") == "TRADE" and symbol in dec.get("action", ""):
+                    strategies_used = dec.get("metadata", {}).get("strategies", [])
+                    break
+
+            pnl_pct = ((exit_price - entry_price) / entry_price * 100) if entry_price > 0 else 0.0
+
+            trades.append({
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "symbol": symbol,
+                "entry_price": round(entry_price, 4),
+                "exit_price": round(exit_price, 4),
+                "quantity": quantity,
+                "pnl": round(pnl, 2),
+                "pnl_pct": round(pnl_pct, 3),
+                "win": pnl > 0,
+                "exit_reason": reason,
+                "strategies": strategies_used,
+                "daily_pnl_after": round(self.daily_pnl, 2),
+            })
+
+            with open(journal_path, "w") as f:
+                _json.dump(trades, f, indent=2)
+
+            # Log running win rate every 10 trades
+            if len(trades) % 10 == 0 and len(trades) > 0:
+                wins = sum(1 for t in trades if t.get("win"))
+                total_pnl = sum(t.get("pnl", 0) for t in trades)
+                avg_win = sum(t["pnl"] for t in trades if t.get("win")) / max(wins, 1)
+                avg_loss = sum(t["pnl"] for t in trades if not t.get("win")) / max(len(trades) - wins, 1)
+                logger.info(
+                    f"📓 Trade Journal [{len(trades)} trades] | "
+                    f"Win rate: {wins/len(trades):.0%} | "
+                    f"Total P&L: ${total_pnl:+.2f} | "
+                    f"Avg win: ${avg_win:+.2f} | Avg loss: ${avg_loss:+.2f}"
+                )
+        except Exception as e:
+            logger.debug(f"Trade journal write failed: {e}")
 
     async def _record_trade_for_learning(
         self,
