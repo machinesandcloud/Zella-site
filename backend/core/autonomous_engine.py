@@ -2922,7 +2922,14 @@ class AutonomousEngine:
 
             return score
 
-        ranked = sorted(analyzed, key=_score, reverse=True)
+        # Pre-filter: only rank multi-strategy signals if any exist.
+        # Single-strategy signals will be blocked in _execute_trades anyway —
+        # don't let them fill top-N slots and crowd out tradeable setups.
+        min_strats = getattr(self, "min_strategies_required", 2)
+        multi_strat = [o for o in analyzed if o.get("num_strategies", 1) >= min_strats]
+        pool = multi_strat if multi_strat else analyzed  # fall back to all if none qualify
+
+        ranked = sorted(pool, key=_score, reverse=True)
         return ranked[:self.max_positions]
 
     def _check_circuit_breakers(self) -> Tuple[bool, str]:
