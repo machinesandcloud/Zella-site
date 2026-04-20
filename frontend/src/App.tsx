@@ -167,14 +167,16 @@ const App = () => {
     };
   }, [backendConnected]);
 
-  // Auto-login with retry logic for Render cold starts
+  // Auto-login with retry logic for Render cold starts.
+  // Always refreshes the token on mount — even if one exists in localStorage —
+  // so expired 24h tokens don't cause a burst of 401s on the first data fetch.
   useEffect(() => {
-    const token = localStorage.getItem("zella_token");
-    if (token) {
+    const existingToken = localStorage.getItem("zella_token");
+    if (existingToken) {
+      // Optimistically mark authenticated so components render immediately,
+      // but still refresh the token in the background to avoid expiry 401s.
       setIsAuthenticated(true);
       setIsWakingUp(false);
-      void forceHealthCheck();
-      return;
     }
 
     let cancelled = false;
@@ -184,7 +186,9 @@ const App = () => {
       if (cancelled) return;
 
       attempt += 1;
-      setWakeAttempt(Math.min(attempt, MAX_WAKE_RETRIES));
+      if (!existingToken) {
+        setWakeAttempt(Math.min(attempt, MAX_WAKE_RETRIES));
+      }
 
       try {
         const data = await autoLogin();
@@ -200,7 +204,11 @@ const App = () => {
       } catch {
         if (cancelled) return;
 
-        if (attempt < MAX_WAKE_RETRIES) {
+        if (existingToken) {
+          // Had an existing token — backend may be briefly unavailable.
+          // Keep using old token; health monitor will handle reconnect.
+          void forceHealthCheck();
+        } else if (attempt < MAX_WAKE_RETRIES) {
           setTimeout(tryConnect, WAKE_RETRY_INTERVAL);
         } else {
           setBackendConnected(false);
