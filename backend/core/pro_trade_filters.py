@@ -88,14 +88,25 @@ def check_spread_quality(
     """
     if bid <= 0 or ask <= 0 or price <= 0:
         return {
-            "acceptable": False,
-            "reason": "Invalid price data",
+            "acceptable": True,  # IEX free tier often returns missing quotes — don't block on bad data
+            "reason": None,
             "spread": 0,
             "spread_percent": 0
         }
 
     spread = ask - bid
     spread_percent = (spread / price) * 100
+
+    # IEX free tier returns stale/synthetic bid-ask that can show 5-20% "spreads"
+    # on perfectly liquid stocks. Treat anything > 3% as a data artifact.
+    if spread_percent > 3.0:
+        return {
+            "acceptable": True,
+            "spread": round(spread, 4),
+            "spread_percent": round(spread_percent, 4),
+            "max_allowed": 3.0,
+            "reason": None  # Data artifact — don't penalize
+        }
 
     # Tighter standards for lower-priced stocks
     # For sub-$5 stocks, a 1-cent spread = 0.2–0.5% — minimum tick means spread
@@ -308,10 +319,11 @@ def check_atr_minimum(
     # Primary check: ATR% relative to price (works for all price levels)
     pct_ok = atr_percent >= min_atr_percent
 
-    # Secondary check: absolute minimum only for stocks above $15
-    # (a $6 stock with $0.03 ATR = 0.5% is fine; a $50 stock with $0.03 ATR is dead)
+    # Secondary check: absolute minimum only for stocks above $50.
+    # IEX data often underestimates ATR (sparse bars), so keep this floor low.
+    # A $48 stock with $0.33 ATR = 0.69% is fine; only block truly dead high-priced stocks.
     abs_ok = True
-    if price > 15:
+    if price > 50:
         abs_ok = atr_dollars >= min_atr_dollars
 
     acceptable = pct_ok and abs_ok
@@ -397,7 +409,7 @@ def check_reward_risk_ratio(
 def check_volume_quality(
     current_volume: int,
     avg_volume: int,
-    min_relative_volume: float = 1.5,
+    min_relative_volume: float = 1.0,  # Was 1.5 — screener already checks bar-level RVol≥1.5x; this is a dead-stock guard only
     min_absolute_volume: int = 10000,
     minutes_since_open: int = 60
 ) -> Dict[str, Any]:
@@ -479,7 +491,7 @@ class ProTradeValidator:
         max_sector_positions: int = 2,
         profit_protection_threshold: float = 300.0,
         drawdown_limit_percent: float = 30.0,
-        min_atr_dollars: float = 0.75,
+        min_atr_dollars: float = 0.30,  # Was 0.75 — too strict for IEX data and mid-priced stocks
         min_rr_ratio: float = 1.5
     ):
         self.max_spread_percent = max_spread_percent
