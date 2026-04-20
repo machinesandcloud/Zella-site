@@ -2784,7 +2784,9 @@ class AutonomousEngine:
                                 continue  # Drop the weaker one
 
                     if buy_signals:
-                        avg_confidence = sum(s["confidence"] for s in buy_signals) / len(buy_signals)
+                        # Use top-3 confidence average so a weak 4th+ strategy doesn't drag down a strong signal.
+                        top_buy = sorted(buy_signals, key=lambda x: x["confidence"], reverse=True)[:3]
+                        avg_confidence = sum(s["confidence"] for s in top_buy) / len(top_buy)
                         strategy_names = [s["strategy"] for s in buy_signals]
 
                         # === DETAILED STRATEGY ANALYSIS LOG ===
@@ -2814,7 +2816,8 @@ class AutonomousEngine:
                             "reasoning": " | ".join([f"{s['strategy']}: {s['reason']}" for s in buy_signals[:3]])
                         })
                     elif sell_signals:
-                        avg_confidence = sum(s["confidence"] for s in sell_signals) / len(sell_signals)
+                        top_sell = sorted(sell_signals, key=lambda x: x["confidence"], reverse=True)[:3]
+                        avg_confidence = sum(s["confidence"] for s in top_sell) / len(top_sell)
                         strategy_names = [s["strategy"] for s in sell_signals]
 
                         # === DETAILED STRATEGY ANALYSIS LOG ===
@@ -3328,8 +3331,11 @@ class AutonomousEngine:
                 )
                 continue
 
-            # Apply power hour boost to confidence
-            adjusted_confidence = confidence * time_mult
+            # Apply power hour boost to confidence — only boost, never penalize.
+            # Time-of-day selectivity is handled by the min_confidence thresholds below.
+            # Multiplying by <1.0 (e.g., 0.8 during lunch) made it mathematically impossible
+            # to trade: threshold 0.81 / multiplier 0.8 = 1.01 required raw confidence.
+            adjusted_confidence = confidence * max(time_mult, 1.0)
 
             # Learning-aware time filter (avoid time windows with poor performance)
             try:
