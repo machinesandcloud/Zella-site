@@ -1093,20 +1093,32 @@ class AutonomousEngine:
             if self.broker.is_connected():
                 positions = self.broker.get_positions()
                 if positions:
-                    logger.warning(f"🚨 FOUND {len(positions)} OVERNIGHT POSITIONS - LIQUIDATING NOW!")
-                    self._add_decision(
-                        "OVERNIGHT_LIQUIDATION",
-                        f"🚨 Found {len(positions)} overnight positions - LIQUIDATING IMMEDIATELY (Day trading rule: NO overnight holds)",
-                        "CRITICAL",
-                        {"positions": [p.get("symbol") for p in positions]}
-                    )
-                    await self._liquidate_all_positions()
-                    self._add_decision(
-                        "OVERNIGHT_LIQUIDATION",
-                        "✅ All overnight positions closed - Day trading rule enforced",
-                        "SUCCESS",
-                        {}
-                    )
+                    if self._is_market_hours():
+                        logger.warning(f"🚨 FOUND {len(positions)} OVERNIGHT POSITIONS - LIQUIDATING NOW!")
+                        self._add_decision(
+                            "OVERNIGHT_LIQUIDATION",
+                            f"🚨 Found {len(positions)} overnight positions - LIQUIDATING IMMEDIATELY (Day trading rule: NO overnight holds)",
+                            "CRITICAL",
+                            {"positions": [p.get("symbol") for p in positions]}
+                        )
+                        await self._liquidate_all_positions()
+                        self._add_decision(
+                            "OVERNIGHT_LIQUIDATION",
+                            "✅ All overnight positions closed - Day trading rule enforced",
+                            "SUCCESS",
+                            {}
+                        )
+                    else:
+                        # Market is closed — flag positions for liquidation at open, don't send after-hours orders
+                        symbols = [p.get("symbol") for p in positions]
+                        logger.warning(f"🚨 Found {len(positions)} overnight positions but market is closed — will liquidate at open: {symbols}")
+                        self._add_decision(
+                            "OVERNIGHT_LIQUIDATION",
+                            f"⚠️ {len(positions)} overnight positions found but market is closed — queued for liquidation at open",
+                            "WARNING",
+                            {"positions": symbols}
+                        )
+                        self._pending_overnight_liquidation = True
                 else:
                     self._add_decision(
                         "SYSTEM",
@@ -1442,6 +1454,13 @@ class AutonomousEngine:
                     # rapid scanning hits Alpaca IEX rate limits (causes 40+ symbols to
                     # return no data). Regular hours: use configured scan_interval.
                     current_scan_interval = self.scan_interval if is_market_open else 90
+
+                    # If we found overnight positions on startup but market was closed,
+                    # liquidate them now that the market is open.
+                    if is_market_open and getattr(self, "_pending_overnight_liquidation", False):
+                        self._pending_overnight_liquidation = False
+                        self._add_decision("OVERNIGHT_LIQUIDATION", "🚨 Market now open — liquidating deferred overnight positions", "WARNING", {})
+                        await self._liquidate_all_positions()
                     self.last_scan_time = datetime.now()
 
                     # 1. Scan market for opportunities
@@ -1715,6 +1734,13 @@ class AutonomousEngine:
 
         while self.running:
             try:
+                # Never manage positions outside regular market hours.
+                # Placing market orders after hours results in extended-hours fills
+                # at poor prices and violates day trading rules.
+                if not self._is_market_hours():
+                    await asyncio.sleep(60)
+                    continue
+
                 positions = self.broker.get_positions()
                 self._positions_cache_count = len(positions)
                 self._positions_cache_time = datetime.now()
@@ -4408,9 +4434,10 @@ class AutonomousEngine:
         session = market_session(now)
         clock = self._get_market_clock()
         if clock and clock.get("is_open") is not None:
-            if clock["is_open"] and not session.get("regular"):
-                session["regular"] = True
-                session["session"] = "REGULAR"
+            # Only use Alpaca clock to CLOSE the market, never to open it.
+            # Local time (market_session) is the authoritative source for whether
+            # we're in regular hours. Alpaca paper trading can return is_open=True
+            # during extended hours, which would cause after-hours trading.
             if not clock["is_open"] and session.get("regular"):
                 session["regular"] = False
                 session["session"] = "CLOSED"
