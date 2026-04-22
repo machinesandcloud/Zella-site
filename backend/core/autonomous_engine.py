@@ -1144,11 +1144,8 @@ class AutonomousEngine:
             self._last_daily_reset_date = et_today
             self.eod_liquidation_done_today = False
             self.daily_pnl = 0.0
-            try:
-                self.discipline.reset_daily()
-            except Exception as e:
-                logger.warning(f"Failed to reset daily discipline counters: {e}")
-            logger.info(f"📅 New trading day ({et_today} ET) - daily counters reset")
+            self.discipline.new_day()
+            logger.info(f"📅 New trading day ({et_today} ET) - daily counters reset (loss limit: ${abs(self.daily_pnl_limit):.0f})")
 
         # =====================================================
         # START BACKGROUND TASKS
