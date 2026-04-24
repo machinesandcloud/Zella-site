@@ -3111,8 +3111,11 @@ class AutonomousEngine:
             above_open = current_price > open_price
             change_pct = ((current_price - open_price) / open_price * 100) if open_price > 0 else 0
 
-            # EXTREME VOLATILITY: >2.5% range in single day
-            if day_range_pct > 2.5:
+            # EXTREME VOLATILITY: >5% range in single day
+            # 2.5% was too tight — April 2026 tariff volatility makes every day 2-4%.
+            # Circuit breaker already handles SPY >4% from open + still active.
+            # This threshold is for truly extreme conditions (flash crash, circuit breakers).
+            if day_range_pct > 5.0:
                 return "EXTREME_VOLATILITY"
 
             # TRENDING UP: Above VWAP, above open, >0.3% gain
@@ -3204,13 +3207,21 @@ class AutonomousEngine:
             self._add_decision("REGIME_FILTER", "Extreme volatility detected - halting new entries", "HALT", {"regime": market_regime})
             return
         elif market_regime == "TRENDING_DOWN":
-            # Confirmed downtrend: drop long signals, keep short signals only
+            # Confirmed downtrend: keep SELL signals, inverse ETF buys, and high-confidence longs.
+            # Dropping ALL longs in April 2026 tariff volatility leaves zero trades — the watchlist
+            # has no shortable stocks (Alpaca paper can't short most penny/meme stocks).
+            BEARISH_ETFS = {"UVXY", "TZA", "LABD", "SOXS", "SQQQ", "SPXU", "SPXS", "JDST", "SDOW"}
             before = len(opportunities)
-            opportunities = [o for o in opportunities if o.get("recommended_action") == "SELL"]
+            opportunities = [
+                o for o in opportunities
+                if o.get("recommended_action") == "SELL"
+                or o.get("symbol") in BEARISH_ETFS
+                or o.get("confidence", 0) >= 0.80  # High-conviction longs can still trade downtrend
+            ]
             dropped = before - len(opportunities)
             self._add_decision(
                 "REGIME_FILTER",
-                f"Confirmed downtrend — {dropped} long signals dropped, shorts only",
+                f"Downtrend — {dropped} low-conviction longs dropped, {len(opportunities)} remain (shorts/inverse ETFs/80%+ confidence)",
                 "WARNING",
                 {"regime": market_regime, "remaining": len(opportunities)}
             )
