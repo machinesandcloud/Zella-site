@@ -1145,6 +1145,7 @@ class AutonomousEngine:
             self.eod_liquidation_done_today = False
             self.daily_pnl = 0.0
             self.discipline.new_day()
+            self.risk_manager.reset_daily_counters()
             logger.info(f"📅 New trading day ({et_today} ET) - daily counters reset (loss limit: ${abs(self.daily_pnl_limit):.0f})")
 
         # =====================================================
@@ -1444,6 +1445,24 @@ class AutonomousEngine:
                         )
                         await asyncio.sleep(10)
                         continue
+
+                    # New-day reset: fires every morning even without a server restart.
+                    # start() only runs once per uptime, so without this the risk manager's
+                    # consecutive_losses and trades_today counters never reset between days.
+                    et_today = now.strftime("%Y-%m-%d")
+                    if getattr(self, '_last_daily_reset_date', None) != et_today:
+                        self._last_daily_reset_date = et_today
+                        self.eod_liquidation_done_today = False
+                        self.daily_pnl = 0.0
+                        self.discipline.new_day()
+                        self.risk_manager.reset_daily_counters()
+                        self._add_decision(
+                            "SYSTEM",
+                            f"📅 New trading day — daily counters reset",
+                            "INFO",
+                            {"date": et_today, "loss_limit": abs(self.daily_pnl_limit)}
+                        )
+                        logger.info(f"📅 New trading day ({et_today} ET) - daily counters reset in main loop")
 
                     # Determine scan interval based on market hours
                     is_market_open = self._is_market_hours()
@@ -3157,6 +3176,17 @@ class AutonomousEngine:
         """
         if not self.risk_manager.can_trade():
             logger.warning("Risk manager blocks trading")
+            self._add_decision(
+                "BLOCKED",
+                f"🚫 Risk manager blocking all trades — consecutive_losses={self.risk_manager.consecutive_losses}, trades_today={self.risk_manager.trades_today}, emergency_stop={self.risk_manager.emergency_stop_triggered}",
+                "WARNING",
+                {
+                    "consecutive_losses": self.risk_manager.consecutive_losses,
+                    "trades_today": self.risk_manager.trades_today,
+                    "emergency_stop": self.risk_manager.emergency_stop_triggered,
+                    "daily_loss": self.risk_manager.daily_loss,
+                }
+            )
             return
 
         # Check circuit breakers for extreme volatility
